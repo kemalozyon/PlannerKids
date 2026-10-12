@@ -73,7 +73,76 @@ export interface Api {
   getDailyReport(date: string): Promise<DailyReport | null>;
   /** Günün raporunu hazırlayıp ebeveyne gönderir (demo modunda yalnızca önizleme üretir). */
   sendDailyReport(date: string): Promise<SendReportResult>;
+
+  /** [from, to] aralığındaki plan satırları */
+  listPlans(from: string, to: string): Promise<PlanItem[]>;
+  /** [from, to] aralığındaki planı verilen satırlarla tamamen değiştirir */
+  savePlans(from: string, to: string, items: NewPlanItem[], approved: boolean): Promise<void>;
+  /** [from, to] aralığındaki bekleyen plan satırlarını onaylar */
+  approvePlans(from: string, to: string): Promise<void>;
+
+  getFamily(): Promise<FamilySettings>;
+  setFamily(s: FamilySettings): Promise<void>;
+
+  /** En yeni önce */
+  listNotes(limit: number): Promise<ParentNote[]>;
+  addNote(text: string): Promise<ParentNote>;
+  reactNote(id: string, reaction: NoteReaction): Promise<void>;
+  deleteNote(id: string): Promise<void>;
+
+  listRewards(): Promise<Reward[]>;
+  addReward(r: NewReward): Promise<Reward>;
+  updateReward(id: string, patch: Partial<Pick<Reward, 'claimed_on' | 'title' | 'target'>>): Promise<void>;
+  deleteReward(id: string): Promise<void>;
 }
+
+/** Bir günün planında bir ders: kaç dakika ayrıldı. */
+export interface PlanItem {
+  id: string;
+  date: string;
+  course_id: string;
+  minutes: number;
+  note: string | null;
+  /** Aile onayı açıksa çocuğun değişikliği onaylanana kadar false */
+  approved: boolean;
+}
+
+export type NewPlanItem = Pick<PlanItem, 'date' | 'course_id' | 'minutes' | 'note'>;
+
+export interface FamilySettings {
+  /** Aile paneli PIN'inin SHA-256 özeti; null = PIN yok */
+  pin_hash: string | null;
+  require_plan_approval: boolean;
+}
+
+export const DEFAULT_FAMILY: FamilySettings = { pin_hash: null, require_plan_approval: false };
+
+export type NoteReaction = 'thanks' | 'heart';
+
+export interface ParentNote {
+  id: string;
+  text: string;
+  reaction: NoteReaction | null;
+  created_at: string;
+}
+
+/** minutes: toplam dakika · streak: seri (gün) · books: biten kitap · plans: tamamlanan planlı gün */
+export type RewardKind = 'minutes' | 'streak' | 'books' | 'plans';
+
+export interface Reward {
+  id: string;
+  title: string;
+  kind: RewardKind;
+  target: number;
+  given_by: string | null;
+  /** İlerleme bu günden itibaren sayılır */
+  start_date: string;
+  /** Ebeveyn ödülü verdiğinde dolar */
+  claimed_on: string | null;
+  created_at: string;
+}
+
+export type NewReward = Pick<Reward, 'title' | 'kind' | 'target' | 'given_by' | 'start_date'>;
 
 export interface ReportSettings {
   parent_email: string | null;

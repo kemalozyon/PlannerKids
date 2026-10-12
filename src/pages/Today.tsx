@@ -2,8 +2,12 @@ import ConfirmButton from '../components/ConfirmButton';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { formatDay, formatMinutes, toLocalDate } from '../lib/date';
-import type { Course, Reflection, StudyLog, Task } from '../lib/types';
-import { formatClock, useTimer } from '../lib/useTimer';
+import type { Course, ParentNote, PlanItem, Reflection, Reward, StudyLog, Task } from '../lib/types';
+import { formatClock, useBreak, useTimer, type TimerApi } from '../lib/useTimer';
+import FocusMode from '../components/FocusMode';
+import { dayPlan } from '../lib/plan';
+import { openRewards } from '../lib/rewards';
+import { useReading } from '../lib/ReadingContext';
 import { useGame } from '../lib/GameContext';
 import GameStrip from '../components/GameStrip';
 import ReadingStrip from '../components/ReadingStrip';
@@ -17,6 +21,8 @@ interface Props {
   goCourses: () => void;
   goProfile: () => void;
   goForest: () => void;
+  goPlan: () => void;
+  goRewards: () => void;
   onPlant: () => void;
   reloadCourses: () => void;
   goLibrary: () => void;
@@ -24,13 +30,18 @@ interface Props {
   demo: boolean;
 }
 
-export default function Today({ courses, goCourses, goProfile, goForest, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
+export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
   const api = useApi();
   const game = useGame();
   const [date, setDate] = useState(toLocalDate);
   const [logs, setLogs] = useState<StudyLog[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [plans, setPlans] = useState<PlanItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const t = useTimer();
+  const [courseId, setCourseId] = useState(courses[0]?.id ?? '');
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [pending, setPending] = useState<Pending | null>(null);
 
   // Gece yarısı geçerse "bugün" güncellensin
   useEffect(() => {
@@ -40,9 +51,14 @@ export default function Today({ courses, goCourses, goProfile, goForest, onPlant
 
   const reload = useCallback(async () => {
     try {
-      const [l, t] = await Promise.all([api.listLogs(date, date), api.listTasks(date)]);
+      const [l, tk, p] = await Promise.all([
+        api.listLogs(date, date),
+        api.listTasks(date),
+        api.listPlans(date, date).catch(() => [] as PlanItem[]),
+      ]);
       setLogs(l);
-      setTasks(t);
+      setTasks(tk);
+      setPlans(p);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -60,6 +76,24 @@ export default function Today({ courses, goCourses, goProfile, goForest, onPlant
 
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
   const total = logs.reduce((s, l) => s + l.duration_minutes, 0);
+  const plan = useMemo(() => dayPlan(date, plans, logs), [date, plans, logs]);
+
+  // Seçili ders silindiyse ilk derse dön
+  useEffect(() => {
+    if (courses.length && !courses.some((c) => c.id === courseId)) setCourseId(courses[0].id);
+  }, [courses, courseId]);
+
+  const startTimer = (cid: string, goalMin: number | null) => {
+    setCourseId(cid);
+    t.start(cid, goalMin);
+    setFocusOpen(true);
+  };
+  const finish = () => {
+    const r = t.stop();
+    setFocusOpen(false);
+    // Açık unutulan sayaç günlük sınırı (1440 dk) aşmasın; çocuk kaydetmeden önce düzeltebilir
+    if (r) setPending({ courseId: r.courseId, minutes: Math.min(r.minutes, 1440), date: toLocalDate(new Date(r.startedAt)), focus: r.goalMin != null });
+  };
 
   if (courses.length === 0) {
     return (
@@ -95,11 +129,40 @@ export default function Today({ courses, goCourses, goProfile, goForest, onPlant
         </div>
       </header>
 
+      <ParentNoteCard />
+
       <GameStrip goForest={goForest} onPlant={onPlant} />
 
       {error && <div className="error">{error}</div>}
 
-      <TimerCard courses={courses} date={date} onSaved={changed} onError={setError} />
+      <PlanCard
+        plan={plan}
+        byId={byId}
+        running={!!t.timer}
+        onStart={(cid, left) => startTimer(cid, Math.min(left, 40))}
+        goPlan={goPlan}
+      />
+
+      <TimerCard
+        courses={courses}
+        date={date}
+        t={t}
+        courseId={courseId}
+        setCourseId={setCourseId}
+        fromPlan={!!plan?.rows.some((r) => r.item.course_id === courseId && !r.complete)}
+        pending={pending}
+        setPending={setPending}
+        onStart={(cid) => startTimer(cid, 25)}
+        onFinish={finish}
+        openFocus={() => setFocusOpen(true)}
+        nextFromPlan={plan?.rows.find((r) => !r.complete)}
+        onSaved={changed}
+        onError={setError}
+      />
+
+      {focusOpen && t.timer && (
+        <FocusMode t={t} course={byId.get(t.timer.courseId)} roundsToday={logs.length} onFinish={finish} onClose={() => setFocusOpen(false)} />
+      )}
 
       <section className="card">
         <div className="card-head">
@@ -139,6 +202,8 @@ export default function Today({ courses, goCourses, goProfile, goForest, onPlant
 
       <ReadingStrip goLibrary={goLibrary} onPlantBook={onPlantBook} />
 
+      <RewardStrip goRewards={goRewards} />
+
       <TasksCard courses={courses} byId={byId} date={date} tasks={tasks} reload={changed} />
 
       <ReflectionCard date={date} />
@@ -171,40 +236,63 @@ function CourseSelect({
   );
 }
 
+interface Pending {
+  courseId: string;
+  minutes: number;
+  date: string;
+  /** Odak turundan geldiyse kayıttan sonra mola önerilir */
+  focus: boolean;
+}
+
 function TimerCard({
   courses,
   date,
+  t,
+  courseId,
+  setCourseId,
+  fromPlan,
+  pending,
+  setPending,
+  onStart,
+  onFinish,
+  openFocus,
+  nextFromPlan,
   onSaved,
   onError,
 }: {
   courses: Course[];
   date: string;
+  t: TimerApi;
+  courseId: string;
+  setCourseId: (id: string) => void;
+  fromPlan: boolean;
+  pending: Pending | null;
+  setPending: (p: Pending | null) => void;
+  onStart: (courseId: string) => void;
+  onFinish: () => void;
+  openFocus: () => void;
+  nextFromPlan?: { item: PlanItem; left: number };
   onSaved: () => void;
   onError: (m: string) => void;
 }) {
   const api = useApi();
-  const { timer, elapsedMs, start, stop, cancel } = useTimer();
-  const [courseId, setCourseId] = useState(courses[0].id);
+  const { timer, elapsedMs, cancel } = t;
+  const brk = useBreak();
   const [mode, setMode] = useState<'timer' | 'manual'>('timer');
   const [minutes, setMinutes] = useState('');
   const [note, setNote] = useState('');
-  const [pending, setPending] = useState<{ courseId: string; minutes: number; date: string } | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // Seçili ders silindiyse ilk derse dön
-  useEffect(() => {
-    if (!courses.some((c) => c.id === courseId)) setCourseId(courses[0].id);
-  }, [courses, courseId]);
 
   const running = timer && courses.find((c) => c.id === timer.courseId);
 
-  const save = async (cid: string, mins: number, logDate: string) => {
+  const save = async (cid: string, mins: number, logDate: string, focus = false) => {
     setBusy(true);
     try {
       await api.addLog({ course_id: cid, date: logDate, duration_minutes: mins, note: note.trim() || null });
       setNote('');
       setMinutes('');
       setPending(null);
+      if (focus) brk.start(5);
       onSaved();
     } catch (e) {
       onError((e as Error).message);
@@ -228,7 +316,7 @@ function TimerCard({
             min={1}
             max={1440}
             value={pending.minutes}
-            onChange={(e) => setPending({ ...pending, minutes: Math.max(1, Number(e.target.value) || 1) })}
+            onChange={(e) => setPending({ ...pending, minutes: Math.min(1440, Math.max(1, Number(e.target.value) || 1)) })}
           />
         </label>
         <label className="field">
@@ -239,8 +327,8 @@ function TimerCard({
           <button className="btn ghost" onClick={() => setPending(null)}>
             Vazgeç
           </button>
-          <button className="btn primary" disabled={busy} onClick={() => save(pending.courseId, pending.minutes, pending.date)}>
-            Kaydet
+          <button className="btn primary" disabled={busy} onClick={() => save(pending.courseId, pending.minutes, pending.date, pending.focus)}>
+            {pending.focus ? 'Kaydet, molaya çık' : 'Kaydet'}
           </button>
         </div>
       </section>
@@ -265,15 +353,44 @@ function TimerCard({
           <ConfirmButton className="btn ghost" confirmLabel="Kaydetmeden sil?" onConfirm={cancel}>
             İptal
           </ConfirmButton>
-          <button
-            className="btn primary big"
-            onClick={() => {
-              const r = stop();
-              if (r) setPending({ courseId: r.courseId, minutes: r.minutes, date: toLocalDate(new Date(r.startedAt)) });
-            }}
-          >
+          <button className="btn" onClick={openFocus}>
+            Odak modu
+          </button>
+          <button className="btn primary big" onClick={onFinish}>
             Bitirdim
           </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (brk.active) {
+    const over = brk.leftMs === 0;
+    const next = nextFromPlan && courses.find((c) => c.id === nextFromPlan.item.course_id);
+    return (
+      <section className="card timer break-card">
+        <div className="muted small">{over ? 'Mola bitti!' : 'Mola zamanı · su iç, biraz esne 🧃'}</div>
+        <div className="clock">{formatClock(brk.leftMs)}</div>
+        {over && next && (
+          <p>
+            Sıradaki: <strong>{next.name}</strong> <span className="muted">· {formatMinutes(nextFromPlan!.left)} kaldı</span>
+          </p>
+        )}
+        <div className="actions center">
+          <button className="btn ghost" onClick={brk.end}>
+            {over ? 'Kapat' : 'Molayı bitir'}
+          </button>
+          {over && next && (
+            <button
+              className="btn primary big"
+              onClick={() => {
+                brk.end();
+                onStart(next.id);
+              }}
+            >
+              ▶ {next.name}
+            </button>
+          )}
         </div>
       </section>
     );
@@ -290,11 +407,13 @@ function TimerCard({
         </button>
       </div>
       <label className="field">
-        <span>Ders</span>
+        <span>
+          Ders{fromPlan && <span className="accent-ink"> · plandan</span>}
+        </span>
         <CourseSelect courses={courses} value={courseId} onChange={setCourseId} />
       </label>
       {mode === 'timer' ? (
-        <button className="btn primary big full" onClick={() => start(courseId)}>
+        <button className="btn primary big full" onClick={() => onStart(courseId)}>
           ▶ Başlat
         </button>
       ) : (
@@ -327,6 +446,181 @@ function TimerCard({
         </form>
       )}
     </section>
+  );
+}
+
+/** Bugünün planı: ders başına planlanan / çalışılan dakika, sıradakini tek dokunuşla başlatma. */
+function PlanCard({
+  plan,
+  byId,
+  running,
+  onStart,
+  goPlan,
+}: {
+  plan: ReturnType<typeof dayPlan>;
+  byId: Map<string, Course>;
+  running: boolean;
+  onStart: (courseId: string, left: number) => void;
+  goPlan: () => void;
+}) {
+  if (!plan) {
+    return (
+      <section className="card plan-card empty-plan">
+        <div className="grow">
+          <h2>Bugünün planı</h2>
+          <p className="muted small">Bugün için plan yok. Ne kadar çalışacağını önceden seçmek işini kolaylaştırır.</p>
+        </div>
+        <button className="btn" onClick={goPlan}>
+          Plan yap
+        </button>
+      </section>
+    );
+  }
+  const pct = plan.planned ? plan.done / plan.planned : 0;
+  const R = 26;
+  const C = 2 * Math.PI * R;
+  const left = plan.rows.filter((r) => !r.complete).length;
+  return (
+    <section className="card plan-card">
+      <div className="card-head">
+        <h2>Bugünün planı</h2>
+        {plan.pending && <span className="pill">Aile onayı bekliyor</span>}
+      </div>
+      <div className="plan-summary">
+        <svg width="64" height="64" viewBox="0 0 64 64" role="img" aria-label={`Planın yüzde ${Math.round(pct * 100)}'i tamam`}>
+          <circle cx="32" cy="32" r={R} fill="none" stroke="var(--line)" strokeWidth="8" />
+          <circle
+            cx="32"
+            cy="32"
+            r={R}
+            fill="none"
+            stroke="var(--good)"
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={`${Math.max(0.001, pct) * C} ${C}`}
+            transform="rotate(-90 32 32)"
+          />
+          <text x="32" y="37" textAnchor="middle" className="plan-pct">
+            %{Math.round(pct * 100)}
+          </text>
+        </svg>
+        <div>
+          <strong>
+            {plan.done} / {plan.planned} dk tamam
+          </strong>
+          <div className="muted small">
+            {plan.complete ? 'Bugünün planını bitirdin! 📋' : `${left} ders kaldı · bitirince "Planlı Gün" rozeti`}
+          </div>
+        </div>
+      </div>
+      <ul className="list">
+        {plan.rows.map((r) => {
+          const c = byId.get(r.item.course_id);
+          const color = c?.color ?? '#999';
+          return (
+            <li key={r.item.id} className="row plan-row">
+              <span className={`plan-check${r.complete ? ' done' : ''}`} style={r.complete ? undefined : { borderColor: color }} aria-hidden>
+                {r.complete ? '✓' : ''}
+              </span>
+              <div className="grow">
+                <div className={r.complete ? 'done' : ''}>{c?.name ?? 'Silinmiş ders'}</div>
+                {!r.complete && r.done > 0 && (
+                  <div className="pbar" aria-hidden>
+                    <span style={{ width: `${(r.done / r.item.minutes) * 100}%`, background: color }} />
+                  </div>
+                )}
+                <div className="muted small">
+                  {Math.min(r.done, r.item.minutes)} / {r.item.minutes} dk{r.item.note ? ` · ${r.item.note}` : ''}
+                </div>
+              </div>
+              {r.complete ? (
+                <span className="good-ink small">Bitti</span>
+              ) : (
+                <button
+                  className={`btn sm${r.done > 0 ? ' primary' : ''}`}
+                  disabled={running}
+                  onClick={() => onStart(r.item.course_id, r.left)}
+                >
+                  {r.done > 0 ? 'Devam et' : 'Başlat'}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <button className="link plan-link" onClick={goPlan}>
+        Haftalık planı aç
+      </button>
+    </section>
+  );
+}
+
+/** Aileden gelen son not (son 3 gün). Çocuk "teşekkürler" ya da "kalp" ile yanıt verir. */
+function ParentNoteCard() {
+  const api = useApi();
+  const [note, setNote] = useState<ParentNote | null>(null);
+  useEffect(() => {
+    api
+      .listNotes(1)
+      .then(([n]) => setNote(n && Date.now() - new Date(n.created_at).getTime() < 3 * 864e5 ? n : null))
+      .catch(() => setNote(null));
+  }, [api]);
+  if (!note) return null;
+  const react = async (reaction: 'thanks' | 'heart') => {
+    await api.reactNote(note.id, reaction);
+    setNote({ ...note, reaction });
+  };
+  return (
+    <section className="card note-card">
+      <span className="note-icon" aria-hidden>
+        💌
+      </span>
+      <div className="grow">
+        <strong>Ailenden bir not</strong>
+        <p className="note-text">{note.text}</p>
+        {note.reaction ? (
+          <span className="muted small">{note.reaction === 'heart' ? 'Kalp gönderdin ❤️' : 'Teşekkür ettin 🙏'}</span>
+        ) : (
+          <div className="note-actions">
+            <button className="btn sm" onClick={() => react('thanks')}>
+              Teşekkürler! 🙏
+            </button>
+            <button className="btn sm" onClick={() => react('heart')}>
+              Kalp gönder ❤️
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Sıradaki ödül hedefi (varsa) ince bir şerit olarak. */
+function RewardStrip({ goRewards }: { goRewards: () => void }) {
+  const api = useApi();
+  const { stats } = useGame();
+  const reading = useReading();
+  const [rewards, setRewards] = useState<Reward[] | null>(null);
+  useEffect(() => {
+    api.listRewards().then(setRewards).catch(() => setRewards([]));
+  }, [api]);
+  if (!stats || !rewards) return null;
+  const [top] = openRewards(rewards, { dayTotals: stats.dayTotals, streak: stats.streak, books: reading.books, planDays: stats.planDays });
+  if (!top) return null;
+  return (
+    <button className="card reward-strip" onClick={goRewards}>
+      <span className="reward-icon" aria-hidden>
+        🎁
+      </span>
+      <span className="grow">
+        <span className="muted small">{top.reached ? 'Ödülünü kazandın!' : 'Sıradaki ödül'}</span>
+        <strong>{top.reward.title}</strong>
+        <span className="pbar gold" aria-hidden>
+          <span style={{ width: `${top.pct * 100}%` }} />
+        </span>
+      </span>
+      <span className="muted small nowrap">{top.reached ? 'Ailene göster' : `%${Math.round(top.pct * 100)}`}</span>
+    </button>
   );
 }
 
@@ -417,7 +711,7 @@ function ReflectionCard({ date }: { date: string }) {
   const [rating, setRating] = useState<number | null>(null);
   const [note, setNote] = useState('');
   const [saved, setSaved] = useState<Reflection | null>(null);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
     api.getReflection(date).then((r) => {
@@ -454,16 +748,22 @@ function ReflectionCard({ date }: { date: string }) {
         <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Birkaç kelime yeter…" />
       </label>
       <div className="actions">
-        <span className="muted small">{status === 'saved' && !dirty ? 'Kaydedildi ✓' : ''}</span>
+        <span className={status === 'error' ? 'error-ink small' : 'muted small'}>
+          {status === 'saved' && !dirty ? 'Kaydedildi ✓' : status === 'error' ? 'Kaydedilemedi, tekrar dene.' : ''}
+        </span>
         <button
           className="btn primary"
           disabled={!dirty || status === 'saving'}
           onClick={async () => {
             setStatus('saving');
-            await api.upsertReflection(date, rating, note);
-            game.refresh();
-            setSaved({ date, rating, note, updated_at: new Date().toISOString() });
-            setStatus('saved');
+            try {
+              await api.upsertReflection(date, rating, note);
+              game.refresh();
+              setSaved({ date, rating, note, updated_at: new Date().toISOString() });
+              setStatus('saved');
+            } catch {
+              setStatus('error');
+            }
           }}
         >
           {saved ? 'Güncelle' : 'Kaydet'}

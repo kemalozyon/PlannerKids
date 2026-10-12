@@ -1,7 +1,7 @@
 import ConfirmButton from './components/ConfirmButton';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { localApi, supabaseApi } from './lib/api';
+import { DEMO_KEY, localApi, supabaseApi } from './lib/api';
 import { ApiContext } from './lib/ApiContext';
 import { demoSeed } from './lib/demoSeed';
 import { supabase } from './lib/supabase';
@@ -12,25 +12,45 @@ import Today from './pages/Today';
 import Forest from './pages/Forest';
 import Library from './pages/Library';
 import Profile from './pages/Profile';
+import WeekPlan from './pages/WeekPlan';
+import Rewards from './pages/Rewards';
+import ParentPanel from './pages/ParentPanel';
 import { ReadingProvider } from './lib/ReadingContext';
 import Celebrations from './components/Celebrations';
 import Login, { NewPassword } from './components/Login';
-import { GameProvider } from './lib/GameContext';
+import { GameProvider, useGame } from './lib/GameContext';
+import { IconBack, IconBook, IconCalendar, IconForest, IconToday, IconUser } from './components/Icons';
 
-type Tab = 'today' | 'forest' | 'library' | 'history' | 'courses' | 'profile';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'today', label: 'Bugün' },
-  { id: 'forest', label: 'Orman' },
-  { id: 'library', label: 'Kitaplık' },
-  { id: 'history', label: 'Geçmiş' },
-  { id: 'courses', label: 'Dersler' },
-  { id: 'profile', label: 'Profil' },
+/** Alt menüdeki sekmeler */
+type MainTab = 'today' | 'forest' | 'library' | 'history' | 'profile';
+/** Bir sekmenin içinden açılan alt sayfalar */
+type SubPage = 'plan' | 'rewards' | 'parent' | 'courses';
+type Tab = MainTab | SubPage;
+
+const TABS: { id: MainTab; label: string; icon: () => ReactNode }[] = [
+  { id: 'today', label: 'Bugün', icon: IconToday },
+  { id: 'forest', label: 'Orman', icon: IconForest },
+  { id: 'library', label: 'Kitaplık', icon: IconBook },
+  { id: 'history', label: 'Geçmiş', icon: IconCalendar },
+  { id: 'profile', label: 'Profil', icon: IconUser },
 ];
+
+/** Alt sayfanın başlığı ve hangi sekmenin altında olduğu (geri tuşu oraya döner) */
+const SUB: Record<SubPage, { title: string; parent: MainTab }> = {
+  plan: { title: 'Haftalık planım', parent: 'today' },
+  rewards: { title: 'Ödül hedeflerim', parent: 'profile' },
+  parent: { title: 'Aile paneli', parent: 'profile' },
+  courses: { title: 'Dersler', parent: 'profile' },
+};
+
+const ALL: Tab[] = [...TABS.map((t) => t.id), ...(Object.keys(SUB) as SubPage[])];
 
 function readTab(): Tab {
   const h = location.hash.slice(1);
-  return (TABS.some((t) => t.id === h) ? h : 'today') as Tab;
+  return (ALL.includes(h as Tab) ? h : 'today') as Tab;
 }
+
+const isSub = (t: Tab): t is SubPage => t in SUB;
 
 export default function App() {
   // Supabase env yoksa demo modu
@@ -72,10 +92,6 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
     setPlantIntent(false);
     setPlantBookId(null);
   }, []);
-  const plantBook = (id: string) => {
-    setPlantBookId(id);
-    go('forest');
-  };
 
   useEffect(() => {
     const onHash = () => setTab(readTab());
@@ -83,9 +99,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const go = (t: Tab) => {
+  const go = useCallback((t: Tab) => {
     location.hash = t;
     setTab(t);
+    window.scrollTo(0, 0);
+  }, []);
+  const plantBook = (id: string) => {
+    setPlantBookId(id);
+    go('forest');
   };
 
   const reloadCourses = useCallback(() => {
@@ -93,26 +114,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
   }, [api]);
   useEffect(reloadCourses, [reloadCourses]);
 
+  const active: MainTab = isSub(tab) ? SUB[tab].parent : tab;
+
   return (
     <ApiContext.Provider value={api}>
       <GameProvider>
       <ReadingProvider>
       <div className="app">
-        <nav className="topbar">
-          <span className="brand">◷ Çalışma Takip</span>
-          <div className="nav-tabs">
-            {TABS.map((t) => (
-              <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => go(t.id)}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {onSignOut && (
-            <button className="btn ghost sm" title={email} onClick={onSignOut}>
-              Çıkış
-            </button>
-          )}
-        </nav>
+        <TopBar sub={isSub(tab) ? tab : null} onBack={() => isSub(tab) && go(SUB[tab].parent)} onForest={() => go('forest')} />
         {demo && (
           <div className="demo-banner">
             Demo modu — veriler yalnızca bu tarayıcıda saklanıyor.{' '}
@@ -121,8 +130,9 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               confirmLabel="Sıfırlamak için tekrar tıkla"
               onConfirm={() => {
                 try {
-                  localStorage.removeItem('ct-demo-db-v7');
+                  localStorage.removeItem(DEMO_KEY);
                   localStorage.removeItem('ct-timer-v1');
+                  localStorage.removeItem('ct-break-v1');
                 } catch {
                   /* yok say */
                 }
@@ -140,8 +150,10 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <Today
               courses={courses}
               goCourses={() => go('courses')}
-              goProfile={() => go('profile')}
+              goProfile={() => go('parent')}
               goForest={() => go('forest')}
+              goPlan={() => go('plan')}
+              goRewards={() => go('rewards')}
               onPlant={() => {
                 setPlantIntent(true);
                 go('forest');
@@ -159,14 +171,57 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <History courses={courses} />
           ) : tab === 'courses' ? (
             <Courses courses={courses} reload={reloadCourses} />
+          ) : tab === 'plan' ? (
+            <WeekPlan courses={courses} goToday={() => go('today')} goCourses={() => go('courses')} />
+          ) : tab === 'rewards' ? (
+            <Rewards />
+          ) : tab === 'parent' ? (
+            <ParentPanel courses={courses} goPlan={() => go('plan')} />
           ) : (
-            <Profile email={email} demo={!!demo} onSignOut={onSignOut} />
+            <Profile email={email} demo={!!demo} onSignOut={onSignOut} go={go} />
           )}
         </main>
+        <nav className="bottom-nav" aria-label="Ana menü">
+          {TABS.map((t) => (
+            <button key={t.id} className={active === t.id ? 'on' : ''} aria-current={active === t.id ? 'page' : undefined} onClick={() => go(t.id)}>
+              <span className="bn-icon">{t.icon()}</span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
         <Celebrations />
       </div>
       </ReadingProvider>
       </GameProvider>
     </ApiContext.Provider>
+  );
+}
+
+/** Üst çubuk: ana sekmelerde marka + seri + cüzdan; alt sayfalarda geri tuşu + başlık. */
+function TopBar({ sub, onBack, onForest }: { sub: SubPage | null; onBack: () => void; onForest: () => void }) {
+  const { stats } = useGame();
+  return (
+    <header className="topbar">
+      {sub ? (
+        <>
+          <button className="icon-btn back" aria-label="Geri" onClick={onBack}>
+            <IconBack />
+          </button>
+          <span className="brand">{SUB[sub].title}</span>
+        </>
+      ) : (
+        <span className="brand">◷ Çalışma Takip</span>
+      )}
+      {stats && (
+        <div className="top-chips">
+          <span className={`chip streak${stats.streak === 0 ? ' off' : ''}`} title="Seri">
+            <span aria-hidden>🔥</span> {stats.streak}
+          </span>
+          <button className="chip coin" title="Bugünkü cüzdanım — ormana git" onClick={onForest}>
+            <span aria-hidden>🪙</span> {stats.today.left}
+          </button>
+        </div>
+      )}
+    </header>
   );
 }

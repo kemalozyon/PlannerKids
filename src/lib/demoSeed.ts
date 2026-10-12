@@ -1,5 +1,5 @@
 import type { DemoDb } from './api';
-import { addDays, toLocalDate } from './date';
+import { addDays, parseLocalDate, toLocalDate, weekStart } from './date';
 import { greedySpend, monthOf, pickFreeCell, SPECIES } from './forest';
 
 /**
@@ -84,7 +84,7 @@ export function demoSeed(): DemoDb {
     { id: 'tk-3', course_id: 'c-ing', title: 'Renkleri tekrar et', date: today, done: false, created_at: t },
   ];
   return {
-    courses, logs, tasks, reflections, trees, ...demoReading(today, t),
+    courses, logs, tasks, reflections, trees, ...demoReading(today, t), ...demoFamily(today, logs),
     reportSettings: { parent_email: 'ebeveyn@ornek.com', child_name: 'Ece', send_hour: 21, timezone: 'Europe/Istanbul', enabled: true },
   };
 }
@@ -129,5 +129,49 @@ function demoReading(today: string, t: string): Pick<DemoDb, 'books' | 'readingL
     readingLogs,
     bookTrees: [{ id: 'bt-prens', book_id: 'b-prens', month: monthOf(d(-7)), cell: 1 }],
     readingGoals: { monthly_books: 3, daily_pages: 15 },
+  };
+}
+
+/**
+ * Plan, aile notu ve ödül örnekleri.
+ * - Geçen hafta ve bu haftanın geçen günleri: çalışılan derslerden plan (bazı günlerde
+ *   fazladan bir ders eklenir → o gün plan yarım kalır).
+ * - Bugün: Matematik 30, Türkçe 20, İngilizce 15. Haftanın kalanı "Okul haftası".
+ */
+function demoFamily(today: string, logs: DemoDb['logs']): Pick<DemoDb, 'plans' | 'notes' | 'rewards' | 'family'> {
+  const plans: NonNullable<DemoDb['plans']> = [];
+  const add = (date: string, course_id: string, minutes: number, note: string | null = null) =>
+    plans.push({ id: `p-${date}-${course_id}`, date, course_id, minutes, note, approved: true });
+  const monday = weekStart(today);
+  for (let d = addDays(monday, -7); d < today; d = addDays(d, 1)) {
+    const byCourse = new Map<string, number>();
+    logs.filter((l) => l.date === d).forEach((l) => byCourse.set(l.course_id, (byCourse.get(l.course_id) ?? 0) + l.duration_minutes));
+    if (!byCourse.size) continue;
+    for (const [c, m] of byCourse) add(d, c, Math.max(5, Math.floor(m / 5) * 5));
+    if (Number(d.slice(-2)) % 3 === 0 && !byCourse.has('c-fen')) add(d, 'c-fen', 20);
+  }
+  add(today, 'c-mat', 30, 'Kesirler');
+  add(today, 'c-tr', 20, 'Okuma anlama');
+  add(today, 'c-ing', 15, 'Renkleri tekrar et');
+  for (let d = addDays(today, 1); d <= addDays(monday, 6); d = addDays(d, 1)) {
+    const wd = (parseLocalDate(d).getDay() + 6) % 7;
+    if (wd < 5) ['c-mat', 'c-tr', 'c-fen', 'c-ing'].forEach((c) => add(d, c, 20));
+    else if (wd === 5) ['c-mat', 'c-tr'].forEach((c) => add(d, c, 15));
+  }
+  const ago = (h: number) => new Date(Date.now() - h * 36e5).toISOString();
+  return {
+    plans,
+    notes: [
+      { id: 'n-1', text: 'Dün kesirleri çok güzel çalışmışsın, seninle gurur duyuyorum! Bu akşam en sevdiğin yemek var.', reaction: null, created_at: ago(2) },
+      { id: 'n-2', text: 'Kitabını bitirdiğin için tebrikler!', reaction: 'heart', created_at: ago(26) },
+    ],
+    rewards: [
+      { id: 'r-sinema', title: 'Hafta sonu sinema', kind: 'minutes', target: 600, given_by: 'Babam', start_date: addDays(today, -3), claimed_on: null, created_at: ago(150) },
+      { id: 'r-kitap', title: 'Yeni kitap seçme hakkı', kind: 'books', target: 5, given_by: 'Annem', start_date: addDays(today, -45), claimed_on: null, created_at: ago(1000) },
+      { id: 'r-luna', title: 'Lunapark günü', kind: 'streak', target: 30, given_by: 'Babam', start_date: addDays(today, -20), claimed_on: null, created_at: ago(500) },
+      { id: 'r-plan', title: 'Bahçeye gerçek fidan dik', kind: 'plans', target: 10, given_by: 'Dedem', start_date: addDays(today, -7), claimed_on: null, created_at: ago(170) },
+      { id: 'r-pizza', title: 'Pizza akşamı', kind: 'minutes', target: 300, given_by: 'Annem', start_date: addDays(today, -20), claimed_on: addDays(today, -10), created_at: ago(500) },
+    ],
+    family: { pin_hash: null, require_plan_approval: false },
   };
 }

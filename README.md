@@ -39,9 +39,12 @@ src/
     Today.tsx      Sayaç / elle giriş, bugünkü kayıtlar, görevler, günlük değerlendirme
     Forest.tsx     Aylık orman + kitap parseli, dikme/taşıma, tür seçici, gün detayı, rozetler
     Library.tsx    Kitaplığım: raf, şu an okuduklarım, okunacaklar, okuma hedefleri
-    History.tsx    Son 28 gün listesi + haftalık ders dağılımı (SVG halka grafik)
+    History.tsx    Aylık takvim (ısı haritası + ruh hali), gün detayı, haftalık çubuk grafik, ders dağılımı
     Courses.tsx    Ders ekle / düzenle / sil
-supabase/migrations/0001_init.sql … 0004_reports.sql
+    WeekPlan.tsx   Haftalık plan: güne göre ders/dakika, hazır şablonlar, geçen haftayı kopyala
+    Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
+    ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, rapor ayarları
+supabase/migrations/0001_init.sql … 0005_plans_family.sql
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
@@ -61,6 +64,23 @@ supabase/functions/daily-report/   Günlük rapor (Edge Function)
   aşmasına izin vermez.
 - **Türler:** 8 tür, 3'ü baştan açık; diğerleri en uzun seriyle açılır (3, 5, 7, 10, 14 gün).
 - **Yumuşak seri, rozetler, ruh hali (😞…😄), hazır okul dersleri, 20 dk mola hatırlatması.**
+
+## Planlama, odak modu, ödüller ve aile paneli
+
+`0005_plans_family.sql`'i SQL Editor'de çalıştır (tablolar: `study_plans`, `family_settings`, `parent_notes`, `rewards`).
+
+- **Bugünün planı:** Bugün ekranında ders başına planlanan / çalışılan dakika. "Başlat" / "Devam et" o dersin sayacını,
+  kalan dakika kadar bir odak turuyla açar. Planı tamamlanan gün "Planlı Gün" rozetine ve plan ödüllerine sayılır.
+- **Haftalık plan** (Bugün › Haftalık planı aç): gün seç, derslere 5'er dakika ayır, konu yaz; hazır şablonlar
+  (Okul haftası, Sınav haftası, Hafif hafta, Tatil) ve "Geçen haftayı kopyala". Geçmiş günler değişmez.
+- **Odak modu:** tam ekran halka sayaç; tur 25 / 40 dk ya da serbest. Çalıştıkça ortadaki fidan büyür (yalnızca gösterim),
+  tur bitince zil çalar; kaydedince 5 dakikalık mola sayacı başlar. İsteğe bağlı yağmur sesi.
+- **Ödül hedefleri:** ebeveynin koyduğu gerçek ödüller (toplam dakika, seri, biten kitap, tamamlanan planlı gün).
+  Orman parasını harcamaz. Ebeveyn ödülü verince "Kazandıklarım"a geçer.
+- **Aile paneli** (Profil › Aile paneli): 4 haneli PIN ile açılır (çocuk kilidi; aynı hesap). Haftalık özet,
+  "zordu" uyarısı, plan onayı, çocuğa not (Bugün ekranında 3 gün görünür, çocuk teşekkür/kalp ile yanıtlar),
+  ödül ekleme ve günlük rapor ayarları.
+- **Alt menü:** Bugün · Orman · Kitaplık · Geçmiş · Profil. Dersler, Ödüller ve Aile paneli Profil'in altında.
 
 ## Okuma ve kitaplık
 
@@ -98,7 +118,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 
 ### Kurulum
 
-1. `0004_reports.sql`'i çalıştır. Ebeveyn ayarlarını uygulamada **Dersler → Ebeveyn raporu**'ndan gir.
+1. `0004_reports.sql`'i çalıştır. Ebeveyn ayarlarını uygulamada **Profil → Aile paneli**'nden gir.
 2. [resend.com](https://resend.com)'da hesap aç, gönderen alan adını doğrula, API anahtarı al.
 3. Secret'ları gir ve fonksiyonu deploy et:
    ```bash

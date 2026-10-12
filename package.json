@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "build:demo": "tsc -b && vite build --mode demo",
-    "test": "node --test 'supabase/functions/**/*.test.ts'",
+    "test": "node --import ./scripts/resolve-ts.mjs --test 'supabase/functions/**/*.test.ts' 'src/**/*.test.ts'",
     "report:preview": "node --env-file-if-exists=.env scripts/report-preview.ts"
   },
   "dependencies": {

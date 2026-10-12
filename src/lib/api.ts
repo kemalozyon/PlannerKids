@@ -2,7 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFacts, fallbackNarrative, renderEmail } from '../../supabase/functions/_shared/report';
 import { gatherReportInput } from './reportInput';
 import {
+  DEFAULT_FAMILY,
   DEFAULT_READING_GOALS,
+  type FamilySettings,
+  type ParentNote,
+  type PlanItem,
+  type Reward,
   type Api,
   type Book,
   type BookTree,
@@ -24,6 +29,17 @@ function check<T>(res: { data: T; error: { message: string } | null }): T {
   return res.data;
 }
 
+/** PostgREST tek istekte en fazla 1000 satır döner; tüm geçmişi okuyan sorgular sayfa sayfa çekilir. */
+const PAGE = 1000;
+async function all<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const rows = check(await page(from, from + PAGE - 1)) ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
 export function supabaseApi(sb: SupabaseClient): Api {
   return {
     async listCourses() {
@@ -40,9 +56,9 @@ export function supabaseApi(sb: SupabaseClient): Api {
     },
 
     async listLogs(from, to) {
-      return check(
-        await sb.from('study_logs').select('*').gte('date', from).lte('date', to).order('created_at'),
-      ) as StudyLog[];
+      return all<StudyLog>((a, b) =>
+        sb.from('study_logs').select('*').gte('date', from).lte('date', to).order('created_at').order('id').range(a, b),
+      );
     },
     async addLog(log) {
       return check(await sb.from('study_logs').insert(log).select().single()) as StudyLog;
@@ -70,13 +86,9 @@ export function supabaseApi(sb: SupabaseClient): Api {
       ) as Reflection | null;
     },
     async listReflections(from, to) {
-      return check(
-        await sb
-          .from('daily_reflections')
-          .select('date,rating,note,updated_at')
-          .gte('date', from)
-          .lte('date', to),
-      ) as Reflection[];
+      return all<Reflection>((a, b) =>
+        sb.from('daily_reflections').select('date,rating,note,updated_at').gte('date', from).lte('date', to).order('date').range(a, b),
+      );
     },
     async upsertReflection(date, rating, note) {
       const { data: u } = await sb.auth.getUser();
@@ -94,7 +106,7 @@ export function supabaseApi(sb: SupabaseClient): Api {
       return res.count ?? 0;
     },
     async listTrees() {
-      return check(await sb.from('forest_trees').select('id,date,stage,species,month,cell')) as ForestTree[];
+      return all<ForestTree>((a, b) => sb.from('forest_trees').select('id,date,stage,species,month,cell').order('id').range(a, b));
     },
     async plantTree(t) {
       return check(
@@ -120,13 +132,13 @@ export function supabaseApi(sb: SupabaseClient): Api {
       check(await sb.from('books').delete().eq('id', id));
     },
     async listReadingLogs() {
-      return check(await sb.from('reading_logs').select('*').order('created_at')) as ReadingLog[];
+      return all<ReadingLog>((a, b) => sb.from('reading_logs').select('*').order('created_at').order('id').range(a, b));
     },
     async addReadingLog(l) {
       return check(await sb.from('reading_logs').insert(l).select().single()) as ReadingLog;
     },
     async listBookTrees() {
-      return check(await sb.from('book_trees').select('id,book_id,month,cell')) as BookTree[];
+      return all<BookTree>((a, b) => sb.from('book_trees').select('id,book_id,month,cell').order('id').range(a, b));
     },
     async plantBookTree(t) {
       return check(await sb.from('book_trees').insert(t).select('id,book_id,month,cell').single()) as BookTree;
@@ -176,6 +188,63 @@ export function supabaseApi(sb: SupabaseClient): Api {
       }
       return data as SendReportResult;
     },
+
+    async listPlans(from, to) {
+      return all<PlanItem>((a, b) =>
+        sb.from('study_plans').select('id,date,course_id,minutes,note,approved').gte('date', from).lte('date', to).order('created_at').order('id').range(a, b),
+      );
+    },
+    async savePlans(from, to, items, approved) {
+      check(await sb.from('study_plans').delete().gte('date', from).lte('date', to));
+      if (items.length) check(await sb.from('study_plans').insert(items.map((i) => ({ ...i, approved }))));
+    },
+    async approvePlans(from, to) {
+      check(await sb.from('study_plans').update({ approved: true }).gte('date', from).lte('date', to).eq('approved', false));
+    },
+    async getFamily() {
+      const row = check(
+        await sb.from('family_settings').select('pin_hash,require_plan_approval').maybeSingle(),
+      ) as FamilySettings | null;
+      return row ?? DEFAULT_FAMILY;
+    },
+    async setFamily(f) {
+      const { data: u } = await sb.auth.getUser();
+      check(
+        await sb
+          .from('family_settings')
+          .upsert({ user_id: u.user?.id, ...f, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }),
+      );
+    },
+    async listNotes(limit) {
+      return check(
+        await sb.from('parent_notes').select('id,text,reaction,created_at').order('created_at', { ascending: false }).limit(limit),
+      ) as ParentNote[];
+    },
+    async addNote(text) {
+      return check(await sb.from('parent_notes').insert({ text }).select('id,text,reaction,created_at').single()) as ParentNote;
+    },
+    async reactNote(id, reaction) {
+      check(await sb.from('parent_notes').update({ reaction }).eq('id', id));
+    },
+    async deleteNote(id) {
+      check(await sb.from('parent_notes').delete().eq('id', id));
+    },
+    async listRewards() {
+      return check(
+        await sb.from('rewards').select('id,title,kind,target,given_by,start_date,claimed_on,created_at').order('created_at'),
+      ) as Reward[];
+    },
+    async addReward(r) {
+      return check(
+        await sb.from('rewards').insert(r).select('id,title,kind,target,given_by,start_date,claimed_on,created_at').single(),
+      ) as Reward;
+    },
+    async updateReward(id, patch) {
+      check(await sb.from('rewards').update(patch).eq('id', id));
+    },
+    async deleteReward(id) {
+      check(await sb.from('rewards').delete().eq('id', id));
+    },
   };
 }
 
@@ -192,9 +261,13 @@ interface DemoDb {
   readingGoals?: ReadingGoals;
   reportSettings?: ReportSettings;
   reports?: Record<string, DailyReport>;
+  plans?: PlanItem[];
+  family?: FamilySettings;
+  notes?: ParentNote[];
+  rewards?: Reward[];
 }
 
-const DEMO_KEY = 'ct-demo-db-v7';
+export const DEMO_KEY = 'ct-demo-db-v8';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -245,6 +318,7 @@ export function localApi(seed: () => DemoDb): Api {
       db.courses = db.courses.filter((c) => c.id !== id);
       db.logs = db.logs.filter((l) => l.course_id !== id); // cascade
       db.tasks.forEach((t) => t.course_id === id && (t.course_id = null)); // set null
+      db.plans = (db.plans ?? []).filter((p) => p.course_id !== id); // cascade
       save();
     },
 
@@ -413,6 +487,69 @@ export function localApi(seed: () => DemoDb): Api {
       db.reports[date] = { date, subject: mail.subject, html: mail.html, sent_at: new Date().toISOString(), generated_by: 'fallback' };
       save();
       return { status: 'demo', subject: mail.subject, html: mail.html, generatedBy: 'fallback' };
+    },
+
+    async listPlans(from, to) {
+      return (load().plans ?? []).filter((p) => p.date >= from && p.date <= to);
+    },
+    async savePlans(from, to, items, approved) {
+      const db = load();
+      db.plans = (db.plans ?? []).filter((p) => p.date < from || p.date > to);
+      db.plans.push(...items.map((i) => ({ ...i, id: uid(), approved })));
+      save();
+    },
+    async approvePlans(from, to) {
+      (load().plans ?? []).forEach((p) => p.date >= from && p.date <= to && (p.approved = true));
+      save();
+    },
+    async getFamily() {
+      return load().family ?? DEFAULT_FAMILY;
+    },
+    async setFamily(f) {
+      load().family = f;
+      save();
+    },
+    async listNotes(limit) {
+      return [...(load().notes ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+    },
+    async addNote(text) {
+      const db = load();
+      db.notes ??= [];
+      const n: ParentNote = { id: uid(), text, reaction: null, created_at: now() };
+      db.notes.push(n);
+      save();
+      return n;
+    },
+    async reactNote(id, reaction) {
+      const n = load().notes?.find((x) => x.id === id);
+      if (n) n.reaction = reaction;
+      save();
+    },
+    async deleteNote(id) {
+      const db = load();
+      db.notes = (db.notes ?? []).filter((n) => n.id !== id);
+      save();
+    },
+    async listRewards() {
+      return [...(load().rewards ?? [])];
+    },
+    async addReward(r) {
+      const db = load();
+      db.rewards ??= [];
+      const reward: Reward = { ...r, id: uid(), claimed_on: null, created_at: now() };
+      db.rewards.push(reward);
+      save();
+      return reward;
+    },
+    async updateReward(id, patch) {
+      const r = load().rewards?.find((x) => x.id === id);
+      if (r) Object.assign(r, patch);
+      save();
+    },
+    async deleteReward(id) {
+      const db = load();
+      db.rewards = (db.rewards ?? []).filter((r) => r.id !== id);
+      save();
     },
   };
   return self;

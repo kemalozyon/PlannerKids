@@ -2,7 +2,8 @@
 // Uzun vadeli ilerleme = aylık ormanlar + seriyle açılan ağaç türleri + rozetler.
 import { addDays, parseLocalDate, weekStart } from './date';
 import { SPECIES, STAGES, monthOf, priceOf, stageIndex } from './forest';
-import type { ForestTree, Reflection, StudyLog } from './types';
+import { completedPlanDays } from './plan';
+import type { ForestTree, PlanItem, Reflection, StudyLog } from './types';
 
 export interface Badge {
   id: string;
@@ -28,6 +29,8 @@ export interface GameInput {
   trees: ForestTree[];
   doneTasks: number;
   today: string;
+  /** Günlük planlar (yoksa boş) */
+  plans?: PlanItem[];
 }
 
 export interface GameStats {
@@ -48,6 +51,8 @@ export interface GameStats {
   /** Son dikilen tür — önizlemede kullanılır */
   favoriteSpecies: string;
   badges: Badge[];
+  /** Planı tamamen bitirilmiş günler */
+  planDays: string[];
 }
 
 const isWeekend = (d: string) => [0, 6].includes(parseLocalDate(d).getDay());
@@ -90,7 +95,7 @@ export function walletsFor(month: string, dayTotals: Map<string, number>, trees:
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export function computeStats({ logs, reflections, trees, doneTasks, today }: GameInput): GameStats {
+export function computeStats({ logs, reflections, trees, doneTasks, today, plans = [] }: GameInput): GameStats {
   const dayTotals = new Map<string, number>();
   for (const l of logs) dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes);
   const totalMinutes = logs.reduce((s, l) => s + l.duration_minutes, 0);
@@ -109,6 +114,8 @@ export function computeStats({ logs, reflections, trees, doneTasks, today }: Gam
     if (!weekCourses.has(w)) weekCourses.set(w, new Set());
     weekCourses.get(w)!.add(l.course_id);
   }
+  const planDays = completedPlanDays(plans, logs).filter((d) => d <= today);
+
   const maxCoursesInWeek = Math.max(0, ...[...weekCourses.values()].map((s) => s.size));
 
   const b = (id: string, icon: string, title: string, desc: string, value: number, target: number): Badge => ({
@@ -133,6 +140,8 @@ export function computeStats({ logs, reflections, trees, doneTasks, today }: Gam
     b('feel7', '😊', 'Duygu Günlüğü', '7 gün "nasıl geçti" yaz', reflectionDays, 7),
     b('tasks10', '✅', 'Liste Avcısı', '10 görevi bitir', doneTasks, 10),
     b('variety', '🎨', 'Çok Yönlü', 'Bir haftada 3 farklı derse çalış', maxCoursesInWeek, 3),
+    b('plan1', '📋', 'Planlı Gün', 'Bir günün planını tamamla', planDays.length, 1),
+    b('plan10', '🗓️', 'Plan Ustası', '10 günün planını tamamla', planDays.length, 10),
     b('month15', '🗺️', 'Gür Orman', 'Bir ayda 15 bitki dik', Math.max(0, ...countByMonth(trees).values()), 15),
   ];
 
@@ -152,6 +161,7 @@ export function computeStats({ logs, reflections, trees, doneTasks, today }: Gam
     unlockedSpecies: new Set(SPECIES.filter((s) => bestStreak >= s.unlock).map((s) => s.id)),
     favoriteSpecies: lastTree?.species ?? SPECIES[0].id,
     badges,
+    planDays,
   };
 }
 

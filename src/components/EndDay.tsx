@@ -58,7 +58,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
           <p className="muted small center">
             {ready
               ? `Basınca günün raporu ebeveynine gider. Basmazsan saat ${String(settings!.send_hour).padStart(2, '0')}:00'da kendiliğinden gider.`
-              : 'Ebeveyn raporu için önce Profil sayfasındaki aile kontrolü ayarlarını doldur.'}
+              : 'Ebeveyn raporu için annen ya da baban önce Profil › Aile paneli\'nden rapor ayarlarını doldurmalı.'}
           </p>
         </>
       )}
