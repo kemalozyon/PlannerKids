@@ -15,6 +15,7 @@ import Tree from '../components/Tree';
 interface Props {
   courses: Course[];
   goCourses: () => void;
+  goProfile: () => void;
   goForest: () => void;
   onPlant: () => void;
   reloadCourses: () => void;
@@ -23,7 +24,7 @@ interface Props {
   demo: boolean;
 }
 
-export default function Today({ courses, goCourses, goForest, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
+export default function Today({ courses, goCourses, goProfile, goForest, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
   const api = useApi();
   const game = useGame();
   const [date, setDate] = useState(toLocalDate);
@@ -142,7 +143,7 @@ export default function Today({ courses, goCourses, goForest, onPlant, reloadCou
 
       <ReflectionCard date={date} />
 
-      <EndDay goForest={onPlant} goSettings={goCourses} demo={demo} />
+      <EndDay goForest={onPlant} goSettings={goProfile} demo={demo} />
     </div>
   );
 }

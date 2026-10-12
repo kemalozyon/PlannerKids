@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { useGame } from '../lib/GameContext';
 import { SCHOOL_SUBJECTS, hasCourse } from '../lib/presets';
-import ParentSettings from '../components/ParentSettings';
 import type { Course } from '../lib/types';
 
 export const PALETTE = ['#4f7cff', '#16a37f', '#e0803a', '#d1477a', '#8b5cf6', '#0ea5c6', '#c9a227', '#6b7280'];
@@ -104,7 +103,6 @@ export default function Courses({ courses, reload }: { courses: Course[]; reload
         )}
       </section>
 
-      <ParentSettings />
     </div>
   );
 }

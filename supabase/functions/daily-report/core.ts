@@ -33,7 +33,9 @@ export interface DataSource {
 }
 
 export interface Env {
-  ANTHROPIC_API_KEY?: string;
+  EVREN_API_KEY?: string;
+  /** Anthropic Messages uyumlu LLM API kökü; varsayılan EVREN. */
+  EVREN_BASE_URL?: string;
   REPORT_MODEL?: string;
   RESEND_API_KEY?: string;
   REPORT_FROM?: string;
@@ -49,6 +51,12 @@ export type SendResult =
   | { status: 'error'; message: string };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export const DEFAULT_LLM_BASE_URL = 'https://evren-llmapi.ssyz.org.tr';
+export const DEFAULT_REPORT_MODEL = 'deepseek-v4-flash';
+/** EVREN modellerinin çoğu önce düşünür; düşünme bu bütçeden yer, düşük tutulursa JSON yarım kalır. */
+const LLM_MAX_TOKENS = 4000;
+const LLM_TIMEOUT_MS = 45_000;
 
 /** Bir anın verilen saat dilimindeki yerel tarihi ve saati. */
 export function localNow(now: Date, timeZone: string): { date: string; hour: number } {
@@ -73,27 +81,28 @@ export function validButtonDate(date: string, now: Date, timeZone: string): bool
 
 export async function writeNarrative(input: ReportInput, env: Env, fetchFn: FetchFn): Promise<{ n: Narrative; by: 'llm' | 'fallback' }> {
   const facts = buildFacts(input);
-  if (!env.ANTHROPIC_API_KEY) return { n: fallbackNarrative(facts), by: 'fallback' };
+  if (!env.EVREN_API_KEY) return { n: fallbackNarrative(facts), by: 'fallback' };
   try {
-    const res = await fetchFn('https://api.anthropic.com/v1/messages', {
+    const res = await fetchFn(`${env.EVREN_BASE_URL || DEFAULT_LLM_BASE_URL}/v1/messages`, {
       method: 'POST',
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       headers: {
-        'x-api-key': env.ANTHROPIC_API_KEY,
+        'x-api-key': env.EVREN_API_KEY,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: env.REPORT_MODEL || 'claude-sonnet-5-5',
-        max_tokens: 800,
+        model: env.REPORT_MODEL || DEFAULT_REPORT_MODEL,
+        max_tokens: LLM_MAX_TOKENS,
         system: REPORT_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: reportUserPrompt(facts) }],
       }),
     });
-    if (!res.ok) throw new Error(`Claude API ${res.status}`);
+    if (!res.ok) throw new Error(`LLM API ${res.status}`);
     const body = (await res.json()) as { content?: { type: string; text?: string }[] };
     const text = (body.content ?? []).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
     const n = parseNarrative(text);
-    if (!n) throw new Error('Claude çıktısı JSON değil');
+    if (!n) throw new Error('LLM çıktısı JSON değil');
     return { n, by: 'llm' };
   } catch (e) {
     console.error('LLM başarısız, yedek metin kullanılıyor:', (e as Error).message);

@@ -238,6 +238,13 @@ blockquote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--li
 .login-card { max-width: 380px; width: 100%; text-align: center; padding: 32px 24px; }
 .login-card h1 { margin-bottom: 6px; }
 .login-card p { margin-bottom: 24px; }
+.login-card form { text-align: left; }
+.login-card .tabs { margin-bottom: 18px; }
+.login-card .error, .login-card .notice { margin-bottom: 12px; }
+.notice { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); padding: 10px 12px; border-radius: 10px; font-size: 0.9rem; }
+.login-links { margin-top: 12px; font-size: 0.9rem; min-height: 1.2em; }
+.login-or { display: flex; align-items: center; gap: 10px; margin: 18px 0 14px; color: var(--muted); font-size: 0.85rem; }
+.login-or::before, .login-or::after { content: ''; flex: 1; height: 1px; background: var(--line, rgba(0,0,0,.12)); }
 .logo { font-size: 2.4rem; margin-bottom: 8px; }
 
 /* ---------- Oyunlaştırma ---------- */

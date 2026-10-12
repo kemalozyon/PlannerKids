@@ -11,17 +11,20 @@ import History from './pages/History';
 import Today from './pages/Today';
 import Forest from './pages/Forest';
 import Library from './pages/Library';
+import Profile from './pages/Profile';
 import { ReadingProvider } from './lib/ReadingContext';
 import Celebrations from './components/Celebrations';
+import Login, { NewPassword } from './components/Login';
 import { GameProvider } from './lib/GameContext';
 
-type Tab = 'today' | 'forest' | 'library' | 'history' | 'courses';
+type Tab = 'today' | 'forest' | 'library' | 'history' | 'courses' | 'profile';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Bugün' },
   { id: 'forest', label: 'Orman' },
   { id: 'library', label: 'Kitaplık' },
   { id: 'history', label: 'Geçmiş' },
   { id: 'courses', label: 'Dersler' },
+  { id: 'profile', label: 'Profil' },
 ];
 
 function readTab(): Tab {
@@ -40,10 +43,15 @@ const DEMO_API = localApi(demoSeed);
 function AuthGate() {
   const sb = supabase!;
   const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     sb.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data } = sb.auth.onAuthStateChange((e, s) => {
+      setSession(s);
+      // Şifre yenileme bağlantısıyla gelindi: önce yeni şifre sorulur
+      if (e === 'PASSWORD_RECOVERY') setRecovery(true);
+    });
     return () => data.subscription.unsubscribe();
   }, [sb]);
 
@@ -51,33 +59,8 @@ function AuthGate() {
 
   if (session === undefined) return <div className="splash">Yükleniyor…</div>;
   if (!session) return <Login />;
+  if (recovery) return <NewPassword onDone={() => setRecovery(false)} />;
   return <Shell api={api} email={session.user.email} onSignOut={() => sb.auth.signOut()} />;
-}
-
-function Login() {
-  const [err, setErr] = useState<string | null>(null);
-  return (
-    <div className="login">
-      <div className="card login-card">
-        <div className="logo">◷</div>
-        <h1>Çalışma Takip</h1>
-        <p className="muted">Bugün ne çalıştın, ne kadar çalıştın, gün nasıl geçti?</p>
-        <button
-          className="btn google full"
-          onClick={async () => {
-            const { error } = await supabase!.auth.signInWithOAuth({
-              provider: 'google',
-              options: { redirectTo: location.origin + location.pathname },
-            });
-            if (error) setErr(error.message);
-          }}
-        >
-          <GoogleIcon /> Google ile giriş yap
-        </button>
-        {err && <div className="error">{err}</div>}
-      </div>
-    </div>
-  );
 }
 
 function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; email?: string; onSignOut?: () => void }) {
@@ -157,6 +140,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <Today
               courses={courses}
               goCourses={() => go('courses')}
+              goProfile={() => go('profile')}
               goForest={() => go('forest')}
               onPlant={() => {
                 setPlantIntent(true);
@@ -173,8 +157,10 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <Library onPlantBook={plantBook} />
           ) : tab === 'history' ? (
             <History courses={courses} />
-          ) : (
+          ) : tab === 'courses' ? (
             <Courses courses={courses} reload={reloadCourses} />
+          ) : (
+            <Profile email={email} demo={!!demo} onSignOut={onSignOut} />
           )}
         </main>
         <Celebrations />
@@ -182,16 +168,5 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
       </ReadingProvider>
       </GameProvider>
     </ApiContext.Provider>
-  );
-}
-
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
-    </svg>
   );
 }

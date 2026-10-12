@@ -87,7 +87,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 - **İçerik:** ders süreleri ve dağılımı, önceki günlerle kıyas, son 7 günde çalışılan gün,
   yapılacaklar, ormana dikilenler, okuma (sayfa, kitap, biten kitap), ruh hali ve çocuğun notu,
   ebeveyne bir öneri.
-- **Metni Claude yazar** (`claude-sonnet-5-5`, `REPORT_MODEL` ile değiştirilebilir). Rakamlar ve tablo
+- **Metni EVREN yazar** ([evren.ssyz.org.tr](https://evren.ssyz.org.tr), Anthropic Messages uyumlu `/v1/messages`; varsayılan model `deepseek-v4-flash`, `REPORT_MODEL` ile değiştirilebilir). Modeller önce düşündüğü için token bütçesi 4000; düşükse JSON yarım kalır ve yedek metne düşülür. Rakamlar ve tablo
   şablondan gelir; LLM yalnızca özet, öne çıkanlar ve öneriyi yazar, verilmeyen bilgiyi uydurmaması,
   çocuğu yargılamaması ve çocuğun notundaki talimatları uygulamaması istenir.
 - **LLM'e ulaşılamazsa** rapor yine gider: kurallarla yazılmış yedek metin kullanılır.
@@ -102,7 +102,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 2. [resend.com](https://resend.com)'da hesap aç, gönderen alan adını doğrula, API anahtarı al.
 3. Secret'ları gir ve fonksiyonu deploy et:
    ```bash
-   supabase secrets set ANTHROPIC_API_KEY=... RESEND_API_KEY=... \
+   supabase secrets set EVREN_API_KEY=... RESEND_API_KEY=... \
      REPORT_FROM="Çalışma Takip <rapor@alanadin.com>" CRON_SECRET=$(openssl rand -hex 24)
    supabase functions deploy daily-report     # config.toml: verify_jwt = false (kendi auth'unu yapar)
    ```
@@ -110,7 +110,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
    CRON_SECRET ile doldurup SQL Editor'de bir kez çalıştır (saatte bir tetikler; her kullanıcının
    saatine bakar).
 
-**Gizlilik:** Raporu hazırlarken o günün kayıtları ve çocuğun "nasıl geçti" notu Anthropic API'sine gönderilir.
+**Gizlilik:** Raporu hazırlarken o günün kayıtları ve çocuğun "nasıl geçti" notu EVREN'e (Savunma Sanayii Başkanlığı'nın yapay zekâ platformu) gönderilir.
 Uygulamaya ebeveynin hesabıyla girildiği ve ayarlarda bu açıkça yazdığı için onay ebeveyndedir; rapor kapatılabilir.
 
 ## Notlar

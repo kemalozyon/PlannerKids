@@ -26,10 +26,11 @@ export default function ParentSettings() {
 
   return (
     <section className="card parent-settings" id="ebeveyn">
-      <h2>Ebeveyn raporu</h2>
+      <h2>Aile kontrolü · günlük rapor</h2>
       <p className="muted small">
         Her gün, çocuk "Bugünü bitirdim"e bastığında ya da en geç seçtiğiniz saatte, günün özeti e-postayla gelir. Özet ve öneri metnini yapay zekâ
-        (Claude) yazar. Bunun için o günün kayıtları ve çocuğun "nasıl geçti" notu rapor hazırlanırken Anthropic'e gönderilir.
+        (Savunma Sanayii Başkanlığı'nın EVREN platformu) yazar. Bunun için o günün kayıtları ve çocuğun "nasıl geçti" notu rapor hazırlanırken EVREN'e
+        gönderilir.
       </p>
       <label className="field">
         <span>Ebeveyn e-postası</span>

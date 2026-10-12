@@ -58,7 +58,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
           <p className="muted small center">
             {ready
               ? `Basınca günün raporu ebeveynine gider. Basmazsan saat ${String(settings!.send_hour).padStart(2, '0')}:00'da kendiliğinden gider.`
-              : 'Ebeveyn raporu için önce Dersler sayfasındaki ebeveyn ayarlarını doldur.'}
+              : 'Ebeveyn raporu için önce Profil sayfasındaki aile kontrolü ayarlarını doldur.'}
           </p>
         </>
       )}
@@ -90,7 +90,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
         <Sheet title={demo ? 'Rapor önizlemesi' : 'Gönderilen rapor'} onClose={() => setPreview(false)}>
           {demo && (
             <p className="demo-note small">
-              Demo modu: e-posta gönderilmedi. Gerçek sürümde özet ve öneri metnini Claude yazar, rapor <strong>{settings?.parent_email}</strong> adresine gider.
+              Demo modu: e-posta gönderilmedi. Gerçek sürümde özet ve öneri metnini yapay zekâ (EVREN) yazar, rapor <strong>{settings?.parent_email}</strong> adresine gider.
             </p>
           )}
           {report.subject && (

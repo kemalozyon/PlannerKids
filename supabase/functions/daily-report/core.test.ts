@@ -1,0 +1,187 @@
+// node --test ile çalışır (npm test). Supabase, EVREN (LLM) ve Resend sahte; ağa çıkılmaz.
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { sampleInput } from '../_shared/report.fixtures.ts';
+import { localNow, runSchedule, sendReport, validButtonDate, writeNarrative, type DataSource, type Env, type FetchFn, type ReportSettings } from './core.ts';
+
+const ENV: Env = { EVREN_API_KEY: 'test-evren', RESEND_API_KEY: 'test-resend', REPORT_FROM: 'Rapor <r@ornek.com>' };
+
+const settingsFor = (over: Partial<ReportSettings> = {}): ReportSettings => ({
+  user_id: 'u1',
+  parent_email: 'veli@ornek.com',
+  child_name: 'Ece',
+  send_hour: 21,
+  timezone: 'Europe/Istanbul',
+  enabled: true,
+  ...over,
+});
+
+/** Bellekte DataSource: daily_reports unique kısıtını taklit eder. */
+function fakeDs(settings: ReportSettings[]) {
+  const reports = new Map<string, { status: 'sending' | 'sent'; subject?: string; generated_by?: string }>();
+  const ds: DataSource = {
+    async settings(userId) {
+      return settings.find((s) => s.user_id === userId) ?? null;
+    },
+    async claim(userId, date) {
+      const k = `${userId}|${date}`;
+      if (reports.has(k)) return false;
+      reports.set(k, { status: 'sending' });
+      return true;
+    },
+    async finish(userId, date, r) {
+      reports.set(`${userId}|${date}`, { status: 'sent', subject: r.subject, generated_by: r.generated_by });
+    },
+    async release(userId, date) {
+      const k = `${userId}|${date}`;
+      if (reports.get(k)?.status === 'sending') reports.delete(k);
+    },
+    async gather(_userId, date, childName) {
+      return sampleInput({ date, childName });
+    },
+    async enabledSettings() {
+      return settings.filter((s) => s.enabled);
+    },
+  };
+  return { ds, reports };
+}
+
+type Call = { url: string; body: Record<string, unknown>; headers: Record<string, string> };
+
+/** EVREN ve Resend uç noktalarını taklit eden fetch. */
+function fakeFetch(opts: { claude?: () => Response; resend?: () => Response } = {}) {
+  const calls: Call[] = [];
+  const claudeOk = () =>
+    Response.json({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ subject: 'Ece bugün kesirleri çözdü', summary: 'Ece bugün 85 dakika çalıştı.', highlights: ['Matematik'], parent_tip: 'Kesirleri sorun.' }),
+        },
+      ],
+    });
+  const fetchFn: FetchFn = async (url, init) => {
+    calls.push({ url, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
+    if (url.includes('evren-llmapi')) return (opts.claude ?? claudeOk)();
+    if (url.includes('resend.com')) return (opts.resend ?? (() => Response.json({ id: 'mail-1' })))();
+    throw new Error(`beklenmeyen istek: ${url}`);
+  };
+  return { fetchFn, calls };
+}
+
+test('sendReport: LLM metniyle rapor üretir ve ebeveyne e-posta atar', async () => {
+  const { ds, reports } = fakeDs([settingsFor()]);
+  const { fetchFn, calls } = fakeFetch();
+  const r = await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'button');
+
+  assert.equal(r.status, 'sent');
+  assert.ok(r.status === 'sent' && r.generatedBy === 'llm');
+  assert.ok(r.status === 'sent' && r.subject === 'Ece bugün kesirleri çözdü');
+
+  const [claude, resend] = calls;
+  assert.equal(claude.url, 'https://evren-llmapi.ssyz.org.tr/v1/messages');
+  assert.equal(claude.headers['x-api-key'], 'test-evren');
+  assert.equal(claude.body.model, 'deepseek-v4-flash');
+  assert.ok(Number(claude.body.max_tokens) >= 4000, 'düşünen modeller için yeterli token bütçesi');
+  assert.equal(resend.url, 'https://api.resend.com/emails');
+  assert.deepEqual(resend.body.to, ['veli@ornek.com']);
+  assert.equal(resend.body.from, 'Rapor <r@ornek.com>');
+  assert.match(String(resend.body.html), /Kesirleri sorun\./);
+  assert.match(String(resend.body.text), /Ece bugün 85 dakika çalıştı\./);
+
+  assert.deepEqual(reports.get('u1|2026-10-12'), { status: 'sent', subject: 'Ece bugün kesirleri çözdü', generated_by: 'llm' });
+});
+
+test('sendReport: REPORT_MODEL varsayılan modeli değiştirir', async () => {
+  const { ds } = fakeDs([settingsFor()]);
+  const { fetchFn, calls } = fakeFetch();
+  await sendReport(ds, { ...ENV, REPORT_MODEL: 'mimo-v2.6-pro' }, fetchFn, 'u1', '2026-10-12', 'button');
+  assert.equal(calls[0].body.model, 'mimo-v2.6-pro');
+});
+
+test('sendReport: günde en fazla bir rapor', async () => {
+  const { ds } = fakeDs([settingsFor()]);
+  const { fetchFn, calls } = fakeFetch();
+  assert.equal((await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'button')).status, 'sent');
+  assert.equal((await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'schedule')).status, 'already');
+  assert.equal(calls.filter((c) => c.url.includes('resend')).length, 1);
+});
+
+test('sendReport: ayar yoksa, kapalıysa ya da e-posta yoksa gönderilmez', async () => {
+  const { fetchFn, calls } = fakeFetch();
+  for (const s of [[], [settingsFor({ enabled: false })], [settingsFor({ parent_email: null })]]) {
+    const { ds, reports } = fakeDs(s);
+    assert.equal((await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'button')).status, 'disabled');
+    assert.equal(reports.size, 0);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('LLM hata verirse yedek metinle yine gönderilir', async () => {
+  for (const claude of [() => new Response('overloaded', { status: 529 }), () => Response.json({ content: [{ type: 'text', text: 'JSON değil' }] })]) {
+    const { ds, reports } = fakeDs([settingsFor()]);
+    const { fetchFn } = fakeFetch({ claude });
+    const r = await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'button');
+    assert.ok(r.status === 'sent' && r.generatedBy === 'fallback');
+    assert.equal(reports.get('u1|2026-10-12')?.generated_by, 'fallback');
+  }
+});
+
+test('EVREN_API_KEY yoksa LLM çağrılmaz, yedek metin kullanılır', async () => {
+  const { fetchFn, calls } = fakeFetch();
+  const { by } = await writeNarrative(sampleInput(), {}, fetchFn);
+  assert.equal(by, 'fallback');
+  assert.equal(calls.length, 0);
+});
+
+test('e-posta gönderilemezse kayıt silinir, sonra tekrar denenebilir', async () => {
+  const { ds, reports } = fakeDs([settingsFor()]);
+  const failing = fakeFetch({ resend: () => new Response('domain not verified', { status: 403 }) });
+  const r = await sendReport(ds, ENV, failing.fetchFn, 'u1', '2026-10-12', 'button');
+  assert.equal(r.status, 'error');
+  assert.match(r.status === 'error' ? r.message : '', /Resend 403: domain not verified/);
+  assert.equal(reports.size, 0);
+
+  const retry = await sendReport(ds, ENV, fakeFetch().fetchFn, 'u1', '2026-10-12', 'button');
+  assert.equal(retry.status, 'sent');
+});
+
+test('Resend ayarı eksikse hata döner ve kayıt silinir', async () => {
+  const { ds, reports } = fakeDs([settingsFor()]);
+  const r = await sendReport(ds, { EVREN_API_KEY: 'k' }, fakeFetch().fetchFn, 'u1', '2026-10-12', 'button');
+  assert.equal(r.status, 'error');
+  assert.equal(reports.size, 0);
+});
+
+test('localNow ve validButtonDate saat dilimine göre çalışır', () => {
+  // 2026-10-12 21:30 UTC = İstanbul'da 13 Ekim 00:30
+  const now = new Date('2026-10-12T21:30:00Z');
+  assert.deepEqual(localNow(now, 'Europe/Istanbul'), { date: '2026-10-13', hour: 0 });
+  assert.deepEqual(localNow(now, 'UTC'), { date: '2026-10-12', hour: 21 });
+  assert.equal(validButtonDate('2026-10-13', now, 'Europe/Istanbul'), true);
+  assert.equal(validButtonDate('2026-10-12', now, 'Europe/Istanbul'), true); // dün
+  assert.equal(validButtonDate('2026-10-11', now, 'Europe/Istanbul'), false);
+  assert.equal(validButtonDate('2026-10-14', now, 'Europe/Istanbul'), false);
+  assert.equal(validButtonDate('13.10.2026', now, 'Europe/Istanbul'), false);
+});
+
+test('runSchedule: yalnızca yerel saati gelmiş kullanıcılara gönderir', async () => {
+  const { ds } = fakeDs([
+    settingsFor({ user_id: 'ist', send_hour: 21 }),
+    settingsFor({ user_id: 'erken', send_hour: 22 }),
+    settingsFor({ user_id: 'ny', timezone: 'America/New_York', send_hour: 21 }),
+    settingsFor({ user_id: 'kapali', enabled: false }),
+    settingsFor({ user_id: 'epostasiz', parent_email: null }),
+  ]);
+  const { fetchFn } = fakeFetch();
+  const now = new Date('2026-10-12T18:05:00Z'); // İstanbul 21:05, New York 14:05
+  const results = await runSchedule(ds, ENV, fetchFn, now);
+  assert.deepEqual(results, [{ userId: 'ist', date: '2026-10-12', status: 'sent' }]);
+
+  // Bir saat sonra: İstanbul zaten gönderildi, 22:00'yi seçen kullanıcıya gider
+  const later = await runSchedule(ds, ENV, fetchFn, new Date('2026-10-12T19:05:00Z'));
+  assert.deepEqual(later, [
+    { userId: 'ist', date: '2026-10-12', status: 'already' },
+    { userId: 'erken', date: '2026-10-12', status: 'sent' },
+  ]);
+});
