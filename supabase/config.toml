@@ -1,0 +1,5 @@
+# Yalnızca function ayarı; proje ayarları Supabase panelinde.
+# daily-report kendi kimlik doğrulamasını yapıyor (kullanıcı JWT'si ya da x-cron-secret),
+# pg_cron çağrısı JWT taşımadığı için platform düzeyindeki JWT kontrolü kapalı.
+[functions.daily-report]
+verify_jwt = false
