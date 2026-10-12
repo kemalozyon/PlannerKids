@@ -853,7 +853,9 @@ h3 { font-size: 0.95rem; margin: 16px 0 10px; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
   font-size: 0.8rem; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums;
 }
-.cal-mood { font-size: 0.7rem; line-height: 1; height: 0.75rem; }
+.cal-mood { font-size: 0.7rem; line-height: 1; height: 0.9rem; display: flex; align-items: flex-end; gap: 1px; }
+.cal-mood svg { display: block; }
+.day-soil { width: 70px; height: 20px; margin: 0 10px 6px; }
 .cal-day.lv0, .cal-swatch.lv0 { background: color-mix(in srgb, var(--line) 70%, var(--bg)); color: var(--muted); }
 .cal-day.lv1, .cal-swatch.lv1 { background: color-mix(in srgb, var(--good) 20%, var(--card)); }
 .cal-day.lv2, .cal-swatch.lv2 { background: color-mix(in srgb, var(--good) 42%, var(--card)); }

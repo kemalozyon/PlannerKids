@@ -44,24 +44,26 @@ src/
     WeekPlan.tsx   Haftalık plan: güne göre ders/dakika, hazır şablonlar, geçen haftayı kopyala
     Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
     ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, rapor ayarları
-supabase/migrations/0001_init.sql … 0005_plans_family.sql
+supabase/migrations/0001_init.sql … 0006_one_tree_per_day.sql
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
 ## Oyunlaştırma: Orman ve para (≈10 yaş için)
 
-Çalışılan her dakika 🪙 1 dakikalık **para**dır. Çocuk o günün parasıyla bitki satın alıp
-**o ayın ormanına kendisi diker**. Her ay yeni orman başlar, eski ormanlar ay ay gezilebilir.
+Çalışılan her dakika 🪙 1 dakikalık **para**dır. **Her güne tek bir ağaç** dikilir: çocuk o günün parasının
+yettiği bitkiyi seçip **o ayın ormanına kendisi diker**. Böylece ormandaki her ağaç bir günü anlatır; ağaca
+(ya da Geçmiş takviminde bir güne) dokununca o günün ağacı, dersleri ve "nasıl geçti" notu açılır.
+Her ay yeni orman başlar, eski ormanlar ay ay gezilebilir.
 
 - **Fiyat listesi** (`src/lib/forest.ts` → `STAGES`, tek yerde değiştirilebilir):
   Tohum 30 · Çiçek 60 · Küçük ağaç 90 · Büyük ağaç 120 · Dev ağaç 180 dk.
-  3 saatle bir dev ağaç *ya da* iki küçük ağaç *ya da* 6 tohum… seçim çocuğun.
-- **Cüzdan günlüktür:** her günün parası o güne aittir; harcanmayan kısım ay sonuna kadar
-  "Harcanmayı bekleyen cüzdanlar"da durur. Ay bitince kalanlar o ayın ormanına otomatik harcanır
-  (hep alınabilecek en büyük bitki) — emek kaybolmaz.
-- **Büyütme:** dikili bir bitki, o günün cüzdanından farkı ödenerek büyütülür (tohum → çiçek = 30 dk).
-- **Bütçe sunucuda da korunur:** `forest_trees` tetikleyicisi bir günün harcamasının o günün dakikalarını
-  aşmasına izin vermez.
+  3 saat çalışılan gün dev ağaç olur.
+- **Büyütme:** o gün çalışmaya devam edilirse aynı ağaç farkı ödenerek büyütülür (tohum → çiçek = 30 dk).
+- **Bekleyen günler:** ağacı dikilmemiş ya da büyütülebilecek günler ay sonuna kadar "Ağacını bekleyen
+  günler"de durur. Ay bitince o ayın ormanına otomatik dikilir/büyütülür (paranın yettiği en büyük evre) —
+  emek kaybolmaz.
+- **Kurallar sunucuda da korunur:** `forest_trees` tetikleyicisi bir günün harcamasının o günün dakikalarını
+  aşmasına izin vermez; `0006_one_tree_per_day.sql` güne ikinci ağaç dikilmesini engeller.
 - **Türler:** 8 tür, 3'ü baştan açık; diğerleri en uzun seriyle açılır (3, 5, 7, 10, 14 gün).
 - **Yumuşak seri, rozetler, ruh hali (😞…😄), hazır okul dersleri, 20 dk mola hatırlatması.**
 

@@ -1,8 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useApi } from './ApiContext';
 import { toLocalDate } from './date';
-import { greedySpend, monthOf, pickFreeCell, SPECIES } from './forest';
-import { computeStats, diffStats, walletsFor, type Celebration, type GameStats } from './game';
+import { autoPlantPlan, computeStats, diffStats, type Celebration, type GameStats } from './game';
 import type { Api, ForestTree, StudyLog } from './types';
 
 interface GameCtx {
@@ -26,32 +25,24 @@ export function useGame(): GameCtx {
   return c;
 }
 
-/**
- * Geçmiş aylarda harcanmadan kalan paraları o ayın ormanına otomatik harcar
- * (hep alınabilecek en büyük bitki), böylece ay bitince hiçbir emek kaybolmaz.
- */
+/** Geçmiş aylarda dikilmemiş/büyütülmemiş günleri tamamlar (bkz. autoPlantPlan). Güncel ağaç listesini döner. */
 async function autoPlantPastMonths(api: Api, logs: StudyLog[], trees: ForestTree[], today: string) {
   const dayTotals = new Map<string, number>();
   logs.forEach((l) => dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes));
-  const thisMonth = monthOf(today);
-  const months = new Set([...dayTotals.keys()].map(monthOf).filter((m) => m < thisMonth));
-  const added: ForestTree[] = [];
-  for (const month of months) {
-    const taken = new Set(trees.filter((t) => t.month === month).map((t) => t.cell));
-    for (const w of walletsFor(month, dayTotals, [...trees, ...added], today)) {
-      for (const [k, stage] of greedySpend(w.left).entries()) {
-        const cell = pickFreeCell(taken, `${w.date}#${k}`);
-        if (cell == null) break;
-        taken.add(cell);
-        try {
-          added.push(await api.plantTree({ date: w.date, stage, species: SPECIES[0].id, month, cell }));
-        } catch {
-          /* başka sekme harcamış olabilir */
-        }
+  const out = [...trees];
+  for (const step of autoPlantPlan(dayTotals, trees, today)) {
+    try {
+      if (step.kind === 'plant') out.push(await api.plantTree(step.tree));
+      else {
+        await api.upgradeTree(step.id, step.stage);
+        const i = out.findIndex((t) => t.id === step.id);
+        out[i] = { ...out[i], stage: step.stage };
       }
+    } catch {
+      /* başka sekme aynı anda yapmış olabilir */
     }
   }
-  return added;
+  return out;
 }
 
 export function GameProvider({ children }: { children: ReactNode }) {
@@ -75,7 +66,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       // Plan tablosu henüz kurulmadıysa (0005 çalıştırılmadı) oyun yine çalışsın
       api.listPlans('2000-01-01', today).catch(() => []),
     ]);
-    const trees = [...trees0, ...(await autoPlantPastMonths(api, logs, trees0, today))];
+    const trees = await autoPlantPastMonths(api, logs, trees0, today);
     const next = computeStats({ logs, reflections, trees, doneTasks, today, plans });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);

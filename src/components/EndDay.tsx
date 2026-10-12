@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { toLocalDate } from '../lib/date';
 import { STAGES } from '../lib/forest';
+import { dayAction, type Wallet } from '../lib/game';
 import { useGame } from '../lib/GameContext';
 import { useReading } from '../lib/ReadingContext';
 import type { DailyReport, Reflection, ReportSettings } from '../lib/types';
@@ -68,7 +69,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
           date={date}
           ready={ready}
           demo={demo}
-          walletLeft={stats.today.left}
+          wallet={stats.today}
           readToday={!!reading.stats?.readToday}
           onClose={() => setOpen(false)}
           goForest={() => {
@@ -109,7 +110,7 @@ function EndDaySheet({
   date,
   ready,
   demo,
-  walletLeft,
+  wallet,
   readToday,
   onClose,
   goForest,
@@ -119,7 +120,7 @@ function EndDaySheet({
   date: string;
   ready: boolean;
   demo: boolean;
-  walletLeft: number;
+  wallet: Wallet;
   readToday: boolean;
   onClose: () => void;
   goForest: () => void;
@@ -135,7 +136,14 @@ function EndDaySheet({
   }, [api, date]);
 
   const wrote = !!ref && (ref.rating != null || !!ref.note?.trim());
-  const canBuy = walletLeft >= STAGES[0].min;
+  const act = dayAction(wallet);
+  const treeText = act
+    ? act.kind === 'plant'
+      ? `Bugün ${wallet.earned} dk çalıştın, bugünün ağacını henüz dikmedin.`
+      : `Ağacını ${STAGES[act.stage].name.toLowerCase()} yapacak kadar çalıştın.`
+    : wallet.tree
+      ? 'Bugünün ağacı ormanında'
+      : `Bugünün ağacı için ${STAGES[0].min - wallet.earned} dk daha çalışman gerek.`;
 
   return (
     <Sheet title="Günü kapatalım 🌙" onClose={onClose}>
@@ -149,12 +157,12 @@ function EndDaySheet({
             </button>
           )}
         </li>
-        <li className={canBuy ? '' : 'ok'}>
-          <span aria-hidden>{canBuy ? '🪙' : '✅'}</span>
-          <span className="grow">{canBuy ? `Cüzdanında ${walletLeft} dk var. Ay bitene kadar bekler ama şimdi de harcayabilirsin.` : 'Bugünün parası harcandı'}</span>
-          {canBuy && (
+        <li className={!act && wallet.tree ? 'ok' : ''}>
+          <span aria-hidden>{act ? '🌱' : wallet.tree ? '✅' : '⏳'}</span>
+          <span className="grow">{treeText}</span>
+          {act && (
             <button className="btn sm" onClick={goForest}>
-              Harca
+              {act.kind === 'plant' ? 'Dik' : 'Büyüt'}
             </button>
           )}
         </li>

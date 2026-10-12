@@ -13,7 +13,7 @@ const SOUND_KEY = 'ct-focus-sound-v1';
 /**
  * Tam ekran odak modu: halka sayaç, çalıştıkça büyüyen fidan, tur seçimi (25 / 40 / serbest),
  * tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
- * Fidan yalnızca gösterimdir: bugünün cüzdanı + bu oturumun dakikası hangi bitkiye yetiyorsa o.
+ * Fidan yalnızca gösterimdir: bugün çalışılan dakika + bu oturum hangi evreye yetiyorsa o (bugünün ağacı).
  */
 export default function FocusMode({
   t,
@@ -57,7 +57,7 @@ export default function FocusMode({
   const R = 112;
   const C = 2 * Math.PI * R;
 
-  const wallet = (stats?.today.left ?? 0) + Math.floor(elapsedMin);
+  const wallet = (stats?.today.earned ?? 0) + Math.floor(elapsedMin);
   const stage = stageIndex(wallet);
   const nx = nextStage(wallet);
   const color = course?.color ?? 'var(--accent)';
@@ -111,7 +111,7 @@ export default function FocusMode({
             <div className="focus-center">
               <div className="clock">{formatClock(t.elapsedMs)}</div>
               <div className={stage < 0 ? 'focus-tree faint' : 'focus-tree'}>
-                <Tree species={stats?.favoriteSpecies ?? 'elma'} stage={Math.max(0, stage)} size={64} />
+                <Tree species={stats?.today.tree?.species ?? stats?.favoriteSpecies ?? 'elma'} stage={Math.max(0, stage)} size={64} />
               </div>
             </div>
           </div>
@@ -119,10 +119,10 @@ export default function FocusMode({
             {goal != null && !reached && <>Turun bitmesine {formatMinutes(Math.ceil(goal - elapsedMin))} · </>}
             {nx ? (
               <>
-                Fidanın büyüyor · <strong className="ink">{nx.stage.name}</strong> olmasına {formatMinutes(nx.remaining)}
+                Bugünün ağacı büyüyor · <strong className="ink">{nx.stage.name}</strong> olmasına {formatMinutes(nx.remaining)}
               </>
             ) : (
-              <>Dev ağaç alacak kadar çalıştın! 🌲</>
+              <>Bugünün ağacı dev olacak kadar çalıştın! 🌲</>
             )}
           </div>
           <div className="rounds" aria-label={`Bugün ${rounds}. oturumun`}>

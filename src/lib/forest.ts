@@ -1,6 +1,6 @@
-// Orman: her gün çalışılan dakikalar o günün parasıdır (cüzdan). Çocuk bu parayla bitki satın alıp
-// o ayın ormanına kendisi diker. Aynı günün parasıyla birden çok bitki alınabilir; dikilen bitki
-// sonradan farkı ödenerek büyütülebilir. Harcanmayan para ay sonuna kadar o gün için durur.
+// Orman: her gün çalışılan dakikalar o günün parasıdır (cüzdan). Her güne tek bir ağaç dikilir:
+// çocuk o günün parasıyla alabileceği bir bitkiyi seçip o ayın ormanına diker. O gün çalışmaya devam
+// ederse aynı ağaç farkı ödenerek büyütülür. Böylece her ağaç tek bir günü anlatır.
 
 export type StageId = 'tohum' | 'cicek' | 'kucuk' | 'buyuk' | 'dev';
 
@@ -27,17 +27,6 @@ export function nextStage(minutes: number) {
   const i = stageIndex(minutes);
   const next = STAGES[i + 1];
   return next ? { stage: next, remaining: next.min - minutes } : null;
-}
-
-/** Otomatik harcama: hep alınabilecek en büyüğünü al (180 → dev; 170 → büyük + tohum). */
-export function greedySpend(budget: number): number[] {
-  const out: number[] = [];
-  let left = budget;
-  for (let i = stageIndex(left); i >= 0; i = stageIndex(left)) {
-    out.push(i);
-    left -= priceOf(i);
-  }
-  return out;
 }
 
 export interface Species {

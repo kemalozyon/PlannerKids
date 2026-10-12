@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import BookTree from '../components/BookTree';
+import DaySheet from '../components/DaySheet';
 import { BookSheet } from '../components/ReadingSheets';
 import Sheet from '../components/Sheet';
 import Tree from '../components/Tree';
-import { useApi } from '../lib/ApiContext';
 import { formatDay, formatMinutes, parseLocalDate, toLocalDate } from '../lib/date';
 import {
   CELLS,
@@ -17,12 +17,11 @@ import {
   speciesById,
   stageIndex,
 } from '../lib/forest';
-import type { Wallet } from '../lib/game';
+import { dayAction, type Wallet } from '../lib/game';
 import { useGame } from '../lib/GameContext';
-import { MOODS } from '../lib/mood';
 import { bookTreeSize, parcelCells, PARCEL_COLS, SIZE_NAMES } from '../lib/reading';
 import { useReading } from '../lib/ReadingContext';
-import type { Book, BookTree as BookTreeT, Course, ForestTree, Reflection, StudyLog } from '../lib/types';
+import type { Book, BookTree as BookTreeT, Course, ForestTree } from '../lib/types';
 
 type Mode =
   | { kind: 'idle' }
@@ -58,7 +57,10 @@ export default function Forest({
   useEffect(() => {
     if (startPlanting && stats?.wallets.length) {
       setMonth(thisMonth);
-      setMode({ kind: 'shop', wallet: stats.wallets.find((w) => w.date === today) ?? stats.wallets[0] });
+      // Bugünün ağacı dikiliyse büyütmek için onu aç, değilse dükkânı
+      const w = stats.wallets.find((x) => x.date === today) ?? stats.wallets[0];
+      if (w.tree) setDetail(w.tree);
+      else setMode({ kind: 'shop', wallet: w });
       onStarted?.();
     }
   }, [startPlanting, stats, thisMonth, today, onStarted]);
@@ -87,8 +89,6 @@ export default function Forest({
   const busy = placing || bookPlacing;
   const pendingBooks = isCurrent ? (reading.stats?.pendingTrees ?? []) : [];
   const minutesOf = (date: string) => stats.dayTotals.get(date) ?? 0;
-  const leftOf = (date: string) =>
-    minutesOf(date) - stats.trees.filter((t) => t.date === date).reduce((sum, t) => sum + priceOf(t.stage), 0);
 
   const onCell = async (cell: number) => {
     setError(null);
@@ -98,12 +98,11 @@ export default function Forest({
         const { wallet, stage, species } = mode;
         setMode({ kind: 'idle' });
         await plant({ date: wallet.date, stage, species, month: thisMonth, cell });
-        const left = wallet.left - priceOf(stage);
         celebrate({
           kind: 'stage',
           icon: '🌱',
-          title: 'Ormanına diktin!',
-          detail: `${speciesById(species).name} · ${STAGES[stage].name}${left >= STAGES[0].min ? ` · cüzdanda ${left} dk kaldı` : ''}`,
+          title: wallet.date === today ? 'Bugünün ağacını diktin!' : 'Ormanına diktin!',
+          detail: `${speciesById(species).name} · ${STAGES[stage].name}${stage < STAGES.length - 1 ? ' · çalıştıkça büyütebilirsin' : ''}`,
         });
       } else if (mode.kind === 'move' && !tree) {
         const id = mode.tree.id;
@@ -151,22 +150,37 @@ export default function Forest({
 
       {isCurrent && stats.wallets.length + pendingBooks.length > 0 && mode.kind === 'idle' && (
         <section className="card pending-card">
-          <h2>Harcanmayı bekleyen cüzdanlar</h2>
+          <h2>Ağacını bekleyen günler</h2>
           <div className="pending-list">
-            {stats.wallets.map((w) => (
-              <button key={w.date} className="pending" onClick={() => setMode({ kind: 'shop', wallet: w })}>
-                <span className="wallet-coin" aria-hidden>
-                  🪙
-                </span>
-                <span className="pending-text">
-                  <strong>{w.date === today ? 'Bugün' : shortDay(w.date)}</strong>
-                  <span className="muted small">
-                    {w.left} dk harcanabilir{w.spent > 0 ? ` · ${w.spent} dk harcandı` : ''}
+            {stats.wallets.map((w) => {
+              const act = dayAction(w);
+              if (!act) return null;
+              return (
+                <button
+                  key={w.date}
+                  className="pending"
+                  onClick={() => (w.tree ? setDetail(w.tree) : setMode({ kind: 'shop', wallet: w }))}
+                >
+                  {w.tree ? (
+                    <Tree species={w.tree.species} stage={w.tree.stage} size={40} />
+                  ) : (
+                    <span className="wallet-coin" aria-hidden>
+                      🪙
+                    </span>
+                  )}
+                  <span className="pending-text">
+                    <strong>{w.date === today ? 'Bugün' : shortDay(w.date)}</strong>
+                    <span className="muted small">
+                      {w.earned} dk ·{' '}
+                      {act.kind === 'plant'
+                        ? `${STAGES[act.stage].name.toLowerCase()} dikebilirsin`
+                        : `${STAGES[w.tree!.stage].name.toLowerCase()} → ${STAGES[act.stage].name.toLowerCase()} büyütebilirsin`}
+                    </span>
                   </span>
-                </span>
-                <span className="pending-cta">Harca</span>
-              </button>
-            ))}
+                  <span className="pending-cta">{act.kind === 'plant' ? 'Dik' : 'Büyüt'}</span>
+                </button>
+              );
+            })}
             {pendingBooks.map((b) => (
               <button key={b.id} className="pending book" onClick={() => setMode({ kind: 'placeBook', book: b })}>
                 <BookTree size={bookTreeSize(b.pages)} color={b.color} px={44} />
@@ -250,9 +264,9 @@ export default function Forest({
         onOpen={(t) => setBookDetail(t)}
       />
 
-      {isCurrent && stats.today.earned < STAGES[0].min && mode.kind === 'idle' && (
+      {isCurrent && !stats.today.tree && stats.today.earned < STAGES[0].min && mode.kind === 'idle' && (
         <p className="muted small center">
-          Bugün {formatMinutes(STAGES[0].min)} çalışınca ilk tohumunu alabilirsin. ({formatMinutes(stats.todayMinutes)} çalıştın)
+          Bugün {formatMinutes(STAGES[0].min)} çalışınca bugünün ağacını dikebilirsin. ({formatMinutes(stats.todayMinutes)} çalıştın)
         </p>
       )}
 
@@ -270,32 +284,37 @@ export default function Forest({
         />
       )}
       {detail && (
-        <DetailSheet
+        <DaySheet
+          date={detail.date}
           tree={detail}
           minutes={minutesOf(detail.date)}
-          left={leftOf(detail.date)}
           courses={courses}
-          canEdit={detail.month === thisMonth}
           onClose={() => setDetail(null)}
-          onMove={() => {
-            setMode({ kind: 'move', tree: detail });
-            setDetail(null);
-          }}
-          onUpgrade={async (stage) => {
-            const from = detail.stage;
-            setDetail(null);
-            try {
-              await upgrade(detail.id, stage);
-              celebrate({
-                kind: 'stage',
-                icon: '🌳',
-                title: `Büyüttün: ${STAGES[stage].name}!`,
-                detail: `${STAGES[from].name} → ${STAGES[stage].name} · ${priceOf(stage) - priceOf(from)} dk ödedin`,
-              });
-            } catch (e) {
-              setError((e as Error).message);
-            }
-          }}
+          edit={
+            detail.month === thisMonth
+              ? {
+                  onMove: () => {
+                    setMode({ kind: 'move', tree: detail });
+                    setDetail(null);
+                  },
+                  onUpgrade: async (stage) => {
+                    const from = detail.stage;
+                    setDetail(null);
+                    try {
+                      await upgrade(detail.id, stage);
+                      celebrate({
+                        kind: 'stage',
+                        icon: '🌳',
+                        title: `Büyüttün: ${STAGES[stage].name}!`,
+                        detail: `${STAGES[from].name} → ${STAGES[stage].name} · ${priceOf(stage) - priceOf(from)} dk ödedin`,
+                      });
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  },
+                }
+              : undefined
+          }
         />
       )}
       {bookDetail && reading.books.find((b) => b.id === bookDetail.book_id) && (
@@ -405,14 +424,13 @@ function ShopSheet({
           🪙
         </span>
         <span className="grow">
-          <strong>{wallet.left} dk</strong> harcayabilirsin
-          <span className="muted small"> · {formatDay(wallet.date)}</span>
+          <strong>{wallet.left} dk</strong> · {formatDay(wallet.date)}
+          <span className="muted small"> · bu günün tek ağacı</span>
         </span>
       </div>
       <ul className="shop" role="radiogroup" aria-label="Ne almak istersin?">
         {STAGES.map((st, i) => {
           const can = priceOf(i) <= wallet.left;
-          const count = Math.floor(wallet.left / priceOf(i));
           return (
             <li key={st.id}>
               <button
@@ -425,7 +443,7 @@ function ShopSheet({
                 <Tree species={sel} stage={i} size={40} />
                 <span className="grow">
                   <strong>{st.name}</strong>
-                  <span className="muted small">{can ? (count > 1 ? `bu parayla ${count} tane alabilirsin` : 'alabilirsin') : `${priceOf(i) - wallet.left} dk daha lazım`}</span>
+                  <span className="muted small">{can ? (i === best ? 'paran buna yetiyor' : 'alabilirsin') : `${priceOf(i) - wallet.left} dk daha lazım`}</span>
                 </span>
                 <span className="price">🪙 {st.min}</span>
               </button>
@@ -454,109 +472,12 @@ function ShopSheet({
           })}
         </div>
       </div>
+      <p className="muted small">
+        Her güne bir ağaç dikilir. {after > 0 ? `Kalan ${after} dk ile bu ağacı sonra büyütebilirsin.` : 'Çalışmaya devam edersen bu ağacı büyütebilirsin.'}
+      </p>
       <button className="btn primary big full" onClick={() => onBuy(stage, sel)}>
-        {STAGES[stage].name} al, yerini seç · kalan {after} dk
+        {STAGES[stage].name} dik, yerini seç
       </button>
-    </Sheet>
-  );
-}
-
-function DetailSheet({
-  tree,
-  minutes,
-  left,
-  courses,
-  canEdit,
-  onClose,
-  onMove,
-  onUpgrade,
-}: {
-  tree: ForestTree;
-  minutes: number;
-  /** O günün cüzdanında kalan */
-  left: number;
-  courses: Course[];
-  canEdit: boolean;
-  onClose: () => void;
-  onMove: () => void;
-  onUpgrade: (stage: number) => void;
-}) {
-  const api = useApi();
-  const [logs, setLogs] = useState<StudyLog[] | null>(null);
-  const [ref, setRef] = useState<Reflection | null>(null);
-  useEffect(() => {
-    api.listLogs(tree.date, tree.date).then(setLogs);
-    api.getReflection(tree.date).then(setRef);
-  }, [api, tree.date]);
-
-  const stage = tree.stage;
-  const sp = speciesById(tree.species);
-  const upgrades = STAGES.map((st, i) => ({ st, i, cost: priceOf(i) - priceOf(stage) })).filter((u) => u.i > stage);
-  const byCourse = new Map<string, number>();
-  logs?.forEach((l) => byCourse.set(l.course_id, (byCourse.get(l.course_id) ?? 0) + l.duration_minutes));
-  const courseById = new Map(courses.map((c) => [c.id, c]));
-  const mood = ref?.rating ? MOODS[ref.rating - 1] : null;
-
-  return (
-    <Sheet title={formatDay(tree.date)} onClose={onClose}>
-      <div className="detail-top">
-        <Tree species={tree.species} stage={stage} size={84} />
-        <div>
-          <div className="detail-time">{formatMinutes(minutes)}</div>
-          <div className="muted">
-            {sp.name} · {STAGES[stage].name} · 🪙 {priceOf(stage)}
-          </div>
-          {left > 0 && <div className="muted small">O günün cüzdanında {left} dk kaldı</div>}
-        </div>
-      </div>
-      {logs && byCourse.size > 0 && (
-        <ul className="list detail-courses">
-          {[...byCourse.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .map(([cid, m]) => {
-              const c = courseById.get(cid);
-              return (
-                <li key={cid} className="row">
-                  <span className="dot" style={{ background: c?.color ?? '#999' }} />
-                  <span className="grow">{c?.name ?? 'Silinmiş ders'}</span>
-                  <strong className="nowrap">{formatMinutes(m)}</strong>
-                </li>
-              );
-            })}
-        </ul>
-      )}
-      {(mood || ref?.note) && (
-        <div className="detail-mood">
-          {mood && (
-            <span className="detail-face" title={mood.label}>
-              {mood.face}
-            </span>
-          )}
-          <span>{ref?.note || mood?.label}</span>
-        </div>
-      )}
-      {canEdit && upgrades.length > 0 && (
-        <div className="field">
-          <span>Büyüt (farkını öde)</span>
-          <div className="upgrades">
-            {upgrades.map(({ st, i, cost }) => (
-              <button key={st.id} className="btn upgrade" disabled={cost > left} onClick={() => onUpgrade(i)}>
-                <Tree species={tree.species} stage={i} size={30} />
-                <span>{st.name}</span>
-                <span className="price">🪙 {cost}</span>
-              </button>
-            ))}
-          </div>
-          {upgrades[0].cost > left && (
-            <span className="muted small">O gün biraz daha çalışırsan {upgrades[0].st.name.toLowerCase()} olabilir.</span>
-          )}
-        </div>
-      )}
-      {canEdit && (
-        <button className="btn full" onClick={onMove}>
-          Yerini değiştir
-        </button>
-      )}
     </Sheet>
   );
 }
@@ -601,8 +522,9 @@ function StageLadder() {
         ))}
       </ol>
       <p className="muted small">
-        Çalıştığın her dakika 🪙 1 dk para. Parayı istediğin gibi harca: 3 saatle bir dev ağaç ya da iki küçük ağaç alabilirsin.
-        Diktiğin bitkiyi, o günün parası yetiyorsa farkını ödeyip büyütebilirsin. Harcamadığın para ay sonuna kadar bekler.
+        Çalıştığın her dakika 🪙 1 dk para. Her güne bir ağaç dikersin: o günün parası hangisine yetiyorsa onu seç.
+        O gün çalışmaya devam edersen farkını ödeyip aynı ağacı büyütürsün; 3 saat çalışılan gün dev ağaç olur.
+        Dikmediğin günlerin parası ay sonuna kadar bekler; ay bitince o ayın ormanına kendiliğinden dikilir.
       </p>
     </section>
   );

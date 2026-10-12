@@ -1,29 +1,32 @@
 import { formatMinutes } from '../lib/date';
 import { STAGES, nextStage, stageIndex } from '../lib/forest';
+import { dayAction } from '../lib/game';
 import { useGame } from '../lib/GameContext';
 import Tree from './Tree';
 
-/** Bugün ekranının başı: bugünün cüzdanı (çalışılan dakika = para), alınabilecek en büyük bitki, seri. */
+/** Bugün ekranının başı: bugünün ağacı (çalışılan dakika = para), dikme/büyütme düğmesi, seri. */
 export default function GameStrip({ onPlant, goForest }: { onPlant: () => void; goForest: () => void }) {
   const { stats } = useGame();
   if (!stats) return <div className="game-strip skeleton" />;
   const w = stats.today;
-  const best = stageIndex(w.left);
-  const nx = nextStage(w.left);
+  const best = stageIndex(w.earned);
+  const nx = nextStage(w.earned);
   const lower = best >= 0 ? STAGES[best].min : 0;
-  const pct = nx ? (w.left - lower) / (nx.stage.min - lower) : 1;
-  const plantedToday = stats.trees.filter((t) => t.date === w.date).length;
+  const pct = nx ? (w.earned - lower) / (nx.stage.min - lower) : 1;
+  const act = dayAction(w);
+  // Dikildiyse gerçek ağaç, dikilmediyse paranın yettiği ağacın önizlemesi
+  const shown = w.tree ? w.tree.stage : best;
 
   return (
     <section className="game-strip">
       <button className="gs-plant" onClick={goForest} aria-label="Ormanımı göster">
-        {best >= 0 ? <Tree species={stats.favoriteSpecies} stage={best} size={64} /> : <span className="gs-soil" aria-hidden />}
+        {shown >= 0 ? <Tree species={w.tree?.species ?? stats.favoriteSpecies} stage={shown} size={64} /> : <span className="gs-soil" aria-hidden />}
       </button>
       <div className="gs-main grow">
-        <div className="gs-label">Bugünkü cüzdanım</div>
+        <div className="gs-label">Bugünün ağacı</div>
         <div className="gs-value">
-          🪙 {w.left} dk
-          {w.spent > 0 && <span className="muted small"> · {w.spent} dk harcadın</span>}
+          🪙 {w.earned} dk
+          {w.tree && <span className="muted small"> · {STAGES[w.tree.stage].name.toLowerCase()} dikildi</span>}
         </div>
         {nx ? (
           <>
@@ -31,23 +34,26 @@ export default function GameStrip({ onPlant, goForest }: { onPlant: () => void; 
               <span style={{ width: `${Math.max(0.03, pct) * 100}%` }} />
             </div>
             <div className="muted small tabular">
-              {best >= 0 ? `${STAGES[best].name} alabilirsin · ` : ''}
               {nx.stage.name} için {formatMinutes(nx.remaining)} daha
             </div>
           </>
         ) : (
-          <div className="muted small">Dev ağaç alacak kadar paran var! 🌲</div>
+          <div className="muted small">Bugün dev ağaç kadar çalıştın! 🌲</div>
         )}
       </div>
       <span className={`chip streak${stats.streak === 0 ? ' off' : ''}`} title="Seri">
         <span aria-hidden>🔥</span> {stats.streak}
       </span>
-      {best >= 0 ? (
+      {act?.kind === 'plant' ? (
         <button className="btn primary full plant-btn" onClick={onPlant}>
-          🛒 Bitki al, ormanıma dik
+          🌱 Bugünün ağacını dik
         </button>
-      ) : plantedToday > 0 ? (
-        <div className="gs-note calm">Bugün {plantedToday} bitki diktin. Çalıştıkça yeni para kazanırsın.</div>
+      ) : act?.kind === 'grow' ? (
+        <button className="btn primary full plant-btn" onClick={onPlant}>
+          🌳 Ağacını büyüt: {STAGES[act.stage].name}
+        </button>
+      ) : w.tree ? (
+        <div className="gs-note calm">Bugünün ağacı ormanında. Çalıştıkça büyütebilirsin.</div>
       ) : stats.todayPending ? (
         <div className="gs-note">Bugün de çalışırsan serin {stats.streak + 1} gün olur 🌱</div>
       ) : null}

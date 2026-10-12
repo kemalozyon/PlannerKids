@@ -1,7 +1,7 @@
 // Oyunlaştırma: hepsi mevcut kayıtlardan türetilir.
 // Uzun vadeli ilerleme = aylık ormanlar + seriyle açılan ağaç türleri + rozetler.
 import { addDays, parseLocalDate, weekStart } from './date';
-import { SPECIES, STAGES, monthOf, priceOf, stageIndex } from './forest';
+import { SPECIES, STAGES, monthOf, pickFreeCell, priceOf, stageIndex } from './forest';
 import { completedPlanDays } from './plan';
 import type { ForestTree, PlanItem, Reflection, StudyLog } from './types';
 
@@ -15,12 +15,25 @@ export interface Badge {
   hint?: string;
 }
 
-/** Bir günün cüzdanı: kazanılan dakika, harcanan, kalan. */
+/** Bir günün cüzdanı: kazanılan dakika, o günün ağacına harcanan, kalan. */
 export interface Wallet {
   date: string;
   earned: number;
   spent: number;
   left: number;
+  /** O güne dikilen ağaç (günde en fazla bir) */
+  tree: ForestTree | null;
+}
+
+/**
+ * O gün için yapılabilecek iş:
+ * - plant: henüz ağaç yok ve en az bir tohumluk para var
+ * - grow: ağaç var ve o günün parası daha büyük bir evreye yetiyor
+ */
+export function dayAction(w: Wallet): { kind: 'plant' | 'grow'; stage: number } | null {
+  const best = stageIndex(w.earned);
+  if (!w.tree) return best >= 0 ? { kind: 'plant', stage: best } : null;
+  return best > w.tree.stage ? { kind: 'grow', stage: best } : null;
 }
 
 export interface GameInput {
@@ -45,7 +58,7 @@ export interface GameStats {
   totalMinutes: number;
   dayTotals: Map<string, number>;
   trees: ForestTree[];
-  /** Bu ay içinde en az bir bitki alabilecek kadar parası kalan günler (bugün dahil) */
+  /** Bu ay içinde ağacı dikilmeyi ya da büyütülmeyi bekleyen günler (bugün dahil) */
   wallets: Wallet[];
   unlockedSpecies: Set<string>;
   /** Son dikilen tür — önizlemede kullanılır */
@@ -82,17 +95,54 @@ export function computeStreak(studied: (d: string) => boolean, first: string | n
 
 export function walletOf(date: string, dayTotals: Map<string, number>, trees: ForestTree[]): Wallet {
   const earned = dayTotals.get(date) ?? 0;
-  const spent = trees.filter((t) => t.date === date).reduce((sum, t) => sum + priceOf(t.stage), 0);
-  return { date, earned, spent, left: Math.max(0, earned - spent) };
+  const own = trees.filter((t) => t.date === date);
+  // Eski verilerde bir günde birden çok bitki olabilir: en büyüğü o günün ağacı sayılır
+  const tree = own.reduce<ForestTree | null>((best, t) => (!best || t.stage > best.stage ? t : best), null);
+  const spent = own.reduce((sum, t) => sum + priceOf(t.stage), 0);
+  return { date, earned, spent, left: Math.max(0, earned - spent), tree };
 }
 
-/** Verilen ayda hâlâ bir şey alabilecek cüzdanlar (en yeni önce). */
+/** Verilen ayda ağacı dikilmeyi ya da büyütülmeyi bekleyen günler (en yeni önce). */
 export function walletsFor(month: string, dayTotals: Map<string, number>, trees: ForestTree[], today: string): Wallet[] {
   return [...dayTotals.keys()]
     .filter((d) => monthOf(d) === month && d <= today)
     .map((d) => walletOf(d, dayTotals, trees))
-    .filter((w) => w.left >= STAGES[0].min)
+    .filter((w) => dayAction(w))
     .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export type AutoStep =
+  | { kind: 'plant'; tree: Omit<ForestTree, 'id'> }
+  | { kind: 'grow'; id: string; stage: number };
+
+/**
+ * Geçmiş aylarda emek kaybolmasın: ağacı dikilmemiş günlere o günün parasının yettiği en büyük ağacı
+ * diker, dikilmiş ama büyütülmemiş ağaçları da paranın yettiği evreye büyütür.
+ */
+export function autoPlantPlan(dayTotals: Map<string, number>, trees: ForestTree[], today: string): AutoStep[] {
+  const thisMonth = monthOf(today);
+  const steps: AutoStep[] = [];
+  const taken = new Map<string, Set<number>>();
+  const cellsOf = (month: string) => {
+    if (!taken.has(month)) taken.set(month, new Set(trees.filter((t) => t.month === month).map((t) => t.cell)));
+    return taken.get(month)!;
+  };
+  for (const date of [...dayTotals.keys()].sort()) {
+    const month = monthOf(date);
+    if (month >= thisMonth) continue;
+    const w = walletOf(date, dayTotals, trees);
+    const act = dayAction(w);
+    if (!act) continue;
+    if (act.kind === 'grow') {
+      steps.push({ kind: 'grow', id: w.tree!.id, stage: act.stage });
+      continue;
+    }
+    const cell = pickFreeCell(cellsOf(month), date);
+    if (cell == null) continue; // o ayın ormanı dolu
+    cellsOf(month).add(cell);
+    steps.push({ kind: 'plant', tree: { date, stage: act.stage, species: SPECIES[0].id, month, cell } });
+  }
+  return steps;
 }
 
 export function computeStats({ logs, reflections, trees, doneTasks, today, plans = [] }: GameInput): GameStats {
@@ -176,15 +226,17 @@ export type Celebration = { kind: 'stage' | 'badge' | 'species' | 'streak'; titl
 /** İki durum arasındaki kutlanacak gelişmeleri bulur. */
 export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
   const out: Celebration[] = [];
-  // Bugünün cüzdanı yeni bir fiyata ulaştıysa (harcama cüzdanı azaltır, kutlama tetiklemez)
-  const was = stageIndex(prev.today.left);
-  const now = stageIndex(next.today.left);
-  if (next.today.earned > prev.today.earned && now > was && now >= 0) {
+  // Bugün çalışılan dakika yeni bir evreye yettiyse: ağaç yoksa dikmeye, varsa büyütmeye çağır
+  const was = stageIndex(prev.today.earned);
+  const now = stageIndex(next.today.earned);
+  const has = next.today.tree?.stage ?? -1;
+  if (next.today.earned > prev.today.earned && now > was && now > has) {
+    const name = STAGES[now].name.toLowerCase();
     out.push({
       kind: 'stage',
       icon: ['🌰', '🌼', '🌿', '🌳', '🌲'][now],
-      title: `Cüzdanında ${next.today.left} dk var!`,
-      detail: now === 0 ? 'Bir tohum alıp ormanına dikebilirsin.' : `Artık ${STAGES[now].name.toLowerCase()} alabilirsin.`,
+      title: has < 0 ? `Bugün ${name} dikebilirsin!` : `Ağacın ${name} olabilir!`,
+      detail: has < 0 ? 'Ormanına gidip bugünün ağacını dik.' : `Bugün ${next.today.earned} dk çalıştın. Ormanda ağacını büyüt.`,
     });
   }
   if (next.streak > prev.streak && next.streak >= 2 && prev.todayPending) {

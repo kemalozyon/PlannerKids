@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { localApi, supabaseApi, type DemoDb } from './api';
 import { addDays, formatMinutes, weekStart } from './date';
-import { greedySpend, pickFreeCell, stageIndex, CELLS } from './forest';
-import { computeStats, computeStreak, diffStats, walletsFor } from './game';
+import { pickFreeCell, stageIndex, CELLS } from './forest';
+import { autoPlantPlan, computeStats, computeStreak, dayAction, diffStats, walletOf, walletsFor } from './game';
 import { applyTemplate, dayPlan, TEMPLATES } from './plan';
 import { computeReading, parcelCells } from './reading';
 import { openRewards, rewardProgress } from './rewards';
@@ -47,34 +47,55 @@ test('seri: haftada bir dinlenme hakkı, ikinci boş gün sıfırlar', () => {
   assert.equal(two.best, 2);
 });
 
-test('orman: fiyat evresi, açgözlü harcama, boş hücre', () => {
+test('orman: fiyat evresi, boş hücre', () => {
   assert.equal(stageIndex(29), -1);
   assert.equal(stageIndex(30), 0);
   assert.equal(stageIndex(180), 4);
-  assert.deepEqual(greedySpend(170), [3, 0]);
-  assert.deepEqual(greedySpend(29), []);
   const taken = new Set<number>();
   for (let i = 0; i < CELLS; i++) taken.add(pickFreeCell(taken, `s${i}`)!);
   assert.equal(taken.size, CELLS); // hepsi dolabildi, çakışma yok
   assert.equal(pickFreeCell(taken, 'x'), null);
 });
 
-test('cüzdan: yalnızca bu ayın, en az bir tohumluk parası kalan günleri', () => {
+const tree = (date: string, stage: number, id = `t-${date}`): ForestTree => ({ id, date, stage, species: 'elma', month: date.slice(0, 7), cell: 0 });
+
+test('günde tek ağaç: dikilmemiş gün dikilir, parası yeten gün büyütülür', () => {
   const totals = new Map([
-    ['2026-09-30', 100],
-    ['2026-10-01', 40],
-    ['2026-10-02', 25],
-    ['2026-10-12', 90],
+    ['2026-10-01', 40], // ağaç yok → tohum dik
+    ['2026-10-02', 25], // tohuma yetmez
+    ['2026-10-05', 95], // tohum dikili, küçük ağaca yetiyor → büyüt
+    ['2026-10-06', 70], // çiçek dikili, 90'a yetmez → bekleyen yok
+    [MON, 30],
   ]);
-  const trees: ForestTree[] = [{ id: 't', date: '2026-10-12', stage: 1, species: 'elma', month: '2026-10', cell: 0 }];
+  const trees = [tree('2026-10-05', 0), tree('2026-10-06', 1)];
   const w = walletsFor('2026-10', totals, trees, MON);
   assert.deepEqual(
-    w.map((x) => [x.date, x.left]),
+    w.map((x) => [x.date, dayAction(x)]),
     [
-      ['2026-10-12', 30],
-      ['2026-10-01', 40],
+      [MON, { kind: 'plant', stage: 0 }],
+      ['2026-10-05', { kind: 'grow', stage: 2 }],
+      ['2026-10-01', { kind: 'plant', stage: 0 }],
     ],
   );
+  assert.equal(walletOf('2026-10-06', totals, trees).left, 10);
+});
+
+test('geçmiş ay: her güne bir ağaç dikilir ya da paranın yettiği evreye büyütülür', () => {
+  const totals = new Map([
+    ['2026-09-10', 130], // ağaç yok → büyük ağaç
+    ['2026-09-11', 200], // tohum dikili → dev ağaca büyüt
+    ['2026-09-12', 20], // yetmez
+    ['2026-10-01', 100], // bu ay: dokunulmaz
+  ]);
+  const steps = autoPlantPlan(totals, [tree('2026-09-11', 0, 'eski')], MON);
+  assert.equal(steps.length, 2);
+  assert.deepEqual(steps[1], { kind: 'grow', id: 'eski', stage: 4 });
+  assert.equal(steps[0].kind, 'plant');
+  if (steps[0].kind === 'plant') {
+    assert.equal(steps[0].tree.stage, 3);
+    assert.equal(steps[0].tree.month, '2026-09');
+    assert.notEqual(steps[0].tree.cell, 0); // eski ağacın hücresi dolu
+  }
 });
 
 test('istatistik + kutlama: yeni dakika yeni evre ve rozet getirir', () => {
@@ -84,6 +105,12 @@ test('istatistik + kutlama: yeni dakika yeni evre ve rozet getirir', () => {
   assert.equal(after.today.left, 35);
   const kinds = diffStats(before, after).map((c) => c.kind);
   assert.ok(kinds.includes('stage'));
+  // Ağaç zaten dikiliyse ve yeni evreye ulaşılmadıysa "dik" kutlaması tekrar çıkmaz
+  const planted = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15)] });
+  const more = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15), log(MON, 10)] });
+  assert.deepEqual(diffStats(planted, more).filter((c) => c.kind === 'stage'), []);
+  const grow = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15), log(MON, 30)] });
+  assert.match(diffStats(planted, grow).find((c) => c.kind === 'stage')!.title, /çiçek olabilir/);
 });
 
 test('plan: her ders kendi planıyla sınırlı sayılır, onay bekleyen işaretlenir', () => {
@@ -157,7 +184,7 @@ test('okuma: bu ay biten ve dikilmeyen kitap parsel bekler; parsel 4’er büyü
   assert.equal(parcelCells(1, 9), 12);
 });
 
-test('demo API: ders silinince kayıt ve planları da silinir, aynı hücreye iki bitki olmaz', async () => {
+test('demo API: ders silinince kayıt ve planları da silinir; aynı hücreye ya da aynı güne iki ağaç olmaz', async () => {
   const empty = (): DemoDb => ({ courses: [], logs: [], tasks: [], reflections: [] });
   const api = localApi(empty);
   const c = await api.addCourse('Mat', '#000');
@@ -165,7 +192,8 @@ test('demo API: ders silinince kayıt ve planları da silinir, aynı hücreye ik
   await api.savePlans(MON, MON, [{ date: MON, course_id: c.id, minutes: 30, note: null }], true);
   const task = await api.addTask({ title: 'iş', date: MON, course_id: c.id });
   await api.plantTree({ date: MON, stage: 0, species: 'elma', month: '2026-10', cell: 3 });
-  await assert.rejects(api.plantTree({ date: MON, stage: 0, species: 'elma', month: '2026-10', cell: 3 }));
+  await assert.rejects(api.plantTree({ date: '2026-10-11', stage: 0, species: 'elma', month: '2026-10', cell: 3 }), /dolu/);
+  await assert.rejects(api.plantTree({ date: MON, stage: 0, species: 'elma', month: '2026-10', cell: 4 }), /zaten bir ağaç/);
   await api.deleteCourse(c.id);
   assert.equal((await api.listLogs(MON, MON)).length, 0);
   assert.equal((await api.listPlans(MON, MON)).length, 0);

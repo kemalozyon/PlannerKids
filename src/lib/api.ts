@@ -23,6 +23,8 @@ import {
   type Task,
 } from './types';
 
+const ONE_PER_DAY = 'Bu güne zaten bir ağaç dikildi. Onu büyütebilirsin.';
+
 // ---------- Supabase ----------
 function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
@@ -109,9 +111,10 @@ export function supabaseApi(sb: SupabaseClient): Api {
       return all<ForestTree>((a, b) => sb.from('forest_trees').select('id,date,stage,species,month,cell').order('id').range(a, b));
     },
     async plantTree(t) {
-      return check(
-        await sb.from('forest_trees').insert(t).select('id,date,stage,species,month,cell').single(),
-      ) as ForestTree;
+      const res = await sb.from('forest_trees').insert(t).select('id,date,stage,species,month,cell').single();
+      // 0006: günde tek ağaç (forest_trees_user_date_key)
+      if (res.error?.message.includes('forest_trees_user_date_key')) throw new Error(ONE_PER_DAY);
+      return check(res) as ForestTree;
     },
     async moveTree(id, cell) {
       check(await sb.from('forest_trees').update({ cell }).eq('id', id));
@@ -267,7 +270,7 @@ interface DemoDb {
   rewards?: Reward[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v8';
+export const DEMO_KEY = 'ct-demo-db-v9';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -375,12 +378,14 @@ export function localApi(seed: () => DemoDb): Api {
       return load().tasks.filter((t) => t.done).length;
     },
     async listTrees() {
-      return [...(load().trees ?? [])];
+      // Kopya: upgradeTree/moveTree yerinde değiştirdiğinde ekrandaki eski durum bozulmasın
+      return (load().trees ?? []).map((t) => ({ ...t }));
     },
     async plantTree(t) {
       const db = load();
       db.trees ??= [];
       if (db.trees.some((x) => x.month === t.month && x.cell === t.cell)) throw new Error('Bu yer dolu');
+      if (db.trees.some((x) => x.date === t.date)) throw new Error(ONE_PER_DAY);
       const tree = { ...t, id: uid() };
       db.trees.push(tree);
       save();
@@ -438,7 +443,7 @@ export function localApi(seed: () => DemoDb): Api {
       return log;
     },
     async listBookTrees() {
-      return [...(load().bookTrees ?? [])];
+      return (load().bookTrees ?? []).map((t) => ({ ...t }));
     },
     async plantBookTree(t) {
       const db = load();

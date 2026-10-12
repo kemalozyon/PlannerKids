@@ -1,11 +1,11 @@
 import type { DemoDb } from './api';
 import { addDays, parseLocalDate, toLocalDate, weekStart } from './date';
-import { greedySpend, monthOf, pickFreeCell, SPECIES } from './forest';
+import { monthOf, pickFreeCell, SPECIES, stageIndex } from './forest';
 
 /**
  * Demo modu için ~5 haftalık örnek geçmiş.
- * - Bu ayın günlerinin parası çoğunlukla harcanmış; dünün cüzdanı dolu, harcanmayı bekliyor.
- * - Geçen ayın paraları harcanmamış bırakılır → açılışta otomatik harcama çalışır.
+ * - Bu ayın günlerine birer ağaç dikilmiş; bazıları büyütülmeyi bekliyor, dünün ağacı hiç dikilmemiş.
+ * - Geçen ayın ağaçları dikilmemiş bırakılır → açılışta otomatik dikim çalışır.
  * - En uzun seri 9 gün: Kaktüs'e kadar türler açık; bugün kayıt girince Söğüt açılır.
  */
 export function demoSeed(): DemoDb {
@@ -56,8 +56,8 @@ export function demoSeed(): DemoDb {
     }
   }
 
-  // Bu ayın paraları (dün hariç) harcanmış: büyükten küçüğe alınmış bitkiler.
-  // Bazı günlerde artan para bırakılır ki "cüzdanlarım" listesinde görünsün.
+  // Bu ayın her gününe (dün hariç) bir ağaç: çoğu paranın yettiği en büyük evrede, her üç günden
+  // birinde bir evre küçük → o gün "büyütülmeyi bekleyen" olarak görünür.
   const month = monthOf(today);
   const yesterday = addDays(today, -1);
   const totals = new Map<string, number>();
@@ -66,16 +66,13 @@ export function demoSeed(): DemoDb {
   const trees: NonNullable<DemoDb['trees']> = [];
   const open = SPECIES.filter((s) => s.unlock <= 7);
   for (const [date, min] of [...totals].sort()) {
-    if (monthOf(date) !== month || date === yesterday) continue;
-    const buys = greedySpend(min);
-    // Her üç günden birinde en küçük alımı yapma → o gün cüzdanda para kalsın
-    if (buys.length > 1 && Number(date.slice(-2)) % 3 === 0) buys.pop();
-    buys.forEach((stage, k) => {
-      const cell = pickFreeCell(taken, `${date}#${k}#demo`);
-      if (cell == null) return;
-      taken.add(cell);
-      trees.push({ id: `t-${date}-${k}`, date, stage, species: open[Math.floor(rnd() * open.length)].id, month, cell });
-    });
+    const best = stageIndex(min);
+    if (monthOf(date) !== month || date === yesterday || best < 0) continue;
+    const stage = best > 0 && Number(date.slice(-2)) % 3 === 0 ? best - 1 : best;
+    const cell = pickFreeCell(taken, `${date}#demo`);
+    if (cell == null) continue;
+    taken.add(cell);
+    trees.push({ id: `t-${date}`, date, stage, species: open[Math.floor(rnd() * open.length)].id, month, cell });
   }
 
   const tasks = [
