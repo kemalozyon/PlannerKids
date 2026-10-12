@@ -2,8 +2,10 @@
 // Uzun vadeli ilerleme = aylık ormanlar + seriyle açılan ağaç türleri + rozetler.
 import { addDays, parseLocalDate, weekStart } from './date';
 import { SPECIES, STAGES, monthOf, pickFreeCell, priceOf, stageIndex } from './forest';
+import { BIOMES, islandProgress } from './island';
 import { completedPlanDays } from './plan';
-import type { ForestTree, PlanItem, Reflection, StudyLog } from './types';
+import type { Abandoned, ForestTree, PlanItem, Reflection, StudyLog } from './types';
+import { wiltsOf, type Wilt } from './wilt';
 
 export interface Badge {
   id: string;
@@ -44,6 +46,8 @@ export interface GameInput {
   today: string;
   /** Günlük planlar (yoksa boş) */
   plans?: PlanItem[];
+  /** Yarıda bırakılan sayaç oturumları (yoksa boş) */
+  abandoned?: Abandoned[];
 }
 
 export interface GameStats {
@@ -66,6 +70,8 @@ export interface GameStats {
   badges: Badge[];
   /** Planı tamamen bitirilmiş günler */
   planDays: string[];
+  /** Solgun fidanlar ve canlanıp canlanmadıkları */
+  wilts: Wilt[];
 }
 
 const isWeekend = (d: string) => [0, 6].includes(parseLocalDate(d).getDay());
@@ -145,7 +151,7 @@ export function autoPlantPlan(dayTotals: Map<string, number>, trees: ForestTree[
   return steps;
 }
 
-export function computeStats({ logs, reflections, trees, doneTasks, today, plans = [] }: GameInput): GameStats {
+export function computeStats({ logs, reflections, trees, doneTasks, today, plans = [], abandoned = [] }: GameInput): GameStats {
   const dayTotals = new Map<string, number>();
   for (const l of logs) dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes);
   const totalMinutes = logs.reduce((s, l) => s + l.duration_minutes, 0);
@@ -212,6 +218,7 @@ export function computeStats({ logs, reflections, trees, doneTasks, today, plans
     favoriteSpecies: lastTree?.species ?? SPECIES[0].id,
     badges,
     planDays,
+    wilts: wiltsOf(abandoned, logs),
   };
 }
 
@@ -245,6 +252,21 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
   for (const s of SPECIES) {
     if (next.unlockedSpecies.has(s.id) && !prev.unlockedSpecies.has(s.id)) {
       out.push({ kind: 'species', icon: '🔓', title: `Yeni ağaç: ${s.name}!`, detail: 'Bir sonraki bitkinde seçebilirsin.' });
+    }
+  }
+  // Solgun fidan canlandı
+  const wasRevived = new Set(prev.wilts.filter((w) => w.revived).map((w) => w.item.id));
+  for (const w of next.wilts) {
+    if (w.revived && !wasRevived.has(w.item.id) && prev.wilts.some((p) => p.item.id === w.item.id)) {
+      out.push({ kind: 'stage', icon: '🌱', title: 'Solgun fidanını kurtardın!', detail: 'Çalışmaya döndün, fidan yeniden yeşerdi.' });
+    }
+  }
+  // Ada büyüdü: yeni biyom ya da hayvan
+  const islandWas = islandProgress(prev.totalMinutes).unlocked;
+  const islandNow = islandProgress(next.totalMinutes).unlocked;
+  for (const b of BIOMES) {
+    if (!islandWas.has(b.id) && islandNow.has(b.id)) {
+      out.push({ kind: 'species', icon: b.icon, title: `Adan büyüdü: ${b.name}!`, detail: b.desc });
     }
   }
   const had = new Set(prev.badges.filter((x) => x.unlocked).map((x) => x.id));

@@ -58,16 +58,18 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const today = toLocalDate();
-    const [logs, reflections, doneTasks, trees0, plans] = await Promise.all([
+    const [logs, reflections, doneTasks, trees0, plans, abandoned] = await Promise.all([
       api.listLogs('2000-01-01', today),
       api.listReflections('2000-01-01', today),
       api.countDoneTasks(),
       api.listTrees(),
       // Plan tablosu henüz kurulmadıysa (0005 çalıştırılmadı) oyun yine çalışsın
       api.listPlans('2000-01-01', today).catch(() => []),
+      // 0007 çalıştırılmadıysa solgun fidan olmadan devam
+      api.listAbandoned().catch(() => []),
     ]);
     const trees = await autoPlantPastMonths(api, logs, trees0, today);
-    const next = computeStats({ logs, reflections, trees, doneTasks, today, plans });
+    const next = computeStats({ logs, reflections, trees, doneTasks, today, plans, abandoned });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);
     prev.current = next;

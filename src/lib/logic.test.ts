@@ -7,9 +7,11 @@ import { localApi, supabaseApi, type DemoDb } from './api';
 import { addDays, formatMinutes, weekStart } from './date';
 import { pickFreeCell, stageIndex, CELLS } from './forest';
 import { autoPlantPlan, computeStats, computeStreak, dayAction, diffStats, walletOf, walletsFor } from './game';
+import { cellPosition, islandLayout, islandProgress } from './island';
 import { applyTemplate, dayPlan, TEMPLATES } from './plan';
 import { computeReading, parcelCells } from './reading';
 import { openRewards, rewardProgress } from './rewards';
+import { REVIVE_MIN, wiltsOf } from './wilt';
 import { DEFAULT_READING_GOALS, type Book, type ForestTree, type PlanItem, type Reward, type StudyLog } from './types';
 
 // 2026-10-12 pazartesi
@@ -230,4 +232,51 @@ test('Supabase API: 1000 satırdan uzun geçmişi sayfa sayfa okur', async () =>
     [1000, 1999],
     [2000, 2999],
   ]);
+});
+
+test('solgun fidan: iptalden sonra aynı gün 10 dk çalışılınca canlanır', () => {
+  const ab = (id: string, date: string, created_at: string) => ({ id, date, minutes: 12, created_at });
+  const at = (date: string, min: number, created_at: string): StudyLog => ({ ...log(date, min), id: `${date}-${created_at}`, created_at });
+  const logs = [
+    at(MON, 30, `${MON}T08:00:00.000Z`), // iptalden önce: sayılmaz
+    at(MON, 6, `${MON}T10:00:00.000Z`),
+    at(MON, 5, `${MON}T11:00:00.000Z`),
+    at('2026-10-11', 20, '2026-10-11T12:00:00.000Z'), // başka gün: sayılmaz
+  ];
+  const [a, b] = wiltsOf([ab('a', MON, `${MON}T09:00:00.000Z`), ab('b', MON, `${MON}T10:30:00.000Z`)], logs);
+  assert.deepEqual([a.after, a.revived], [11, true]);
+  assert.deepEqual([b.after, b.revived], [5, false]);
+  assert.equal(REVIVE_MIN, 10);
+});
+
+test('ada: saat arttıkça biyomlar açılır ve ada büyür', () => {
+  const start = islandProgress(0);
+  assert.equal(start.level, 1);
+  assert.deepEqual(start.next && [start.next.biome.id, start.next.minutesLeft], ['cicek', 180]);
+  const mid = islandProgress(26 * 60);
+  assert.ok(mid.unlocked.has('gol') && mid.unlocked.has('tavsan') && !mid.unlocked.has('civciv'));
+  assert.ok(mid.radius > start.radius);
+  assert.equal(islandProgress(1e6).next, null);
+});
+
+test('ada: süsler aynı ay için hep aynı, ızgaraya ve göle girmez, kıyıdan taşmaz', () => {
+  const p = islandProgress(60 * 60);
+  const a = islandLayout('2026-10', p);
+  assert.deepEqual(a, islandLayout('2026-10', p));
+  assert.notDeepEqual(a.decor, islandLayout('2026-09', p).decor);
+  assert.ok(a.pond && a.campfire);
+  for (const d of a.decor) {
+    assert.ok(!(Math.abs(d.x) < 4.35 && Math.abs(d.z) < 4.35), 'süs ızgarada');
+    assert.ok(Math.hypot(d.x, d.z) <= p.radius, 'süs adanın dışında');
+    assert.ok(Math.hypot(d.x - a.pond!.x, d.z - a.pond!.z) > a.pond!.r, 'süs gölette');
+  }
+  // Izgara hücreleri ortada: 0 sol üst, 63 sağ alt
+  assert.deepEqual(cellPosition(0), [-3.5, -3.5]);
+  assert.deepEqual(cellPosition(63), [3.5, 3.5]);
+});
+
+test('demo API: yarıda bırakılan oturum kaydedilir', async () => {
+  const api = localApi(() => ({ courses: [], logs: [], tasks: [], reflections: [] }));
+  const a = await api.addAbandoned({ date: MON, minutes: 7 });
+  assert.deepEqual((await api.listAbandoned()).map((x) => [x.id, x.minutes]), [[a.id, 7]]);
 });

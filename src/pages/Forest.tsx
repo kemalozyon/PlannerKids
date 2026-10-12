@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import BookTree from '../components/BookTree';
 import DaySheet from '../components/DaySheet';
 import { BookSheet } from '../components/ReadingSheets';
@@ -18,10 +18,36 @@ import {
   stageIndex,
 } from '../lib/forest';
 import { dayAction, type Wallet } from '../lib/game';
+import { BIOMES, islandProgress } from '../lib/island';
+import { REVIVE_MIN, type Wilt } from '../lib/wilt';
 import { useGame } from '../lib/GameContext';
 import { bookTreeSize, parcelCells, PARCEL_COLS, SIZE_NAMES } from '../lib/reading';
 import { useReading } from '../lib/ReadingContext';
 import type { Book, BookTree as BookTreeT, Course, ForestTree } from '../lib/types';
+
+// three.js büyük: 3D ada yalnızca Orman açılınca yüklenir
+const Island3D = lazy(() => import('../components/forest3d/Island3D'));
+const VIEW_KEY = 'ct-forest-view-v1';
+
+function hasWebGL(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
+/** 3D sahne çökerse sayfa gitmesin, düz ızgara gösterilsin */
+class Fallback extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
 
 type Mode =
   | { kind: 'idle' }
@@ -53,6 +79,23 @@ export default function Forest({
   const [detail, setDetail] = useState<ForestTree | null>(null);
   const [bookDetail, setBookDetail] = useState<BookTreeT | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wiltOpen, setWiltOpen] = useState<Wilt | null>(null);
+  const can3D = useMemo(hasWebGL, []);
+  const [view, setView] = useState<'3d' | '2d'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === '2d' ? '2d' : '3d';
+    } catch {
+      return '3d';
+    }
+  });
+  const switchView = (v: '3d' | '2d') => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* yok say */
+    }
+  };
 
   useEffect(() => {
     if (startPlanting && stats?.wallets.length) {
@@ -116,6 +159,34 @@ export default function Forest({
     }
   };
 
+  const grid2D = (
+      <div className={`forest${placing ? ' placing' : ''}${isCurrent ? '' : ' past'}${bookPlacing ? ' dimmed' : ''}`}>
+        <div className="forest-grid" style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))` }}>
+          {Array.from({ length: CELLS }, (_, cell) => {
+            const t = byCell.get(cell);
+            const row = Math.floor(cell / COLS);
+            const moving = mode.kind === 'move' && mode.tree.id === t?.id;
+            return (
+              <button
+                key={cell}
+                className={`cell${t ? ' has' : ' empty'}${moving ? ' moving' : ''}${(row + cell) % 2 ? ' alt' : ''}`}
+                style={{ zIndex: row + 1 }}
+                disabled={bookPlacing || (placing ? !!t : !t)}
+                aria-label={t ? `${shortDay(t.date)}: ${speciesById(t.species).name}` : 'Boş yer'}
+                onClick={() => onCell(cell)}
+              >
+                {t && (
+                  <span className="cell-tree">
+                    <Tree species={t.species} stage={t.stage} size={60} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+  );
+
   const total = trees.length;
   const bigOnes = trees.filter((t) => t.stage >= 3).length;
 
@@ -147,6 +218,64 @@ export default function Forest({
           ›
         </button>
       </header>
+
+      {busy && (
+        <div className="place-banner" role="status">
+          <span>
+            {mode.kind === 'place'
+              ? 'Bitkini dikmek için boş bir yere dokun'
+              : mode.kind === 'placeBook'
+                ? `"${mode.book.title}" ağacı için kitap parselinde bir yer seç`
+                : 'Yeni yerini seç'}
+          </span>
+          {(mode.kind === 'place' || mode.kind === 'move') && (
+            <button
+              className="btn sm"
+              onClick={() => {
+                const free = Array.from({ length: CELLS }, (_, c) => c).filter((c) => !byCell.has(c));
+                if (free.length) onCell(free[Math.floor(Math.random() * free.length)]);
+              }}
+            >
+              🎲 Benim için seç
+            </button>
+          )}
+          <button className="btn sm" onClick={() => setMode({ kind: 'idle' })}>
+            Vazgeç
+          </button>
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+
+      {can3D && view === '3d' ? (
+        <Fallback fallback={grid2D}>
+          <Suspense fallback={<div className="island-wrap island-loading">🏝️ Adan yükleniyor…</div>}>
+            <Island3D
+              month={month}
+              trees={trees}
+              wilts={stats.wilts.filter((w) => monthOf(w.item.date) === month)}
+              totalMinutes={[...stats.dayTotals].reduce((sum, [d, m]) => (monthOf(d) <= month ? sum + m : sum), 0)}
+              placing={mode.kind === 'place' ? 'tree' : mode.kind === 'move' ? 'move' : 'none'}
+              movingId={mode.kind === 'move' ? mode.tree.id : undefined}
+              onCell={onCell}
+              onTree={(t) => setDetail(t)}
+              onWilt={setWiltOpen}
+            />
+          </Suspense>
+        </Fallback>
+      ) : (
+        grid2D
+      )}
+      {can3D && (
+        <div className="view-toggle" role="group" aria-label="Orman görünümü">
+          <button className={view === '3d' ? 'on' : ''} aria-pressed={view === '3d'} onClick={() => switchView('3d')}>
+            🏝️ 3D ada
+          </button>
+          <button className={view === '2d' ? 'on' : ''} aria-pressed={view === '2d'} onClick={() => switchView('2d')}>
+            ▦ Düz
+          </button>
+        </div>
+      )}
+      {!busy && total > 0 && <p className="muted small center">Bir ağaca dokun, o gün ne çalıştığını gör.</p>}
 
       {isCurrent && stats.wallets.length + pendingBooks.length > 0 && mode.kind === 'idle' && (
         <section className="card pending-card">
@@ -195,48 +324,6 @@ export default function Forest({
         </section>
       )}
 
-      {busy && (
-        <div className="place-banner" role="status">
-          <span>
-            {mode.kind === 'place'
-              ? 'Bitkini dikmek için boş bir yere dokun'
-              : mode.kind === 'placeBook'
-                ? `"${mode.book.title}" ağacı için kitap parselinde bir yer seç`
-                : 'Yeni yerini seç'}
-          </span>
-          <button className="btn sm" onClick={() => setMode({ kind: 'idle' })}>
-            Vazgeç
-          </button>
-        </div>
-      )}
-      {error && <div className="error">{error}</div>}
-
-      <div className={`forest${placing ? ' placing' : ''}${isCurrent ? '' : ' past'}${bookPlacing ? ' dimmed' : ''}`}>
-        <div className="forest-grid" style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))` }}>
-          {Array.from({ length: CELLS }, (_, cell) => {
-            const t = byCell.get(cell);
-            const row = Math.floor(cell / COLS);
-            const moving = mode.kind === 'move' && mode.tree.id === t?.id;
-            return (
-              <button
-                key={cell}
-                className={`cell${t ? ' has' : ' empty'}${moving ? ' moving' : ''}${(row + cell) % 2 ? ' alt' : ''}`}
-                style={{ zIndex: row + 1 }}
-                disabled={bookPlacing || (placing ? !!t : !t)}
-                aria-label={t ? `${shortDay(t.date)}: ${speciesById(t.species).name}` : 'Boş yer'}
-                onClick={() => onCell(cell)}
-              >
-                {t && (
-                  <span className="cell-tree">
-                    <Tree species={t.species} stage={t.stage} size={60} />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      {!busy && total > 0 && <p className="muted small center">Bir bitkiye dokun, o gün ne çalıştığını gör.</p>}
 
       <BookParcel
         month={month}
@@ -270,6 +357,7 @@ export default function Forest({
         </p>
       )}
 
+      <IslandCard totalMinutes={stats.totalMinutes} />
       <SpeciesInfo bestStreak={stats.bestStreak} unlocked={stats.unlockedSpecies} />
       <StageLadder />
       <Badges />
@@ -317,6 +405,7 @@ export default function Forest({
           }
         />
       )}
+      {wiltOpen && <WiltSheet w={wiltOpen} today={today} onClose={() => setWiltOpen(null)} />}
       {bookDetail && reading.books.find((b) => b.id === bookDetail.book_id) && (
         <BookSheet
           book={reading.books.find((b) => b.id === bookDetail.book_id)!}
@@ -477,6 +566,72 @@ function ShopSheet({
       </p>
       <button className="btn primary big full" onClick={() => onBuy(stage, sel)}>
         {STAGES[stage].name} dik, yerini seç
+      </button>
+    </Sheet>
+  );
+}
+
+/** Ada seviyesi: açılan biyomlar ve sıradaki sürpriz */
+function IslandCard({ totalMinutes }: { totalMinutes: number }) {
+  const p = islandProgress(totalMinutes);
+  const prevAt = p.next ? (BIOMES[BIOMES.indexOf(p.next.biome) - 1]?.hours ?? 0) * 60 : 0;
+  const pct = p.next ? (totalMinutes - prevAt) / (p.next.biome.hours * 60 - prevAt) : 1;
+  return (
+    <section className="card island-card">
+      <div className="card-head">
+        <h2>🏝️ Adacığım</h2>
+        <span className="pill">Seviye {p.level}</span>
+      </div>
+      <div className="biome-row">
+        {BIOMES.map((b) => (
+          <span key={b.id} className={`biome${p.unlocked.has(b.id) ? ' on' : ''}`} title={`${b.name} · ${b.hours} saat`}>
+            <span aria-hidden>{p.unlocked.has(b.id) ? b.icon : '🔒'}</span>
+            <span className="biome-name">{p.unlocked.has(b.id) ? b.name : `${b.hours} sa`}</span>
+          </span>
+        ))}
+      </div>
+      {p.next ? (
+        <>
+          <div className="pbar gold" aria-hidden>
+            <span style={{ width: `${Math.max(0.03, pct) * 100}%` }} />
+          </div>
+          <p className="small">
+            Sıradaki sürpriz: <strong>{p.next.biome.icon} {p.next.biome.name}</strong>{' '}
+            <span className="muted">· {formatMinutes(p.next.minutesLeft)} daha çalış</span>
+          </p>
+        </>
+      ) : (
+        <p className="small">Bütün sürprizleri açtın! Adan tam bir orman cenneti. 🌈</p>
+      )}
+      <p className="muted small">Toplam çalıştıkça adan büyür; çiçekler, gölet, kamp ateşi ve hayvan dostlar gelir. Hayvanlara dokunmayı dene!</p>
+    </section>
+  );
+}
+
+/** Solgun fidan: sayaç yarıda bırakılınca kalır; aynı gün çalışınca canlanır */
+function WiltSheet({ w, today, onClose }: { w: Wilt; today: string; onClose: () => void }) {
+  const isToday = w.item.date === today;
+  return (
+    <Sheet title={w.revived ? 'Kurtarılan fidan 🌱' : 'Solgun fidan 🥀'} onClose={onClose}>
+      <p>
+        {formatDay(w.item.date)} sayaç {formatMinutes(w.item.minutes)} sonra yarıda bırakıldı.
+      </p>
+      {w.revived ? (
+        <p>Sonra yeniden çalışmaya döndün ve fidanı kurtardın. Aferin! 💪</p>
+      ) : isToday ? (
+        <>
+          <p>
+            Bugün <strong>{REVIVE_MIN - w.after} dk</strong> daha çalışırsan bu fidan yeniden yeşerir!
+          </p>
+          <div className="pbar" aria-hidden>
+            <span style={{ width: `${(w.after / REVIVE_MIN) * 100}%`, background: 'var(--good)' }} />
+          </div>
+        </>
+      ) : (
+        <p className="muted">O gün çalışmaya dönülmediği için solgun kaldı. Bir dahaki sefere turu bitirmeyi dene!</p>
+      )}
+      <button className="btn full" onClick={onClose}>
+        Tamam
       </button>
     </Sheet>
   );

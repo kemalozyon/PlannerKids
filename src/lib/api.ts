@@ -8,6 +8,7 @@ import {
   type ParentNote,
   type PlanItem,
   type Reward,
+  type Abandoned,
   type Api,
   type Book,
   type BookTree,
@@ -232,6 +233,12 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async deleteNote(id) {
       check(await sb.from('parent_notes').delete().eq('id', id));
     },
+    async listAbandoned() {
+      return all<Abandoned>((a, b) => sb.from('abandoned_sessions').select('id,date,minutes,created_at').order('created_at').order('id').range(a, b));
+    },
+    async addAbandoned(a) {
+      return check(await sb.from('abandoned_sessions').insert(a).select('id,date,minutes,created_at').single()) as Abandoned;
+    },
     async listRewards() {
       return check(
         await sb.from('rewards').select('id,title,kind,target,given_by,start_date,claimed_on,created_at').order('created_at'),
@@ -268,9 +275,10 @@ interface DemoDb {
   family?: FamilySettings;
   notes?: ParentNote[];
   rewards?: Reward[];
+  abandoned?: Abandoned[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v9';
+export const DEMO_KEY = 'ct-demo-db-v10';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -534,6 +542,17 @@ export function localApi(seed: () => DemoDb): Api {
       const db = load();
       db.notes = (db.notes ?? []).filter((n) => n.id !== id);
       save();
+    },
+    async listAbandoned() {
+      return [...(load().abandoned ?? [])];
+    },
+    async addAbandoned(a) {
+      const db = load();
+      db.abandoned ??= [];
+      const row: Abandoned = { ...a, id: uid(), created_at: now() };
+      db.abandoned.push(row);
+      save();
+      return row;
     },
     async listRewards() {
       return [...(load().rewards ?? [])];

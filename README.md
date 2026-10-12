@@ -44,7 +44,7 @@ src/
     WeekPlan.tsx   Haftalık plan: güne göre ders/dakika, hazır şablonlar, geçen haftayı kopyala
     Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
     ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, rapor ayarları
-supabase/migrations/0001_init.sql … 0006_one_tree_per_day.sql
+supabase/migrations/0001_init.sql … 0007_abandoned_sessions.sql
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
@@ -66,6 +66,19 @@ Her ay yeni orman başlar, eski ormanlar ay ay gezilebilir.
   aşmasına izin vermez; `0006_one_tree_per_day.sql` güne ikinci ağaç dikilmesini engeller.
 - **Türler:** 8 tür, 3'ü baştan açık; diğerleri en uzun seriyle açılır (3, 5, 7, 10, 14 gün).
 - **Yumuşak seri, rozetler, ruh hali (😞…😄), hazır okul dersleri, 20 dk mola hatırlatması.**
+
+### 3D ada
+
+Orman sekmesi, ayın ormanını **izometrik, low-poly bir ada** olarak gösterir (react-three-fiber). Ada döndürülür ve
+yakınlaştırılır; ağaca dokununca o günün penceresi açılır.
+
+- **Ada büyür:** toplam çalışma saati arttıkça çiçek tarlası (3 sa), kayalar/mantarlar (8), tavşan (15), gölet (25),
+  civciv (35), kamp ateşi (50), tilki (70), arı (100) ve geyik (140) açılır. Hayvanlar adada dolaşır, dokununca dans eder.
+- **Gündüz/gece:** ışık gerçek saate göre değişir; akşam ateşböcekleri uçar, kamp ateşi yanar.
+- **Büyüme animasyonu:** dikilen/büyütülen ağaç zıplayarak çıkar, etrafına parçacıklar saçılır.
+- **Solgun fidan:** sayaç 5 dakikadan sonra iptal edilirse adada solgun bir fidan kalır; aynı gün 10 dk daha çalışılırsa
+  yeniden yeşerir (`0007_abandoned_sessions.sql`).
+- Modeller: [Kenney](https://kenney.nl) Nature Kit ve Cube Pets (CC0). WebGL yoksa düz ızgara görünümü kullanılır.
 
 ## Planlama, odak modu, ödüller ve aile paneli
 

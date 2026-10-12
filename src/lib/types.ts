@@ -90,10 +90,24 @@ export interface Api {
   reactNote(id: string, reaction: NoteReaction): Promise<void>;
   deleteNote(id: string): Promise<void>;
 
+  /** Yarıda bırakılan sayaç oturumları (adada solgun fidan) */
+  listAbandoned(): Promise<Abandoned[]>;
+  addAbandoned(a: Pick<Abandoned, 'date' | 'minutes'>): Promise<Abandoned>;
+
   listRewards(): Promise<Reward[]>;
   addReward(r: NewReward): Promise<Reward>;
   updateReward(id: string, patch: Partial<Pick<Reward, 'claimed_on' | 'title' | 'target'>>): Promise<void>;
   deleteReward(id: string): Promise<void>;
+}
+
+/** Yarıda bırakılan sayaç oturumu: adada solgun bir fidan bırakır, aynı gün çalışılırsa canlanır. */
+export interface Abandoned {
+  id: string;
+  /** Sayacın başladığı gün */
+  date: string;
+  /** İptal edilene kadar geçen dakika */
+  minutes: number;
+  created_at: string;
 }
 
 /** Bir günün planında bir ders: kaç dakika ayrıldı. */

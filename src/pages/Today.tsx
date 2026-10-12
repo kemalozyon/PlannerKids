@@ -15,6 +15,7 @@ import EndDay from '../components/EndDay';
 import { MOODS, dailyPrompt } from '../lib/mood';
 import { CORE_SUBJECTS } from '../lib/presets';
 import Tree from '../components/Tree';
+import { REVIVE_MIN, WILT_MIN } from '../lib/wilt';
 
 interface Props {
   courses: Course[];
@@ -88,6 +89,21 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
     t.start(cid, goalMin);
     setFocusOpen(true);
   };
+  /** Sayaç iptal: WILT_MIN dakikayı geçtiyse adada solgun fidan kalır (aynı gün çalışınca canlanır) */
+  const abandon = async () => {
+    const r = t.timer;
+    t.cancel();
+    setFocusOpen(false);
+    if (!r) return;
+    const minutes = Math.floor((Date.now() - r.startedAt) / 60_000);
+    if (minutes < WILT_MIN) return;
+    try {
+      await api.addAbandoned({ date: toLocalDate(new Date(r.startedAt)), minutes: Math.min(minutes, 1440) });
+    } catch {
+      /* tablo yoksa (0007 çalıştırılmadı) sessizce geç */
+    }
+    game.refresh();
+  };
   const finish = () => {
     const r = t.stop();
     setFocusOpen(false);
@@ -133,6 +149,8 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
 
       <GameStrip goForest={goForest} onPlant={onPlant} />
 
+      <WiltCard date={date} />
+
       {error && <div className="error">{error}</div>}
 
       <PlanCard
@@ -154,6 +172,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
         setPending={setPending}
         onStart={(cid) => startTimer(cid, 25)}
         onFinish={finish}
+        onCancel={abandon}
         openFocus={() => setFocusOpen(true)}
         nextFromPlan={plan?.rows.find((r) => !r.complete)}
         onSaved={changed}
@@ -161,7 +180,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       />
 
       {focusOpen && t.timer && (
-        <FocusMode t={t} course={byId.get(t.timer.courseId)} roundsToday={logs.length} onFinish={finish} onClose={() => setFocusOpen(false)} />
+        <FocusMode t={t} course={byId.get(t.timer.courseId)} roundsToday={logs.length} onFinish={finish} onCancel={abandon} onClose={() => setFocusOpen(false)} />
       )}
 
       <section className="card">
@@ -255,6 +274,7 @@ function TimerCard({
   setPending,
   onStart,
   onFinish,
+  onCancel,
   openFocus,
   nextFromPlan,
   onSaved,
@@ -270,13 +290,14 @@ function TimerCard({
   setPending: (p: Pending | null) => void;
   onStart: (courseId: string) => void;
   onFinish: () => void;
+  onCancel: () => void;
   openFocus: () => void;
   nextFromPlan?: { item: PlanItem; left: number };
   onSaved: () => void;
   onError: (m: string) => void;
 }) {
   const api = useApi();
-  const { timer, elapsedMs, cancel } = t;
+  const { timer, elapsedMs } = t;
   const brk = useBreak();
   const [mode, setMode] = useState<'timer' | 'manual'>('timer');
   const [minutes, setMinutes] = useState('');
@@ -350,7 +371,7 @@ function TimerCard({
           </div>
         )}
         <div className="actions center">
-          <ConfirmButton className="btn ghost" confirmLabel="Kaydetmeden sil?" onConfirm={cancel}>
+          <ConfirmButton className="btn ghost" confirmLabel={elapsedMs >= WILT_MIN * 60_000 ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
             İptal
           </ConfirmButton>
           <button className="btn" onClick={openFocus}>
@@ -551,6 +572,29 @@ function PlanCard({
       <button className="link plan-link" onClick={goPlan}>
         Haftalık planı aç
       </button>
+    </section>
+  );
+}
+
+/** Bugün yarıda bırakılan sayaçtan kalan solgun fidan: kurtarmak için kaç dakika kaldı */
+function WiltCard({ date }: { date: string }) {
+  const { stats } = useGame();
+  const w = stats?.wilts.find((x) => x.item.date === date && !x.revived);
+  if (!w) return null;
+  return (
+    <section className="card wilt-card">
+      <span className="wilt-icon" aria-hidden>
+        🥀
+      </span>
+      <div className="grow">
+        <strong>Adanda solgun bir fidan var</strong>
+        <div className="muted small">
+          Sayacı yarıda bıraktın. Bugün <strong>{REVIVE_MIN - w.after} dk</strong> daha çalışırsan yeniden yeşerir!
+        </div>
+        <div className="pbar" aria-hidden>
+          <span style={{ width: `${(w.after / REVIVE_MIN) * 100}%`, background: 'var(--good)' }} />
+        </div>
+      </div>
     </section>
   );
 }

@@ -80,8 +80,14 @@ export function demoSeed(): DemoDb {
     { id: 'tk-2', course_id: 'c-tr', title: 'Kitaptan 10 sayfa oku', date: today, done: true, created_at: t },
     { id: 'tk-3', course_id: 'c-ing', title: 'Renkleri tekrar et', date: today, done: false, created_at: t },
   ];
+  // Solgun fidanlar: biri aynı gün çalışmaya dönülüp kurtarılmış, biri (boş bir günde) solgun kalmış
+  const abandoned: NonNullable<DemoDb['abandoned']> = [
+    { id: 'a-1', date: addDays(today, -5), minutes: 12, created_at: `${addDays(today, -5)}T06:00:00.000Z` },
+    { id: 'a-2', date: addDays(today, -10), minutes: 8, created_at: `${addDays(today, -10)}T15:00:00.000Z` },
+  ];
+
   return {
-    courses, logs, tasks, reflections, trees, ...demoReading(today, t), ...demoFamily(today, logs),
+    courses, logs, tasks, reflections, trees, abandoned, ...demoReading(today, t), ...demoFamily(today, logs),
     reportSettings: { parent_email: 'ebeveyn@ornek.com', child_name: 'Ece', send_hour: 21, timezone: 'Europe/Istanbul', enabled: true },
   };
 }

@@ -6,6 +6,7 @@ import type { Course } from '../lib/types';
 import { formatClock, type TimerApi } from '../lib/useTimer';
 import ConfirmButton from './ConfirmButton';
 import Tree from './Tree';
+import { WILT_MIN } from '../lib/wilt';
 
 const GOALS = [25, 40];
 const SOUND_KEY = 'ct-focus-sound-v1';
@@ -20,6 +21,7 @@ export default function FocusMode({
   course,
   roundsToday,
   onFinish,
+  onCancel,
   onClose,
 }: {
   t: TimerApi;
@@ -27,6 +29,8 @@ export default function FocusMode({
   /** Bugün kaydedilmiş oturum sayısı (bu oturum hariç) */
   roundsToday: number;
   onFinish: () => void;
+  /** İptal (uzun sürdüyse adada solgun fidan kalır) */
+  onCancel: () => void;
   onClose: () => void;
 }) {
   const { stats } = useGame();
@@ -136,7 +140,7 @@ export default function FocusMode({
             <div className="break-note">{Math.floor(elapsedMin)} dakikadır çalışıyorsun. Kısa bir mola iyi gelir. 🧃</div>
           )}
           <div className="actions center focus-actions">
-            <ConfirmButton className="btn ghost" confirmLabel="Kaydetmeden sil?" onConfirm={t.cancel}>
+            <ConfirmButton className="btn ghost" confirmLabel={elapsedMin >= WILT_MIN ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
               İptal
             </ConfirmButton>
             <button className="btn primary big" onClick={onFinish}>
