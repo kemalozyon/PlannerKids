@@ -3,7 +3,8 @@ import { formatMinutes } from '../lib/date';
 import { nextStage, STAGES, stageIndex } from '../lib/forest';
 import { useGame } from '../lib/GameContext';
 import type { Course } from '../lib/types';
-import { formatClock, type TimerApi } from '../lib/useTimer';
+import { formatClock } from '../lib/useTimer';
+import type { SessionApi } from '../lib/SessionContext';
 import ConfirmButton from './ConfirmButton';
 import Tree from './Tree';
 import { WILT_MIN } from '../lib/wilt';
@@ -15,16 +16,17 @@ const SOUND_KEY = 'ct-focus-sound-v1';
  * Tam ekran odak modu: halka sayaç, çalıştıkça büyüyen fidan, tur seçimi (25 / 40 / serbest),
  * tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
  * Fidan yalnızca gösterimdir: bugün çalışılan dakika + bu oturum hangi evreye yetiyorsa o (bugünün ağacı).
+ * Açıkken ekranın kararmaması istenir (Wake Lock): kağıttan çalışırken ekran kapanıp sayaç durmasın.
  */
 export default function FocusMode({
-  t,
+  ses,
   course,
   roundsToday,
   onFinish,
   onCancel,
   onClose,
 }: {
-  t: TimerApi;
+  ses: SessionApi;
   course: Course | undefined;
   /** Bugün kaydedilmiş oturum sayısı (bu oturum hariç) */
   roundsToday: number;
@@ -34,8 +36,8 @@ export default function FocusMode({
   onClose: () => void;
 }) {
   const { stats } = useGame();
-  const goal = t.timer?.goalMin ?? null;
-  const elapsedMin = t.elapsedMs / 60_000;
+  const goal = ses.goalMin;
+  const elapsedMin = ses.elapsedMs / 60_000;
   const reached = goal != null && elapsedMin >= goal;
   const [sound, setSound] = useState(() => {
     try {
@@ -45,8 +47,9 @@ export default function FocusMode({
     }
   });
 
-  useRain(sound);
-  useChime(reached, `${t.timer?.startedAt}-${goal}`);
+  useRain(sound && ses.running);
+  useChime(reached, `${ses.session?.id}-${goal}`);
+  useWakeLock(ses.running);
 
   // Esc ile küçült
   useEffect(() => {
@@ -81,18 +84,18 @@ export default function FocusMode({
               </button>
             )}
             {GOALS.map((g) => (
-              <button key={g} role="radio" aria-checked={goal === g} className={goal === g ? 'on' : ''} onClick={() => t.setGoal(g)}>
+              <button key={g} role="radio" aria-checked={goal === g} className={goal === g ? 'on' : ''} onClick={() => ses.setGoal(g)}>
                 {g} dk
               </button>
             ))}
-            <button role="radio" aria-checked={goal == null} className={goal == null ? 'on' : ''} onClick={() => t.setGoal(null)}>
+            <button role="radio" aria-checked={goal == null} className={goal == null ? 'on' : ''} onClick={() => ses.setGoal(null)}>
               Serbest
             </button>
           </div>
         </div>
 
         <section className="card focus-card" style={{ borderColor: color }}>
-          <div className="muted small">{reached ? 'Turu tamamladın, harika! 🎉' : 'Odaklanıyorsun, harika!'}</div>
+          <div className="muted small">{ses.paused ? 'Sayaç durdu ⏸' : reached ? 'Turu tamamladın, harika! 🎉' : 'Odaklanıyorsun, harika!'}</div>
           <div className="timer-course">
             <span className="dot" style={{ background: color }} />
             {course?.name ?? 'Ders'}
@@ -113,7 +116,7 @@ export default function FocusMode({
               />
             </svg>
             <div className="focus-center">
-              <div className="clock">{formatClock(t.elapsedMs)}</div>
+              <div className="clock">{formatClock(ses.elapsedMs)}</div>
               <div className={stage < 0 ? 'focus-tree faint' : 'focus-tree'}>
                 <Tree species={stats?.today.tree?.species ?? stats?.favoriteSpecies ?? 'elma'} stage={Math.max(0, stage)} size={64} />
               </div>
@@ -143,6 +146,11 @@ export default function FocusMode({
             <ConfirmButton className="btn ghost" confirmLabel={elapsedMin >= WILT_MIN ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
               İptal
             </ConfirmButton>
+            {ses.paused && (
+              <button className="btn" onClick={() => ses.resume()}>
+                ▶ Devam et
+              </button>
+            )}
             <button className="btn primary big" onClick={onFinish}>
               Bitirdim
             </button>
@@ -170,10 +178,38 @@ export default function FocusMode({
             }}
           />
         </section>
-        <p className="muted small center">{STAGES[0].name} için {STAGES[0].min} dk yeter. Her dakika 🪙 1 dk para.</p>
+        <p className="muted small center">
+          {STAGES[0].name} için {STAGES[0].min} dk yeter. Her dakika 🪙 1 dk para; sayaçla çalıştıkça 💎 Elmas da kazanırsın.
+        </p>
       </div>
     </div>
   );
+}
+
+/** Açıkken ekran kararmasın (destekleyen tarayıcılarda). Sekmeye dönünce kilit yeniden istenir. */
+function useWakeLock(on: boolean) {
+  useEffect(() => {
+    if (!on || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let stop = false;
+    const get = () => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.wakeLock.request('screen').then(
+        (l) => {
+          if (stop) l.release().catch(() => {});
+          else lock = l;
+        },
+        () => {},
+      );
+    };
+    get();
+    document.addEventListener('visibilitychange', get);
+    return () => {
+      stop = true;
+      document.removeEventListener('visibilitychange', get);
+      lock?.release().catch(() => {});
+    };
+  }, [on]);
 }
 
 /** Kahverengi gürültü: yumuşak yağmur benzeri ses. Kapanınca/odak modundan çıkınca durur. */

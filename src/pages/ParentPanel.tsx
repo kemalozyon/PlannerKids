@@ -4,6 +4,10 @@ import ParentSettings from '../components/ParentSettings';
 import { useApi } from '../lib/ApiContext';
 import { addDays, formatMinutes, formatShort, toLocalDate, weekStart } from '../lib/date';
 import { hashPin, isUnlocked, setUnlocked, validPin } from '../lib/family';
+import { itemById } from '../lib/catalog';
+import { CFG } from '../lib/config';
+import { GIFT_MAX } from '../lib/economy';
+import { LEDGER_LABEL } from '../lib/game';
 import { useGame } from '../lib/GameContext';
 import { MOODS } from '../lib/mood';
 import { useReading } from '../lib/ReadingContext';
@@ -68,6 +72,7 @@ export default function ParentPanel({ courses, goPlan }: { courses: Course[]; go
       <PlanApproval family={family} onChange={saveFamily} courses={courses} goPlan={goPlan} />
       <NotesCard />
       <RewardsAdmin />
+      <EconomyAdmin />
       <ParentSettings />
       <PinChange family={family} onChange={saveFamily} />
     </div>
@@ -505,6 +510,109 @@ function PinChange({ family, onChange }: { family: FamilySettings; onChange: (f:
         <button className="btn">Kaydet</button>
       </form>
       {msg && <p className="muted small">{msg}</p>}
+    </section>
+  );
+}
+
+/** Aile panelindeki kural özeti (config'ten) */
+function economyRules(): string {
+  const e = CFG.elmas;
+  const tiers = e.study.tiers.map((t, i) => `${i ? e.study.tiers[i - 1].upTo : 0}–${t.upTo}. dk ${t.minutesPer} dk = 1 💎`).join(', ');
+  return (
+    `Elmas yalnızca sayaçla ölçülen çalışmadan kazanılır; süreyi sunucu tutar, sekme değişince ya da uzun süre dokunulmayınca sayaç durur. ` +
+    `Elle yazılan süre kayda geçer ama Elmas vermez. Günlük: ${tiers}, en çok ${e.study.dailyCap} 💎. ` +
+    `Seri kademesi günde +${e.streak.tiers[0].bonus}…+${e.streak.tiers.at(-1)!.bonus}, öz değerlendirme +${e.reflection.bonus}, ` +
+    `planı biten gün +${e.plan}, biten kitap +${e.book.bonus} (haftada en çok ${e.book.perWeek}), ders görevleri. Gezinti yıldızları para değildir.`
+  );
+}
+
+/** Kazancın ait olduğu gün (geçmişten kazanılanlar kendi gününde görünsün), değilse yazıldığı gün */
+function ledgerDate(e: { kind: string; ref: string; created_at: string }): string {
+  const d = ['study', 'plan', 'streak', 'reflection'].includes(e.kind) ? e.ref : e.kind === 'quest' ? e.ref.split(':')[1] : null;
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : toLocalDate(new Date(e.created_at));
+}
+
+/** Oyun ve Elmas: bakiye, son hareketler, hediye Elmas ve kuralların özeti */
+function EconomyAdmin() {
+  const api = useApi();
+  const { stats, refresh, celebrate } = useGame();
+  const [amount, setAmount] = useState(5);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!stats) return null;
+  const recent = [...stats.ledger]
+    .filter((e) => e.kind !== 'star')
+    .sort((a, b) => ledgerDate(b).localeCompare(ledgerDate(a)) || b.created_at.localeCompare(a.created_at))
+    .slice(0, 30);
+  const label = (e: (typeof recent)[number]) =>
+    e.kind === 'buy' ? `${itemById(e.note ?? '')?.icon ?? '🛍️'} ${itemById(e.note ?? '')?.name ?? 'Satın alma'}` : e.kind === 'gift' ? `🎁 Hediye${e.note ? `: ${e.note}` : ''}` : (LEDGER_LABEL[e.kind]?.(e.ref) ?? e.kind);
+  return (
+    <section className="card">
+      <h2>Oyun ve Elmas</h2>
+      <p className="muted small">{economyRules()}</p>
+      <div className="row">
+        <span className="grow">Bakiye</span>
+        <strong>💎 {stats.crystals}</strong>
+      </div>
+      <div className="row">
+        <span className="grow">Gezintide toplanan yıldız</span>
+        <strong>⭐ {stats.stars}</strong>
+      </div>
+      <div className="row">
+        <span className="grow">Seri dondurma</span>
+        <strong>{stats.freezesLeft} bekliyor</strong>
+      </div>
+      <div className="gift-form">
+        <label className="grow">
+          <span className="muted small">Hediye Elmas (1–{GIFT_MAX})</span>
+          <input type="number" min={1} max={GIFT_MAX} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+        </label>
+        <label className="grow">
+          <span className="muted small">Not (isteğe bağlı)</span>
+          <input value={note} maxLength={120} placeholder="Örn. Karne hediyesi" onChange={(e) => setNote(e.target.value)} />
+        </label>
+        <button
+          className="btn primary"
+          disabled={busy || !(amount >= 1 && amount <= GIFT_MAX)}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await api.giftCrystals(Math.round(amount), note.trim());
+              await refresh();
+              celebrate({ kind: 'badge', icon: '🎁', title: `${Math.round(amount)} Elmas hediye edildi`, detail: note.trim() || 'Çocuğunuz dükkânda kullanabilir.' });
+              setNote('');
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Hediye et
+        </button>
+      </div>
+      {error && <p className="error-ink small">{error}</p>}
+      <details className="ledger">
+        <summary className="small">Son hareketler</summary>
+        {recent.length === 0 ? (
+          <p className="muted small">Henüz hareket yok.</p>
+        ) : (
+          <ul>
+            {recent.map((e) => (
+              <li key={e.id} className="row small">
+                <span className="grow">{label(e)}</span>
+                <span className="muted">{formatShort(ledgerDate(e))}</span>
+                <strong className={e.amount < 0 ? 'neg' : 'pos'}>
+                  {e.amount > 0 ? '+' : ''}
+                  {e.amount} {e.currency === 'crystal' ? '💎' : '⭐'}
+                </strong>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </section>
   );
 }

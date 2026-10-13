@@ -87,8 +87,27 @@ export function demoSeed(): DemoDb {
   ];
 
   return {
-    courses, logs, tasks, reflections, trees, abandoned, ...demoReading(today, t), ...demoFamily(today, logs),
+    courses, logs, tasks, reflections, trees, abandoned, ...demoReading(today, t), ...demoFamily(today, logs), ...demoGame(today, t),
     reportSettings: { parent_email: 'ebeveyn@ornek.com', child_name: 'Ece', send_hour: 21, timezone: 'Europe/Istanbul', enabled: true },
+  };
+}
+
+/**
+ * Oyun ekonomisi: bir kedi (yanında geziyor) ve bu ayın adasında bir çadır. Kristaller ilk açılışta
+ * geçmiş kayıtlardan kendiliğinden kazanılır (GameContext → pendingClaims); burada yalnızca harcamalar var.
+ */
+function demoGame(today: string, t: string): Pick<DemoDb, 'owned' | 'ledger' | 'placements' | 'equipped'> {
+  return {
+    owned: [
+      { id: 'o-cat', item_id: 'pet:cat', via: 'buy', ref: null, created_at: t },
+      { id: 'o-tent', item_id: 'yapi:tent', via: 'buy', ref: null, created_at: t },
+    ],
+    ledger: [
+      { id: 'lg-cat', currency: 'crystal', kind: 'buy', ref: 'o-cat', amount: -60, note: 'pet:cat', created_at: t },
+      { id: 'lg-tent', currency: 'crystal', kind: 'buy', ref: 'o-tent', amount: -60, note: 'yapi:tent', created_at: t },
+    ],
+    placements: [{ id: 'pl-tent', month: monthOf(today), owned_id: 'o-tent', x: -2.4, z: 5.5, rot: 0.6 }],
+    equipped: { character: 'char:female-b', accessory: null, pets: ['pet:cat'] },
   };
 }
 

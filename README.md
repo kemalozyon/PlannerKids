@@ -16,7 +16,7 @@ Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`.
 ## Supabase'e bağlama
 
 1. supabase.com'da proje oluştur.
-2. **SQL Editor** → `supabase/migrations/0001_init.sql` içeriğini çalıştır (tablolar + RLS).
+2. **SQL Editor** → `supabase/migrations/` altındaki dosyaları sırayla (0001, 0002, …) çalıştır (tablolar + RLS + kurallar).
 3. **Authentication → Providers → Google**'ı aç:
    - Google Cloud Console'da OAuth Client (Web) oluştur.
    - Authorized redirect URI: `https://<proje-ref>.supabase.co/auth/v1/callback`
@@ -43,8 +43,11 @@ src/
     Courses.tsx    Ders ekle / düzenle / sil
     WeekPlan.tsx   Haftalık plan: güne göre ders/dakika, hazır şablonlar, geçen haftayı kopyala
     Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
-    ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, rapor ayarları
-supabase/migrations/0001_init.sql … 0007_abandoned_sessions.sql
+    ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, oyun ve Elmas, rapor ayarları
+    Shop.tsx       Dükkân: 💎/⭐ ile karakter, aksesuar, evcil hayvan, yapı, süs
+    Collection.tsx Koleksiyon defteri ve anı albümü
+supabase/migrations/0001_init.sql … 0011_config.sql
+src/config/economy.json, items.json   Ekonominin tek kaynağı (npm run config:sql → yeni migration)
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
@@ -78,7 +81,44 @@ yakınlaştırılır; ağaca dokununca o günün penceresi açılır.
 - **Büyüme animasyonu:** dikilen/büyütülen ağaç zıplayarak çıkar, etrafına parçacıklar saçılır.
 - **Solgun fidan:** sayaç 5 dakikadan sonra iptal edilirse adada solgun bir fidan kalır; aynı gün 10 dk daha çalışılırsa
   yeniden yeşerir (`0007_abandoned_sessions.sql`).
-- Modeller: [Kenney](https://kenney.nl) Nature Kit ve Cube Pets (CC0). WebGL yoksa düz ızgara görünümü kullanılır.
+- **Ormanda gezinti:** "🚶 Ormanda gez" düğmesiyle çocuk seçtiği karakterle adada üçüncü şahıs kamerayla yürür
+  (dokunmatikte joystick + zıpla, boş yerde sürükleyince kamera döner; klavyede WASD/oklar, Shift koş, boşluk zıpla,
+  E etkileşim, Esc çık). Ağacın yanına gidince o günü açar, hayvanları sever (20 sn peşinden gelirler), solgun fidanın
+  kaç dakikada yeşereceğini görür, her gün adaya saklanan 8 yıldızı toplar ve dükkândan aldığı yapıları 🔨 ile adasına
+  yerleştirir. Seviye atladıkça daha hızlı koşar, çift zıplar, süzülür.
+
+### Güvenilir süre: seanslar sunucuda (`0009_sessions.sql`)
+
+- **Süre sunucunun saatiyle tutulur.** "Başlat" sunucuda bir seans açar; dakikayı sunucu hesaplar ve kaydı o yazar (`source = 'timer'`).
+- **Sayaç açıkken** uygulama dakikada bir "buradayım" der. Haber gelmezse (sekme kapandı, ekran kilitlendi, internet gitti) sunucu son haberden 90 sn sonra saymayı bırakır.
+- **Sekme değişince** sayaç duraklar, geri gelince "Devam et" çıkar. Oyuna (gezinti) geçince de duraklar.
+- **15 dk dokunulmazsa** "Hâlâ çalışıyor musun?" sorulur. 60 sn içinde cevap gelmezse son dokunuştan beri geçen süre sayılmaz.
+- **Odak modu** ekranın kararmasını engeller (Wake Lock): kağıttan çalışırken ekran kapanıp sayaç durmasın.
+- **Seans sonu:** ders seçimi ve kısa bir "Ne çalıştın?" notu zorunlu.
+- **Elle yazılan süre** ("✏️ Süre yaz") kayda ve rapora geçer ama Elmas vermez.
+
+### Elmas, dükkân ve koleksiyon
+
+Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığı yerdir. **Bütün sayılar `src/config/economy.json` ve `src/config/items.json` dosyalarında.** Değiştirdikten sonra `npm run config:sql` yeni bir migration üretir; onu SQL Editor'de çalıştır.
+
+- **💎 Elmas** tek para birimidir ve yalnızca sayaçla ölçülen çalışmadan kazanılır. Hesabı sunucu yapıp deftere yazar (`0010_economy_v2.sql → economy_sync`); uygulama deftere yazamaz.
+  - **Azalan getiri:** ilk saat 10 dk = 1 💎, ikinci saat 20 dk = 1 💎, üçüncü saat 30 dk = 1 💎; sonrası vermez. Günde en çok 12.
+  - **Kademeli seri:** 3/7/14/30 gün kademeleri, günde +1…+4 💎. Kaçırılan hafta içi günü seriyi sıfırlamaz, bir kademe düşürür. Hafta sonu bozmaz; seri dondurma bir düşüşü engeller.
+  - Öz değerlendirme (puan ve en az 10 harflik not, o gün çalışıldıysa) +1.
+  - Planı tamamlanan gün +3. Biten kitap +5, haftada en çok 2 kitap.
+  - Ders görevleri +2–5: bugün 30 dk; bu hafta 5 gün, 3 planlı gün, 3 farklı ders, bir kitap.
+  - Geçmiş kayıtlar da sayılır.
+- **⭐ Yıldız** gezintide toplanır (günde 8). Para değildir, koleksiyonda birikir.
+- **Dükkân:** karakterler, aksesuarlar, evcil hayvanlar (yanında gezer), ada yapıları (çadır, köprü, kano, heykel…), süsler ve seri dondurma. Nadirlik: yaygın, nadir, efsanevi.
+  - Efsanevi eşyalar yalnızca başarıyla açılır: 30 günlük seri, 10 planlı gün, derslerde altın, Efsane seviyesi. Bir kısmı yalnızca sandıktan çıkar.
+- **Haftalık sandık:** haftada 5 gün ve 150 dk çalışınca açılır, içinden sürpriz bir eşya çıkar. Satın alınamaz.
+- **Seviye ve ders yetenekleri (Profil):**
+  - Toplam saate göre Çırak → Kâşif → Orman Bekçisi → Bahçıvan → Orman Ustası → Orman Bilgesi → Efsane.
+  - Her ders bronz/gümüş/altın olur; unvanlar Bilge, Hikâyeci, Mucit, Gezgin… En az çalışılan ders "bunu da büyüt" diye vurgulanır.
+- **Koleksiyon defteri:** bütün eşyalar (eksikler gölge gibi) ve geçmiş ayların adalarıyla bir anı albümü.
+- **Aile paneli → Oyun ve Elmas:** bakiye, son hareketler, hediye Elmas (1–50), kuralların özeti.
+- **Kopya önlemi:** süreyi ve kazancı sunucu hesaplar. Deftere ve sayaç kayıtlarına yalnızca sunucu fonksiyonları yazar; kaydın süresi sonradan değiştirilemez. Bakiyeyi aşan alışveriş, sandık havuzunda olmayan eşya ve defter silme reddedilir.
+- Modeller: [Kenney](https://kenney.nl) Nature Kit, Cube Pets ve Mini Characters (CC0); ayrıntı `src/assets/models/LICENSE.md`. WebGL yoksa düz ızgara görünümü kullanılır.
 
 ## Planlama, odak modu, ödüller ve aile paneli
 

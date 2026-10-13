@@ -18,31 +18,34 @@ import {
   stageIndex,
 } from '../lib/forest';
 import { dayAction, type Wallet } from '../lib/game';
+import { ITEMS, itemById, placeable, type Item } from '../lib/catalog';
+import { owns } from '../lib/economy';
+import { perksOf } from '../lib/level';
+import { hasWebGL } from '../lib/webgl';
 import { BIOMES, islandProgress } from '../lib/island';
 import { REVIVE_MIN, type Wilt } from '../lib/wilt';
 import { useGame } from '../lib/GameContext';
+import { useSession } from '../lib/SessionContext';
+import { CFG } from '../lib/config';
+
+const STREAK_TIERS = CFG.elmas.streak.tiers;
 import { bookTreeSize, parcelCells, PARCEL_COLS, SIZE_NAMES } from '../lib/reading';
 import { useReading } from '../lib/ReadingContext';
 import type { Book, BookTree as BookTreeT, Course, ForestTree } from '../lib/types';
 
 // three.js büyük: 3D ada yalnızca Orman açılınca yüklenir
 const Island3D = lazy(() => import('../components/forest3d/Island3D'));
+const Explore = lazy(() => import('../components/forest3d/Explore'));
 const VIEW_KEY = 'ct-forest-view-v1';
 
-function hasWebGL(): boolean {
-  try {
-    const c = document.createElement('canvas');
-    return !!(c.getContext('webgl2') || c.getContext('webgl'));
-  } catch {
-    return false;
-  }
-}
-
 /** 3D sahne çökerse sayfa gitmesin, düz ızgara gösterilsin */
-class Fallback extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+class Fallback extends Component<{ fallback: ReactNode; children: ReactNode; onError?: () => void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onError?.();
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;
@@ -70,7 +73,7 @@ export default function Forest({
   plantBookId?: string | null;
   onStarted?: () => void;
 }) {
-  const { stats, plant, move, upgrade, celebrate } = useGame();
+  const { stats, plant, move, upgrade, celebrate, place, movePlaced, removePlaced, equip, collectStar } = useGame();
   const reading = useReading();
   const today = toLocalDate();
   const thisMonth = monthOf(today);
@@ -80,6 +83,8 @@ export default function Forest({
   const [bookDetail, setBookDetail] = useState<BookTreeT | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wiltOpen, setWiltOpen] = useState<Wilt | null>(null);
+  const [exploring, setExploring] = useState(false);
+  const ses = useSession();
   const can3D = useMemo(hasWebGL, []);
   const [view, setView] = useState<'3d' | '2d'>(() => {
     try {
@@ -132,6 +137,31 @@ export default function Forest({
   const busy = placing || bookPlacing;
   const pendingBooks = isCurrent ? (reading.stats?.pendingTrees ?? []) : [];
   const minutesOf = (date: string) => stats.dayTotals.get(date) ?? 0;
+  const monthWilts = stats.wilts.filter((w) => monthOf(w.item.date) === month);
+  const monthTotal = [...stats.dayTotals].reduce((sum, [d, m]) => (monthOf(d) <= month ? sum + m : sum), 0);
+  // Oyuna geçince çalışma sayacı duraklar (oyun süresi çalışmaya sayılmaz)
+  const explore =
+    can3D && !busy
+      ? () => {
+          if (ses.running) ses.pause('game').catch(() => {});
+          setExploring(true);
+        }
+      : undefined;
+  // Adaya yerleştirilmiş eşyalar ve yanındaki hayvanlar
+  const ownedById = new Map(stats.owned.map((o) => [o.id, o]));
+  const placed = stats.placements
+    .filter((p) => p.month === month)
+    .flatMap((p) => {
+      const item = itemById(ownedById.get(p.owned_id)?.item_id ?? '');
+      return item?.model ? [{ p, item }] : [];
+    });
+  const placedHere = new Set(placed.map((t) => t.p.owned_id));
+  const inventory = stats.owned.flatMap((owned) => {
+    const item = itemById(owned.item_id);
+    return item && placeable(item) && item.model && !placedHere.has(owned.id) ? [{ owned, item }] : [];
+  });
+  const companions = stats.equipped.pets.map(itemById).filter((i): i is Item => !!i?.model);
+  const characters = ITEMS.filter((i) => i.category === 'karakter' && owns(i, stats.owned, stats.unlock));
 
   const onCell = async (cell: number) => {
     setError(null);
@@ -246,19 +276,25 @@ export default function Forest({
       )}
       {error && <div className="error">{error}</div>}
 
-      {can3D && view === '3d' ? (
+      {can3D && view === '3d' && exploring ? (
+        // Gezintideyken ada ikinci kez çizilmesin (iki WebGL sahnesi telefonu yorar)
+        <div className="island-wrap island-loading">🚶 Ormanda geziyorsun…</div>
+      ) : can3D && view === '3d' ? (
         <Fallback fallback={grid2D}>
           <Suspense fallback={<div className="island-wrap island-loading">🏝️ Adan yükleniyor…</div>}>
             <Island3D
               month={month}
               trees={trees}
-              wilts={stats.wilts.filter((w) => monthOf(w.item.date) === month)}
-              totalMinutes={[...stats.dayTotals].reduce((sum, [d, m]) => (monthOf(d) <= month ? sum + m : sum), 0)}
+              wilts={monthWilts}
+              totalMinutes={monthTotal}
               placing={mode.kind === 'place' ? 'tree' : mode.kind === 'move' ? 'move' : 'none'}
               movingId={mode.kind === 'move' ? mode.tree.id : undefined}
               onCell={onCell}
               onTree={(t) => setDetail(t)}
               onWilt={setWiltOpen}
+              onExplore={explore}
+              placed={placed}
+              companions={companions}
             />
           </Suspense>
         </Fallback>
@@ -273,7 +309,49 @@ export default function Forest({
           <button className={view === '2d' ? 'on' : ''} aria-pressed={view === '2d'} onClick={() => switchView('2d')}>
             ▦ Düz
           </button>
+          {view === '2d' && explore && <button onClick={explore}>🚶 Ormanda gez</button>}
         </div>
+      )}
+      {exploring && (
+        <Fallback
+          fallback={null}
+          onError={() => {
+            setExploring(false);
+            setError('Gezinti açılamadı. Adayı yukarıdan döndürerek gezebilirsin.');
+          }}
+        >
+          <Suspense fallback={<div className="explore explore-loading">🚶 Ada hazırlanıyor…</div>}>
+            <Explore
+              month={month}
+              trees={trees}
+              wilts={monthWilts}
+              totalMinutes={monthTotal}
+              today={today}
+              current={isCurrent}
+              minutesOf={minutesOf}
+              paused={!!detail || !!wiltOpen}
+              onTree={setDetail}
+              onWilt={setWiltOpen}
+              onClose={() => setExploring(false)}
+              equipped={stats.equipped}
+              characters={characters}
+              onEquip={equip}
+              perks={perksOf(stats.level.index)}
+              crystals={stats.crystals}
+              starsGot={stats.starsToday}
+              onStar={collectStar}
+              placed={placed}
+              inventory={inventory}
+              onPlace={(ownedId, x, z, rot) => place({ month, owned_id: ownedId, x, z, rot })}
+              onMovePlaced={movePlaced}
+              onRemovePlaced={removePlaced}
+              onShop={() => {
+                setExploring(false);
+                location.hash = 'shop';
+              }}
+            />
+          </Suspense>
+        </Fallback>
       )}
       {!busy && total > 0 && <p className="muted small center">Bir ağaca dokun, o gün ne çalıştığını gör.</p>}
 
@@ -384,6 +462,7 @@ export default function Forest({
                   onMove: () => {
                     setMode({ kind: 'move', tree: detail });
                     setDetail(null);
+                    setExploring(false);
                   },
                   onUpgrade: async (stage) => {
                     const from = detail.stage;
@@ -720,11 +799,10 @@ function Badges() {
         ))}
       </ul>
       <div className="rules muted small">
-        <strong>Seri nasıl işler?</strong> Çalıştığın her gün serin 1 büyür. Hafta sonu dinlenmek seriyi bozmaz. Her hafta 1
-        dinlenme hakkın var: hafta içi bir günü kaçırırsan serin bozulmaz.{' '}
-        <span className={`pill${stats.restUsedThisWeek ? ' used' : ''}`}>
-          {stats.restUsedThisWeek ? 'Bu hafta kullandın' : 'Bu hafta duruyor'}
-        </span>
+        <strong>Seri nasıl işler?</strong> Sayaçla çalıştığın her gün serin 1 büyür. Hafta sonu dinlenmek seriyi bozmaz.
+        Hafta içi bir günü kaçırırsan serin sıfırlanmaz, bir kademe düşer ({STREAK_TIERS.map((t) => t.days).join(' → ')} gün).
+        Kademen yükseldikçe her gün fazladan Elmas kazanırsın.{' '}
+        {stats.streakTier > 0 && <span className="pill">Kademe {stats.streakTier}: günde +{STREAK_TIERS[stats.streakTier - 1].bonus} 💎</span>}
       </div>
     </section>
   );

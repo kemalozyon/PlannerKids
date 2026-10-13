@@ -1,9 +1,14 @@
+import type { SessionState, StudySession } from './session';
+
 export interface Course {
   id: string;
   name: string;
   color: string;
   created_at: string;
 }
+
+/** timer: sunucuda ölçülen seans · manual: elle yazılan (Elmas ve ağaç vermez) · legacy: 0009'dan önceki kayıt */
+export type LogSource = 'timer' | 'manual' | 'legacy';
 
 export interface StudyLog {
   id: string;
@@ -12,6 +17,9 @@ export interface StudyLog {
   duration_minutes: number;
   note: string | null;
   created_at: string;
+  /** Yoksa legacy (eski demo verisi) */
+  source?: LogSource;
+  session_id?: string | null;
 }
 
 export interface Task {
@@ -37,8 +45,23 @@ export interface Api {
   deleteCourse(id: string): Promise<void>;
 
   listLogs(from: string, to: string): Promise<StudyLog[]>;
+  /** Elle yazılan süre: kayda geçer ama Elmas ve ağaç vermez (source = 'manual') */
   addLog(log: Pick<StudyLog, 'course_id' | 'date' | 'duration_minutes' | 'note'>): Promise<StudyLog>;
   deleteLog(id: string): Promise<void>;
+
+  // Çalışma seansı: süre sunucunun saatiyle tutulur (0009_sessions.sql)
+  /** Açık (çalışan ya da duraklatılmış) seans */
+  getOpenSession(): Promise<SessionState | null>;
+  startSession(courseId: string, date: string): Promise<SessionState>;
+  /** "Buradayım"; tolerans aşıldıysa seans duraklatılmış döner */
+  beatSession(id: string): Promise<SessionState>;
+  /** backSec: hareketsizlikte sondan bu kadar saniye sayılmaz */
+  pauseSession(id: string, backSec?: number): Promise<SessionState>;
+  resumeSession(id: string): Promise<SessionState>;
+  /** Not zorunlu; dakikayı sunucu hesaplar, kaydı yazar ve Elmas'ı günceller */
+  finishSession(id: string, courseId: string, note: string): Promise<{ session: StudySession; log: StudyLog }>;
+  /** Yarıda bırakılır (uzun sürdüyse kuru ağaç) */
+  abandonSession(id: string): Promise<StudySession>;
 
   listTasks(date: string): Promise<Task[]>;
   addTask(task: Pick<Task, 'title' | 'date' | 'course_id'>): Promise<Task>;
@@ -98,6 +121,26 @@ export interface Api {
   addReward(r: NewReward): Promise<Reward>;
   updateReward(id: string, patch: Partial<Pick<Reward, 'claimed_on' | 'title' | 'target'>>): Promise<void>;
   deleteReward(id: string): Promise<void>;
+
+  /** Elmas ve yıldız defteri (eskiden yeniye) */
+  listLedger(): Promise<LedgerEntry[]>;
+  /** Kazançları sunucu kayıtlardan hesaplayıp deftere yazar (istemci deftere yazamaz) */
+  syncEconomy(): Promise<void>;
+  /** Gezintide günün i. yıldızı toplandı (yıldız para değildir, koleksiyon sayacıdır) */
+  collectStar(date: string, index: number): Promise<void>;
+  /** Ebeveyn hediyesi (1–giftMax 💎) */
+  giftCrystals(amount: number, note: string): Promise<void>;
+  listOwned(): Promise<OwnedItem[]>;
+  /** Eşyayı fiyatıyla satın alır; bakiye yetmezse hata */
+  buyItem(itemId: string): Promise<OwnedItem>;
+  /** Haftalık sandık: hafta hedefi tuttuysa eşya bir kez verilir */
+  openChest(week: string, itemId: string): Promise<OwnedItem>;
+  listPlacements(): Promise<Placement[]>;
+  placeItem(p: Omit<Placement, 'id'>): Promise<Placement>;
+  movePlacement(id: string, x: number, z: number, rot: number): Promise<void>;
+  removePlacement(id: string): Promise<void>;
+  getEquipped(): Promise<Equipped | null>;
+  saveEquipped(e: Equipped): Promise<void>;
 }
 
 /** Yarıda bırakılan sayaç oturumu: adada solgun bir fidan bırakır, aynı gün çalışılırsa canlanır. */
@@ -237,3 +280,52 @@ export interface ForestTree {
   month: string; // YYYY-MM — hangi ayın ormanı
   cell: number; // 0..CELLS-1
 }
+
+// ---------- Oyun ekonomisi (0008_economy.sql, 0010_economy_v2.sql) ----------
+/** 'crystal' = 💎 Elmas (yalnızca çalışarak kazanılır, tek para) · 'star' = gezintide toplanan ⭐ (sayaç, harcanmaz) */
+export type Currency = 'crystal' | 'star';
+/** study: günün dakikaları · streak: seri kademesi · plan: tamamlanan planlı gün · reflection: öz değerlendirme ·
+ *  book: biten kitap · quest: görev · star: toplanan yıldız · gift: ebeveyn hediyesi · buy: harcama */
+export type LedgerKind = 'study' | 'streak' | 'plan' | 'reflection' | 'book' | 'quest' | 'star' | 'gift' | 'buy';
+
+/** Elmas/yıldız defterinin bir satırı. Kazanç artı, harcama eksi. (currency, kind, ref) tektir. */
+export interface LedgerEntry {
+  id: string;
+  currency: Currency;
+  kind: LedgerKind;
+  ref: string;
+  amount: number;
+  note: string | null;
+  created_at: string;
+}
+
+export type NewLedgerEntry = Pick<LedgerEntry, 'currency' | 'kind' | 'ref' | 'amount'> & { note?: string | null };
+
+/** Satın alınan ya da sandıktan çıkan eşya. Yapı ve süslerden birden fazla olabilir. */
+export interface OwnedItem {
+  id: string;
+  item_id: string;
+  via: 'buy' | 'chest';
+  /** Sandıkta haftanın pazartesisi */
+  ref: string | null;
+  created_at: string;
+}
+
+/** Bir eşyanın bir ayın adasındaki yeri */
+export interface Placement {
+  id: string;
+  month: string;
+  owned_id: string;
+  x: number;
+  z: number;
+  rot: number;
+}
+
+/** Görünüş: gezinti karakteri, aksesuar ve yanındaki hayvanlar */
+export interface Equipped {
+  character: string;
+  accessory: string | null;
+  pets: string[];
+}
+
+export const DEFAULT_EQUIPPED: Equipped = { character: 'char:female-b', accessory: null, pets: [] };

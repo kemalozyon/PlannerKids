@@ -1,6 +1,6 @@
 // Okuma: kitaplar, okuma kayıtları ve kitap parseli. Ormandaki ders bitkisinden bağımsız.
 import { monthOf } from './forest';
-import { computeStreak } from './game';
+import { computeStreak } from './streak';
 import type { Book, BookTree, ReadingGoals, ReadingLog } from './types';
 
 export const GENRES = ['Macera', 'Masal', 'Fantastik', 'Bilim', 'Tarih', 'Gizem', 'Mizah', 'Hayvanlar', 'Şiir', 'Diğer'];
@@ -58,7 +58,7 @@ export function computeReading(
   }
   const readDays = new Set(logs.filter((l) => l.pages > 0 || l.minutes > 0).map((l) => l.date));
   const first = [...readDays].sort()[0] ?? null;
-  const { streak, best } = computeStreak((d) => readDays.has(d), first, today);
+  const { streak, best } = computeStreak((d) => (readDays.has(d) ? 1 : 0), first, today);
 
   const done = books
     .filter((b) => b.status === 'done')

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "build:demo": "tsc -b && vite build --mode demo",
     "test": "node --import ./scripts/resolve-ts.mjs --test 'supabase/functions/**/*.test.ts' 'src/**/*.test.ts'",
+    "config:sql": "node scripts/gen-config-sql.mjs",
     "report:preview": "node --env-file-if-exists=.env scripts/report-preview.ts"
   },
   "dependencies": {

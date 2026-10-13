@@ -1,10 +1,26 @@
 // Oyunlaştırma: hepsi mevcut kayıtlardan türetilir.
 // Uzun vadeli ilerleme = aylık ormanlar + seriyle açılan ağaç türleri + rozetler.
-import { addDays, parseLocalDate, weekStart } from './date';
+import { weekStart } from './date';
 import { SPECIES, STAGES, monthOf, pickFreeCell, priceOf, stageIndex } from './forest';
 import { BIOMES, islandProgress } from './island';
 import { completedPlanDays } from './plan';
-import type { Abandoned, ForestTree, PlanItem, Reflection, StudyLog } from './types';
+import { balances, chestsNow, dayTotalsOf, freezeDates, QUESTS, questsNow, type ChestState, type QuestState, type UnlockProgress } from './economy';
+import { computeStreak } from './streak';
+import { levelOf, skillsOf, type LevelInfo, type Skill } from './level';
+import {
+  DEFAULT_EQUIPPED,
+  type Abandoned,
+  type Book,
+  type Course,
+  type Equipped,
+  type ForestTree,
+  type LedgerEntry,
+  type OwnedItem,
+  type Placement,
+  type PlanItem,
+  type Reflection,
+  type StudyLog,
+} from './types';
 import { wiltsOf, type Wilt } from './wilt';
 
 export interface Badge {
@@ -48,14 +64,23 @@ export interface GameInput {
   plans?: PlanItem[];
   /** Yarıda bırakılan sayaç oturumları (yoksa boş) */
   abandoned?: Abandoned[];
+  // Oyun ekonomisi (0008 yoksa boş)
+  ledger?: LedgerEntry[];
+  owned?: OwnedItem[];
+  placements?: Placement[];
+  equipped?: Equipped | null;
+  books?: Book[];
+  courses?: Course[];
 }
 
 export interface GameStats {
+  /** Kademeli seri: kaçırılan gün bir alt kademeye düşürür (streak.ts) */
   streak: number;
+  /** Seri kademesi (0: yok) ve o kademenin günlük bonusu */
+  streakTier: number;
   /** Seri var ama bugün henüz çalışılmadı → nazik hatırlatma */
   todayPending: boolean;
   bestStreak: number;
-  restUsedThisWeek: boolean;
   todayMinutes: number;
   /** Bugünün cüzdanı */
   today: Wallet;
@@ -72,31 +97,27 @@ export interface GameStats {
   planDays: string[];
   /** Solgun fidanlar ve canlanıp canlanmadıkları */
   wilts: Wilt[];
-}
-
-const isWeekend = (d: string) => [0, 6].includes(parseLocalDate(d).getDay());
-
-/**
- * Yumuşak seri kuralları:
- * - Hafta sonu çalışmak seriyi büyütür, çalışmamak bozmaz.
- * - Her hafta 1 "dinlenme hakkı": kaçırılan bir hafta içi günü seriyi bozmaz.
- * - Bugün henüz bitmediği için bugünün boş olması seriyi bozmaz.
- */
-export function computeStreak(studied: (d: string) => boolean, first: string | null, today: string) {
-  let run = 0;
-  let best = 0;
-  const restUsed = new Set<string>();
-  if (first) {
-    for (let d = first; d <= today; d = addDays(d, 1)) {
-      if (studied(d)) run++;
-      else if (d === today || isWeekend(d) || run === 0) {
-        /* seriyi bozmaz */
-      } else if (!restUsed.has(weekStart(d))) restUsed.add(weekStart(d));
-      else run = 0;
-      best = Math.max(best, run);
-    }
-  }
-  return { streak: run, best, restUsedThisWeek: restUsed.has(weekStart(today)) };
+  // ---------- Oyun ekonomisi ----------
+  /** 💎 Elmas bakiyesi */
+  crystals: number;
+  /** Bugüne kadar toplanan ⭐ (harcanmaz) */
+  stars: number;
+  ledger: LedgerEntry[];
+  owned: OwnedItem[];
+  placements: Placement[];
+  equipped: Equipped;
+  /** Bugünün ve bu haftanın görevleri */
+  quests: QuestState[];
+  /** Geçen hafta ve bu hafta */
+  chests: ChestState[];
+  level: LevelInfo;
+  skills: Skill[];
+  /** Başarıyla açılan eşyalar için ilerleme */
+  unlock: UnlockProgress;
+  /** Kullanılmamış seri dondurma */
+  freezesLeft: number;
+  /** Bugün toplanan yıldızların sırası (0–7) */
+  starsToday: number[];
 }
 
 export function walletOf(date: string, dayTotals: Map<string, number>, trees: ForestTree[]): Wallet {
@@ -151,7 +172,21 @@ export function autoPlantPlan(dayTotals: Map<string, number>, trees: ForestTree[
   return steps;
 }
 
-export function computeStats({ logs, reflections, trees, doneTasks, today, plans = [], abandoned = [] }: GameInput): GameStats {
+export function computeStats({
+  logs,
+  reflections,
+  trees,
+  doneTasks,
+  today,
+  plans = [],
+  abandoned = [],
+  ledger = [],
+  owned = [],
+  placements = [],
+  equipped = null,
+  books = [],
+  courses = [],
+}: GameInput): GameStats {
   const dayTotals = new Map<string, number>();
   for (const l of logs) dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes);
   const totalMinutes = logs.reduce((s, l) => s + l.duration_minutes, 0);
@@ -159,8 +194,10 @@ export function computeStats({ logs, reflections, trees, doneTasks, today, plans
   const reflectionDays = reflections.filter((r) => r.rating != null || (r.note ?? '').trim()).length;
 
   const studied = (d: string) => (dayTotals.get(d) ?? 0) > 0;
-  const days = [...dayTotals.keys()].filter(studied).sort();
-  const { streak, best: bestStreak, restUsedThisWeek } = computeStreak(studied, days[0] ?? null, today);
+  // Seri ve ekonomi yalnızca güvenilir kayıtlarla (elle yazılan süre sayılmaz)
+  const trustedTotals = dayTotalsOf(logs);
+  const first = [...trustedTotals.keys()].filter((d) => (trustedTotals.get(d) ?? 0) > 0).sort()[0] ?? null;
+  const { streak, best: bestStreak, tier: streakTier, freezesLeft } = computeStreak((d) => trustedTotals.get(d) ?? 0, first, today, freezeDates(owned));
 
   const treesAtLeast = (stage: number) => trees.filter((t) => t.stage >= stage).length;
 
@@ -202,12 +239,15 @@ export function computeStats({ logs, reflections, trees, doneTasks, today, plans
   ];
 
   const lastTree = [...trees].sort((a, z) => a.date.localeCompare(z.date)).at(-1);
+  const level = levelOf(totalMinutes);
+  const skills = skillsOf(courses, logs);
+  const bal = balances(ledger);
 
   return {
     streak,
+    streakTier,
     todayPending: streak > 0 && !studied(today),
     bestStreak,
-    restUsedThisWeek,
     todayMinutes,
     today: walletOf(today, dayTotals, trees),
     totalMinutes,
@@ -219,6 +259,21 @@ export function computeStats({ logs, reflections, trees, doneTasks, today, plans
     badges,
     planDays,
     wilts: wiltsOf(abandoned, logs),
+    crystals: bal.crystal,
+    stars: bal.star,
+    ledger,
+    owned,
+    placements,
+    equipped: equipped ?? DEFAULT_EQUIPPED,
+    quests: questsNow({ logs, plans, books, today }),
+    chests: chestsNow(today, trustedTotals, owned),
+    level,
+    skills,
+    unlock: { bestStreak, planDays: planDays.length, gold: skills.filter((k) => k.tier === 3).length, level: level.index },
+    freezesLeft,
+    starsToday: ledger
+      .filter((e) => e.currency === 'star' && e.kind === 'star' && e.ref.startsWith(`${today}:`))
+      .map((e) => Number(e.ref.split(':')[1])),
   };
 }
 
@@ -227,6 +282,17 @@ function countByMonth(trees: ForestTree[]) {
   trees.forEach((t) => m.set(t.month, (m.get(t.month) ?? 0) + 1));
   return m;
 }
+
+/** Elmas kazancının kısa açıklaması (kutlamada ve aile panelinde) */
+export const LEDGER_LABEL: Partial<Record<LedgerEntry['kind'], (ref: string) => string>> = {
+  study: () => 'Ders çalıştın',
+  streak: () => 'Serin sürüyor',
+  reflection: () => 'Gününü değerlendirdin',
+  plan: () => 'Planını tamamladın',
+  book: () => 'Kitap bitirdin',
+  quest: (ref) => QUESTS.find((q) => q.id === ref.split(':')[0])?.title ?? 'Görev',
+  gift: () => 'Aile hediyesi',
+};
 
 export type Celebration = { kind: 'stage' | 'badge' | 'species' | 'streak'; title: string; detail: string; icon: string };
 
@@ -268,6 +334,28 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
     if (!islandWas.has(b.id) && islandNow.has(b.id)) {
       out.push({ kind: 'species', icon: b.icon, title: `Adan büyüdü: ${b.name}!`, detail: b.desc });
     }
+  }
+  // Yeni Elmas kazançları tek kutlamada
+  const seen = new Set(prev.ledger.map((e) => e.id));
+  const fresh = next.ledger.filter((e) => !seen.has(e.id) && e.amount > 0 && e.kind !== 'star' && e.kind !== 'gift');
+  const gems = fresh.filter((e) => e.currency === 'crystal').reduce((sum, e) => sum + e.amount, 0);
+  if (gems > 0) {
+    const why = [...new Set(fresh.map((e) => LEDGER_LABEL[e.kind]?.(e.ref)).filter(Boolean))].slice(0, 3).join(' · ');
+    out.push({ kind: 'badge', icon: '💎', title: `+${gems} Elmas kazandın!`, detail: why || 'Çalıştıkça Elmas birikir.' });
+  }
+  if (next.level.index > prev.level.index) {
+    out.push({ kind: 'species', icon: next.level.level.icon, title: `Seviye atladın: ${next.level.level.name}!`, detail: next.level.level.perk });
+  }
+  for (const k of next.skills) {
+    const was = prev.skills.find((x) => x.course.id === k.course.id)?.tier ?? 0;
+    if (k.tier > was && k.tier >= 1) {
+      const t = ['', 'Bronz', 'Gümüş', 'Altın'][k.tier];
+      out.push({ kind: 'badge', icon: ['', '🥉', '🥈', '🥇'][k.tier], title: `${k.course.name}: ${t} ${k.title}!`, detail: k.tier === 3 ? 'Yeni bir karakter açıldı olabilir, dükkâna bak.' : 'Bu derse çalıştıkça unvanın parlar.' });
+    }
+  }
+  const readyNow = next.chests.find((c) => c.ready && !c.opened);
+  if (readyNow && !prev.chests.some((c) => c.week === readyNow.week && c.ready)) {
+    out.push({ kind: 'badge', icon: '📦', title: 'Haftalık sandığın hazır!', detail: 'Bugün ekranından açabilirsin.' });
   }
   const had = new Set(prev.badges.filter((x) => x.unlocked).map((x) => x.id));
   for (const badge of next.badges) {

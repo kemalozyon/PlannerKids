@@ -67,6 +67,15 @@ export const sfx = {
   buzz() {
     tone(180, 210, 0.35, 0, 'sawtooth', 0.04);
   },
+  /** Yıldız toplandı: parlak iki nota */
+  star() {
+    tone(988, 1000, 0.12, 0, 'triangle', 0.12);
+    tone(1319, 1330, 0.22, 0.08, 'triangle', 0.12);
+  },
+  /** Zıplama */
+  jump() {
+    tone(300, 520, 0.14, 0, 'sine', 0.08);
+  },
   /** Solgun fidan */
   sad() {
     tone(392, 300, 0.35, 0, 'triangle', 0.1);

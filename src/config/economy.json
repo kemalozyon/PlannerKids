@@ -1,0 +1,48 @@
+{
+  "$comment": "Oyun ekonomisinin tek kaynağı. Değiştirince `npm run config:sql` ile yeni bir migration üret ve Supabase SQL Editor'de çalıştır (sunucu değerleri economy_config tablosundan okur).",
+  "session": {
+    "beatSeconds": 60,
+    "graceSeconds": 90,
+    "idleMinutes": 15,
+    "idleAnswerSeconds": 60,
+    "maxMinutes": 300,
+    "noteMin": 3,
+    "noteMax": 200,
+    "wiltMinutes": 5
+  },
+  "elmas": {
+    "study": {
+      "tiers": [
+        { "upTo": 60, "minutesPer": 10 },
+        { "upTo": 120, "minutesPer": 20 },
+        { "upTo": 180, "minutesPer": 30 }
+      ],
+      "dailyCap": 12
+    },
+    "streak": {
+      "minMinutes": 20,
+      "tiers": [
+        { "days": 3, "bonus": 1 },
+        { "days": 7, "bonus": 2 },
+        { "days": 14, "bonus": 3 },
+        { "days": 30, "bonus": 4 }
+      ]
+    },
+    "reflection": { "bonus": 1, "minNote": 10 },
+    "plan": 3,
+    "book": { "bonus": 5, "perWeek": 2 },
+    "giftMax": 50,
+    "quests": [
+      { "id": "day30", "scope": "day", "title": "Bugün 30 dk çalış", "icon": "⏱️", "target": 30, "reward": 2 },
+      { "id": "week5days", "scope": "week", "title": "Bu hafta 5 gün çalış", "icon": "📅", "target": 5, "reward": 5 },
+      { "id": "week3plans", "scope": "week", "title": "Bu hafta 3 günün planını bitir", "icon": "📋", "target": 3, "reward": 5 },
+      { "id": "week3courses", "scope": "week", "title": "Bu hafta 3 farklı derse çalış", "icon": "🎨", "target": 3, "reward": 3 },
+      { "id": "weekBook", "scope": "week", "title": "Bu hafta bir kitap bitir", "icon": "📚", "target": 1, "reward": 5 }
+    ]
+  },
+  "chest": { "days": 5, "minutes": 150 },
+  "freeze": { "max": 2, "coverDays": 7 },
+  "stars": { "perDay": 8 },
+  "levelHours": [0, 5, 15, 30, 60, 100, 150],
+  "skillTierMinutes": [120, 360, 900]
+}

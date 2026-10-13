@@ -3,19 +3,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { formatDay, formatMinutes, toLocalDate } from '../lib/date';
 import type { Course, ParentNote, PlanItem, Reflection, Reward, StudyLog, Task } from '../lib/types';
-import { formatClock, useBreak, useTimer, type TimerApi } from '../lib/useTimer';
+import { formatClock, useBreak } from '../lib/useTimer';
+import { useSession, type SessionApi } from '../lib/SessionContext';
+import { noteProblem } from '../lib/session';
 import FocusMode from '../components/FocusMode';
 import { dayPlan } from '../lib/plan';
 import { openRewards } from '../lib/rewards';
 import { useReading } from '../lib/ReadingContext';
 import { useGame } from '../lib/GameContext';
 import GameStrip from '../components/GameStrip';
+import Quests from '../components/Quests';
 import ReadingStrip from '../components/ReadingStrip';
 import EndDay from '../components/EndDay';
 import { MOODS, dailyPrompt } from '../lib/mood';
 import { CORE_SUBJECTS } from '../lib/presets';
 import Tree from '../components/Tree';
 import { REVIVE_MIN, WILT_MIN } from '../lib/wilt';
+import { CFG } from '../lib/config';
 
 interface Props {
   courses: Course[];
@@ -24,6 +28,7 @@ interface Props {
   goForest: () => void;
   goPlan: () => void;
   goRewards: () => void;
+  goShop: () => void;
   onPlant: () => void;
   reloadCourses: () => void;
   goLibrary: () => void;
@@ -31,7 +36,7 @@ interface Props {
   demo: boolean;
 }
 
-export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
+export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, goShop, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
   const api = useApi();
   const game = useGame();
   const [date, setDate] = useState(toLocalDate);
@@ -39,10 +44,11 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
   const [tasks, setTasks] = useState<Task[]>([]);
   const [plans, setPlans] = useState<PlanItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const t = useTimer();
+  const ses = useSession();
   const [courseId, setCourseId] = useState(courses[0]?.id ?? '');
   const [focusOpen, setFocusOpen] = useState(false);
-  const [pending, setPending] = useState<Pending | null>(null);
+  /** "Bitirdim"e basıldı: seans duraklatıldı, not ve ders bekleniyor */
+  const [finishing, setFinishing] = useState(false);
 
   // Gece yarısı geçerse "bugün" güncellensin
   useEffect(() => {
@@ -84,31 +90,33 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
     if (courses.length && !courses.some((c) => c.id === courseId)) setCourseId(courses[0].id);
   }, [courses, courseId]);
 
-  const startTimer = (cid: string, goalMin: number | null) => {
+  const startTimer = async (cid: string, goalMin: number | null) => {
     setCourseId(cid);
-    t.start(cid, goalMin);
-    setFocusOpen(true);
-  };
-  /** Sayaç iptal: WILT_MIN dakikayı geçtiyse adada solgun fidan kalır (aynı gün çalışınca canlanır) */
-  const abandon = async () => {
-    const r = t.timer;
-    t.cancel();
-    setFocusOpen(false);
-    if (!r) return;
-    const minutes = Math.floor((Date.now() - r.startedAt) / 60_000);
-    if (minutes < WILT_MIN) return;
+    setError(null);
     try {
-      await api.addAbandoned({ date: toLocalDate(new Date(r.startedAt)), minutes: Math.min(minutes, 1440) });
-    } catch {
-      /* tablo yoksa (0007 çalıştırılmadı) sessizce geç */
+      await ses.start(cid, goalMin);
+      setFocusOpen(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  /** Seansı bırak: uzun sürdüyse adada solgun fidan kalır (aynı gün çalışınca canlanır) */
+  const abandon = async () => {
+    setFocusOpen(false);
+    setFinishing(false);
+    try {
+      await ses.abandon();
+    } catch (e) {
+      setError((e as Error).message);
     }
     game.refresh();
   };
-  const finish = () => {
-    const r = t.stop();
+  /** "Bitirdim": süre durur, not ve ders sorulur */
+  const finish = async () => {
     setFocusOpen(false);
-    // Açık unutulan sayaç günlük sınırı (1440 dk) aşmasın; çocuk kaydetmeden önce düzeltebilir
-    if (r) setPending({ courseId: r.courseId, minutes: Math.min(r.minutes, 1440), date: toLocalDate(new Date(r.startedAt)), focus: r.goalMin != null });
+    if (ses.session) setCourseId(ses.session.course_id);
+    setFinishing(true);
+    if (ses.running) await ses.pause('manual').catch((e) => setError((e as Error).message));
   };
 
   if (courses.length === 0) {
@@ -156,7 +164,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       <PlanCard
         plan={plan}
         byId={byId}
-        running={!!t.timer}
+        running={!!ses.session}
         onStart={(cid, left) => startTimer(cid, Math.min(left, 40))}
         goPlan={goPlan}
       />
@@ -164,12 +172,12 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       <TimerCard
         courses={courses}
         date={date}
-        t={t}
+        ses={ses}
         courseId={courseId}
         setCourseId={setCourseId}
         fromPlan={!!plan?.rows.some((r) => r.item.course_id === courseId && !r.complete)}
-        pending={pending}
-        setPending={setPending}
+        finishing={finishing}
+        setFinishing={setFinishing}
         onStart={(cid) => startTimer(cid, 25)}
         onFinish={finish}
         onCancel={abandon}
@@ -179,8 +187,15 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
         onError={setError}
       />
 
-      {focusOpen && t.timer && (
-        <FocusMode t={t} course={byId.get(t.timer.courseId)} roundsToday={logs.length} onFinish={finish} onCancel={abandon} onClose={() => setFocusOpen(false)} />
+      {focusOpen && ses.session && (
+        <FocusMode
+          ses={ses}
+          course={byId.get(ses.session.course_id)}
+          roundsToday={logs.length}
+          onFinish={finish}
+          onCancel={abandon}
+          onClose={() => setFocusOpen(false)}
+        />
       )}
 
       <section className="card">
@@ -219,6 +234,8 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
         )}
       </section>
 
+      <Quests goShop={goShop} />
+
       <ReadingStrip goLibrary={goLibrary} onPlantBook={onPlantBook} />
 
       <RewardStrip goRewards={goRewards} />
@@ -255,23 +272,15 @@ function CourseSelect({
   );
 }
 
-interface Pending {
-  courseId: string;
-  minutes: number;
-  date: string;
-  /** Odak turundan geldiyse kayıttan sonra mola önerilir */
-  focus: boolean;
-}
-
 function TimerCard({
   courses,
   date,
-  t,
+  ses,
   courseId,
   setCourseId,
   fromPlan,
-  pending,
-  setPending,
+  finishing,
+  setFinishing,
   onStart,
   onFinish,
   onCancel,
@@ -282,12 +291,12 @@ function TimerCard({
 }: {
   courses: Course[];
   date: string;
-  t: TimerApi;
+  ses: SessionApi;
   courseId: string;
   setCourseId: (id: string) => void;
   fromPlan: boolean;
-  pending: Pending | null;
-  setPending: (p: Pending | null) => void;
+  finishing: boolean;
+  setFinishing: (v: boolean) => void;
   onStart: (courseId: string) => void;
   onFinish: () => void;
   onCancel: () => void;
@@ -297,24 +306,20 @@ function TimerCard({
   onError: (m: string) => void;
 }) {
   const api = useApi();
-  const { timer, elapsedMs } = t;
+  const { session, elapsedMs } = ses;
   const brk = useBreak();
   const [mode, setMode] = useState<'timer' | 'manual'>('timer');
   const [minutes, setMinutes] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
-  const running = timer && courses.find((c) => c.id === timer.courseId);
+  const current = session && courses.find((c) => c.id === session.course_id);
 
-  const save = async (cid: string, mins: number, logDate: string, focus = false) => {
+  const run = async (f: () => Promise<void>) => {
     setBusy(true);
     try {
-      await api.addLog({ course_id: cid, date: logDate, duration_minutes: mins, note: note.trim() || null });
-      setNote('');
-      setMinutes('');
-      setPending(null);
-      if (focus) brk.start(5);
-      onSaved();
+      await f();
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -322,50 +327,82 @@ function TimerCard({
     }
   };
 
-  if (pending) {
-    const c = courses.find((x) => x.id === pending.courseId);
+  // Seans sonu: süreyi sunucu hesapladı; ders ve "ne çalıştın?" notu zorunlu
+  if (session && finishing) {
+    const mins = Math.floor(elapsedMs / 60_000);
+    const goal = ses.goalMin;
+    const save = () =>
+      run(async () => {
+        const bad = noteProblem(note);
+        if (bad) {
+          setNoteError(bad);
+          return;
+        }
+        await ses.finish(courseId, note.trim());
+        setNote('');
+        setNoteError(null);
+        setFinishing(false);
+        if (goal != null) brk.start(5);
+        onSaved();
+      });
     return (
-      <section className="card">
+      <section className="card finish-card">
         <h2>Aferin! Kaydedelim mi? 🎉</h2>
-        <p>
-          <strong>{c?.name}</strong> · {formatMinutes(pending.minutes)}
+        <p className="finish-time">
+          <span className="clock sm">{formatClock(elapsedMs)}</span>
+          <span className="muted small">{mins >= 1 ? `${formatMinutes(mins)} kaydedilecek` : 'En az 1 dakika çalışınca kaydedebilirsin'}</span>
         </p>
         <label className="field">
-          <span>Kaç dakika?</span>
-          <input
-            type="number"
-            min={1}
-            max={1440}
-            value={pending.minutes}
-            onChange={(e) => setPending({ ...pending, minutes: Math.min(1440, Math.max(1, Number(e.target.value) || 1)) })}
-          />
+          <span>Hangi derse çalıştın?</span>
+          <CourseSelect courses={courses} value={courseId} onChange={setCourseId} />
         </label>
         <label className="field">
-          <span>Ne çalıştın? (istersen)</span>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ör. Kesirler, 3. ünite" />
+          <span>Ne çalıştın?</span>
+          <input
+            value={note}
+            maxLength={CFG.session.noteMax}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setNoteError(null);
+            }}
+            placeholder="ör. Kesirler, 3. ünite"
+            aria-invalid={!!noteError}
+            autoFocus
+          />
         </label>
+        {noteError && <p className="error-ink small">{noteError}</p>}
         <div className="actions">
-          <button className="btn ghost" onClick={() => setPending(null)}>
-            Vazgeç
+          <button
+            className="btn ghost"
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                setFinishing(false);
+                await ses.resume();
+              })
+            }
+          >
+            Devam et
           </button>
-          <button className="btn primary" disabled={busy} onClick={() => save(pending.courseId, pending.minutes, pending.date, pending.focus)}>
-            {pending.focus ? 'Kaydet, molaya çık' : 'Kaydet'}
+          <button className="btn primary" disabled={busy || mins < 1} onClick={save}>
+            {goal != null ? 'Kaydet, molaya çık' : 'Kaydet'}
           </button>
         </div>
       </section>
     );
   }
 
-  if (timer) {
+  if (session) {
+    const paused = ses.paused;
     return (
-      <section className="card timer running" style={{ borderColor: running?.color }}>
-        <div className="muted small">Çalışıyorsun, harika!</div>
+      <section className={`card timer running${paused ? ' paused' : ''}`} style={{ borderColor: current?.color }}>
+        <div className="muted small">{paused ? pauseText(ses.pausedBy) : 'Çalışıyorsun, harika!'}</div>
         <div className="timer-course">
-          <span className="dot" style={{ background: running?.color ?? '#999' }} />
-          {running?.name ?? 'Ders'}
+          <span className="dot" style={{ background: current?.color ?? '#999' }} />
+          {current?.name ?? 'Ders'}
         </div>
         <div className="clock">{formatClock(elapsedMs)}</div>
-        {elapsedMs >= 20 * 60_000 && (
+        {!paused && elapsedMs >= 20 * 60_000 && (
           <div className="break-note">
             {Math.floor(elapsedMs / 60_000)} dakikadır çalışıyorsun. Bitirip kısa bir mola vermeye ne dersin? 🧃
           </div>
@@ -374,9 +411,20 @@ function TimerCard({
           <ConfirmButton className="btn ghost" confirmLabel={elapsedMs >= WILT_MIN * 60_000 ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
             İptal
           </ConfirmButton>
-          <button className="btn" onClick={openFocus}>
-            Odak modu
-          </button>
+          {paused ? (
+            <button className="btn" disabled={busy} onClick={() => run(ses.resume)}>
+              ▶ Devam et
+            </button>
+          ) : (
+            <>
+              <button className="btn ghost" disabled={busy} onClick={() => run(() => ses.pause('manual'))}>
+                ⏸ Ara ver
+              </button>
+              <button className="btn" onClick={openFocus}>
+                Odak modu
+              </button>
+            </>
+          )}
           <button className="btn primary big" onClick={onFinish}>
             Bitirdim
           </button>
@@ -434,17 +482,32 @@ function TimerCard({
         <CourseSelect courses={courses} value={courseId} onChange={setCourseId} />
       </label>
       {mode === 'timer' ? (
-        <button className="btn primary big full" onClick={() => onStart(courseId)}>
-          ▶ Başlat
-        </button>
+        <>
+          <button className="btn primary big full" onClick={() => onStart(courseId)}>
+            ▶ Başlat
+          </button>
+          <p className="muted small center">Sekmeden çıkınca ya da uzun süre dokunmayınca sayaç durur. 💎 Elmas ve 🌳 ağaç sayaçla kazanılır.</p>
+        </>
       ) : (
         <form
           onSubmit={(e) => {
             e.preventDefault();
             const m = Number(minutes);
-            if (m > 0 && m <= 1440) save(courseId, Math.round(m), date);
+            const bad = noteProblem(note);
+            if (bad) {
+              setNoteError(bad);
+              return;
+            }
+            if (m > 0 && m <= 1440)
+              run(async () => {
+                await api.addLog({ course_id: courseId, date, duration_minutes: Math.round(m), note: note.trim() });
+                setNote('');
+                setMinutes('');
+                onSaved();
+              });
           }}
         >
+          <p className="manual-note small">✏️ Elle yazılan süre kaydına ve raporuna geçer, ama 💎 Elmas ve 🌳 ağaç kazandırmaz.</p>
           <label className="field">
             <span>Kaç dakika?</span>
             <input
@@ -458,9 +521,18 @@ function TimerCard({
             />
           </label>
           <label className="field">
-            <span>Ne çalıştın? (istersen)</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ör. Kesirler, 3. ünite" />
+            <span>Ne çalıştın?</span>
+            <input
+              value={note}
+              maxLength={CFG.session.noteMax}
+              onChange={(e) => {
+                setNote(e.target.value);
+                setNoteError(null);
+              }}
+              placeholder="ör. Kesirler, 3. ünite"
+            />
           </label>
+          {noteError && <p className="error-ink small">{noteError}</p>}
           <button className="btn primary full" disabled={busy}>
             Kaydet
           </button>
@@ -468,6 +540,22 @@ function TimerCard({
       )}
     </section>
   );
+}
+
+/** Duraklatılmış seansın açıklaması */
+function pauseText(r: SessionApi['pausedBy']): string {
+  switch (r) {
+    case 'hidden':
+      return 'Sekmeden çıktın, sayaç durdu ⏸';
+    case 'idle':
+      return 'Uzun süre dokunulmadı, sayaç durdu ⏸';
+    case 'game':
+      return 'Oyuna geçtin, sayaç durdu ⏸';
+    case 'lapsed':
+      return 'Bağlantı koptu ya da ekran kapandı, sayaç durdu ⏸';
+    default:
+      return 'Ara verdin ⏸';
+  }
 }
 
 /** Bugünün planı: ders başına planlanan / çalışılan dakika, sıradakini tek dokunuşla başlatma. */

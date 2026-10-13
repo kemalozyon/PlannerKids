@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildFacts, fallbackNarrative, renderEmail } from '../../supabase/functions/_shared/report';
 import { gatherReportInput } from './reportInput';
+import { itemById } from './catalog';
+import { CFG } from './config';
+import { toLocalDate } from './date';
+import { balances, chestOf, dayTotalsOf, earnedEntries, inChestPool, pendingEarnings } from './economy';
+import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
   DEFAULT_READING_GOALS,
@@ -22,6 +27,10 @@ import {
   type Reflection,
   type StudyLog,
   type Task,
+  type Equipped,
+  type LedgerEntry,
+  type OwnedItem,
+  type Placement,
 } from './types';
 
 const ONE_PER_DAY = 'Bu güne zaten bir ağaç dikildi. Onu büyütebilirsin.';
@@ -68,6 +77,27 @@ export function supabaseApi(sb: SupabaseClient): Api {
     },
     async deleteLog(id) {
       check(await sb.from('study_logs').delete().eq('id', id));
+    },
+    async getOpenSession() {
+      return check(await sb.rpc('session_open')) as SessionState | null;
+    },
+    async startSession(courseId, date) {
+      return check(await sb.rpc('session_start', { p_course: courseId, p_date: date })) as SessionState;
+    },
+    async beatSession(id) {
+      return check(await sb.rpc('session_beat', { p_id: id })) as SessionState;
+    },
+    async pauseSession(id, backSec = 0) {
+      return check(await sb.rpc('session_pause', { p_id: id, p_back: Math.round(backSec) })) as SessionState;
+    },
+    async resumeSession(id) {
+      return check(await sb.rpc('session_resume', { p_id: id })) as SessionState;
+    },
+    async finishSession(id, courseId, note) {
+      return check(await sb.rpc('session_finish', { p_id: id, p_course: courseId, p_note: note })) as { session: StudySession; log: StudyLog };
+    },
+    async abandonSession(id) {
+      return check(await sb.rpc('session_abandon', { p_id: id })) as StudySession;
     },
 
     async listTasks(date) {
@@ -255,6 +285,51 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async deleteReward(id) {
       check(await sb.from('rewards').delete().eq('id', id));
     },
+    async listLedger() {
+      return all<LedgerEntry>((a, b) =>
+        sb.from('crystal_ledger').select('id,currency,kind,ref,amount,note,created_at').order('created_at').order('id').range(a, b),
+      );
+    },
+    async syncEconomy() {
+      check(await sb.rpc('economy_sync'));
+    },
+    async collectStar(date, index) {
+      check(await sb.rpc('collect_star', { p_date: date, p_index: index }));
+    },
+    async giftCrystals(amount, note) {
+      check(await sb.rpc('gift_elmas', { p_amount: amount, p_note: note }));
+    },
+    async listOwned() {
+      return all<OwnedItem>((a, b) => sb.from('owned_items').select('id,item_id,via,ref,created_at').order('created_at').order('id').range(a, b));
+    },
+    async buyItem(itemId) {
+      return check(await sb.from('owned_items').insert({ item_id: itemId, via: 'buy' }).select('id,item_id,via,ref,created_at').single()) as OwnedItem;
+    },
+    async openChest(week, itemId) {
+      return check(
+        await sb.from('owned_items').insert({ item_id: itemId, via: 'chest', ref: week }).select('id,item_id,via,ref,created_at').single(),
+      ) as OwnedItem;
+    },
+    async listPlacements() {
+      return all<Placement>((a, b) => sb.from('island_placements').select('id,month,owned_id,x,z,rot').order('created_at').order('id').range(a, b));
+    },
+    async placeItem(p) {
+      return check(await sb.from('island_placements').insert(p).select('id,month,owned_id,x,z,rot').single()) as Placement;
+    },
+    async movePlacement(id, x, z, rot) {
+      check(await sb.from('island_placements').update({ x, z, rot }).eq('id', id));
+    },
+    async removePlacement(id) {
+      check(await sb.from('island_placements').delete().eq('id', id));
+    },
+    async getEquipped() {
+      const row = check(await sb.from('family_settings').select('equipped').maybeSingle()) as { equipped: Equipped | null } | null;
+      return row?.equipped ?? null;
+    },
+    async saveEquipped(equipped) {
+      const { data: u } = await sb.auth.getUser();
+      check(await sb.from('family_settings').upsert({ user_id: u.user?.id, equipped, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }));
+    },
   };
 }
 
@@ -276,9 +351,14 @@ interface DemoDb {
   notes?: ParentNote[];
   rewards?: Reward[];
   abandoned?: Abandoned[];
+  ledger?: LedgerEntry[];
+  owned?: OwnedItem[];
+  placements?: Placement[];
+  equipped?: Equipped;
+  sessions?: StudySession[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v10';
+export const DEMO_KEY = 'ct-demo-db-v12';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -308,6 +388,25 @@ export function localApi(seed: () => DemoDb): Api {
     }
   };
   const now = () => new Date().toISOString();
+  const state = (s: StudySession): SessionState => ({ session: { ...s }, serverNow: now() });
+  const openSession = (id: string) => {
+    const s = load().sessions?.find((x) => x.id === id);
+    if (!s) throw new Error('Seans bulunamadı');
+    if (s.status !== 'running' && s.status !== 'paused') throw new Error('Bu seans kapanmış');
+    return s;
+  };
+  const replace = (s: StudySession) => {
+    const db = load();
+    db.sessions = (db.sessions ?? []).map((x) => (x.id === s.id ? s : x));
+    save();
+  };
+  const update = (id: string, f: (s: StudySession) => StudySession) => {
+    const s = load().sessions?.find((x) => x.id === id);
+    if (!s) throw new Error('Seans bulunamadı');
+    const next = f(s);
+    replace(next);
+    return next;
+  };
 
   const self: Api = {
     async listCourses() {
@@ -337,7 +436,7 @@ export function localApi(seed: () => DemoDb): Api {
       return load().logs.filter((l) => l.date >= from && l.date <= to);
     },
     async addLog(log) {
-      const l: StudyLog = { ...log, id: uid(), created_at: now() };
+      const l: StudyLog = { ...log, id: uid(), created_at: now(), source: 'manual', session_id: null };
       load().logs.push(l);
       save();
       return l;
@@ -346,6 +445,61 @@ export function localApi(seed: () => DemoDb): Api {
       const db = load();
       db.logs = db.logs.filter((l) => l.id !== id);
       save();
+    },
+    // Seanslar: sunucudaki session_* fonksiyonlarının aynısı (session.ts), saat Date.now()
+    async getOpenSession() {
+      const s = (load().sessions ?? []).find((x) => x.status === 'running' || x.status === 'paused');
+      return s ? state(s) : null;
+    },
+    async startSession(courseId, date) {
+      const db = load();
+      db.sessions ??= [];
+      if (!db.courses.some((c) => c.id === courseId)) throw new Error('Ders bulunamadı');
+      if (db.sessions.some((x) => x.status === 'running' || x.status === 'paused')) throw new Error('Zaten açık bir seansın var');
+      const s = newSession(uid(), courseId, date, Date.now());
+      db.sessions.push(s);
+      save();
+      return state(s);
+    },
+    async beatSession(id) {
+      return state(update(id, (s) => beat(s, Date.now())));
+    },
+    async pauseSession(id, backSec = 0) {
+      return state(update(id, (s) => pause(s, Date.now(), backSec)));
+    },
+    async resumeSession(id) {
+      return state(update(id, (s) => resume(s, Date.now())));
+    },
+    async finishSession(id, courseId, note) {
+      const db = load();
+      const s = openSession(id);
+      const bad = noteProblem(note);
+      if (bad) throw new Error(bad);
+      if (!db.courses.some((c) => c.id === courseId)) throw new Error('Ders bulunamadı');
+      const closed = pause(s, Date.now());
+      const minutes = sessionMinutes(closed, Date.now());
+      if (minutes < 1) throw new Error('En az 1 dakika çalışınca kaydedebilirsin');
+      const log: StudyLog = {
+        id: uid(), course_id: courseId, date: s.date, duration_minutes: minutes, note: note.trim(), created_at: now(), source: 'timer', session_id: s.id,
+      };
+      db.logs.push(log);
+      const done: StudySession = { ...closed, course_id: courseId, status: 'finished', ended_at: now(), minutes, note: note.trim(), log_id: log.id };
+      replace(done);
+      await self.syncEconomy();
+      return { session: { ...done }, log: { ...log } };
+    },
+    async abandonSession(id) {
+      const db = load();
+      const closed = pause(openSession(id), Date.now());
+      const minutes = sessionMinutes(closed, Date.now());
+      const done: StudySession = { ...closed, status: 'abandoned', ended_at: now(), minutes };
+      replace(done);
+      if (minutes >= CFG.session.wiltMinutes) {
+        db.abandoned ??= [];
+        db.abandoned.push({ id: uid(), date: done.date, minutes, created_at: now() });
+      }
+      save();
+      return { ...done };
     },
 
     async listTasks(date) {
@@ -573,6 +727,103 @@ export function localApi(seed: () => DemoDb): Api {
     async deleteReward(id) {
       const db = load();
       db.rewards = (db.rewards ?? []).filter((r) => r.id !== id);
+      save();
+    },
+    // Ekonomi: sunucudaki fonksiyonların (0010_economy_v2.sql) aynısı economy.ts kurallarıyla
+    async listLedger() {
+      return (load().ledger ?? []).map((e) => ({ ...e }));
+    },
+    async syncEconomy() {
+      const db = load();
+      db.ledger ??= [];
+      const earned = earnedEntries({
+        logs: db.logs, plans: db.plans ?? [], books: db.books ?? [], reflections: db.reflections, owned: db.owned ?? [], today: toLocalDate(),
+      });
+      for (const e of pendingEarnings(db.ledger, earned)) {
+        const old = db.ledger.find((x) => x.currency === e.currency && x.kind === e.kind && x.ref === e.ref);
+        if (old) old.amount = e.amount;
+        else db.ledger.push({ id: uid(), currency: e.currency, kind: e.kind, ref: e.ref, amount: e.amount, note: null, created_at: now() });
+      }
+      save();
+    },
+    async collectStar(date, index) {
+      const db = load();
+      db.ledger ??= [];
+      if (date !== toLocalDate() || !Number.isInteger(index) || index < 0 || index >= CFG.stars.perDay) throw new Error('Bu yıldız toplanamaz');
+      const ref = `${date}:${index}`;
+      if (!db.ledger.some((e) => e.kind === 'star' && e.ref === ref)) {
+        db.ledger.push({ id: uid(), currency: 'star', kind: 'star', ref, amount: 1, note: null, created_at: now() });
+      }
+      save();
+    },
+    async giftCrystals(amount, note) {
+      if (!(amount >= 1 && amount <= CFG.elmas.giftMax)) throw new Error(`Hediye 1–${CFG.elmas.giftMax} Elmas olabilir`);
+      const db = load();
+      db.ledger ??= [];
+      db.ledger.push({ id: uid(), currency: 'crystal', kind: 'gift', ref: uid(), amount, note: note || null, created_at: now() });
+      save();
+    },
+    async listOwned() {
+      return (load().owned ?? []).map((o) => ({ ...o }));
+    },
+    async buyItem(itemId) {
+      const db = load();
+      db.owned ??= [];
+      db.ledger ??= [];
+      const item = itemById(itemId);
+      if (!item || item.acquire.kind !== 'buy') throw new Error('Bu eşya satılmıyor');
+      if (!item.repeat && db.owned.some((o) => o.item_id === itemId)) throw new Error('Bu eşya zaten sende');
+      const { price } = item.acquire;
+      const bal = balances(db.ledger).crystal;
+      if (bal < price) throw new Error(`Bakiye yetmiyor: ${price} lazım, ${bal} var`);
+      const row: OwnedItem = { id: uid(), item_id: itemId, via: 'buy', ref: null, created_at: now() };
+      db.owned.push(row);
+      db.ledger.push({ id: uid(), currency: 'crystal', kind: 'buy', ref: row.id, amount: -price, note: itemId, created_at: now() });
+      save();
+      return { ...row };
+    },
+    async openChest(week, itemId) {
+      const db = load();
+      db.owned ??= [];
+      const item = itemById(itemId);
+      if (!item || !inChestPool(item)) throw new Error('Bu eşya sandıktan çıkmaz');
+      const c = chestOf(week, dayTotalsOf(db.logs), db.owned);
+      if (c.opened) throw new Error('Bu haftanın sandığı zaten açıldı');
+      if (!c.ready) throw new Error(`Bu haftanın sandığı henüz açılmadı (${c.days} gün, ${c.minutes} dk)`);
+      const row: OwnedItem = { id: uid(), item_id: itemId, via: 'chest', ref: week, created_at: now() };
+      db.owned.push(row);
+      save();
+      return { ...row };
+    },
+    async listPlacements() {
+      return (load().placements ?? []).map((p) => ({ ...p }));
+    },
+    async placeItem(p) {
+      const db = load();
+      db.placements ??= [];
+      if (!(db.owned ?? []).some((o) => o.id === p.owned_id)) throw new Error('Bu eşya sende yok');
+      if (db.placements.some((x) => x.month === p.month && x.owned_id === p.owned_id)) throw new Error('Bu eşya zaten adada');
+      const row: Placement = { ...p, id: uid() };
+      db.placements.push(row);
+      save();
+      return { ...row };
+    },
+    async movePlacement(id, x, z, rot) {
+      const p = load().placements?.find((q) => q.id === id);
+      if (p) Object.assign(p, { x, z, rot });
+      save();
+    },
+    async removePlacement(id) {
+      const db = load();
+      db.placements = (db.placements ?? []).filter((p) => p.id !== id);
+      save();
+    },
+    async getEquipped() {
+      const e = load().equipped;
+      return e ? { ...e, pets: [...e.pets] } : null;
+    },
+    async saveEquipped(e) {
+      load().equipped = { ...e, pets: [...e.pets] };
       save();
     },
   };

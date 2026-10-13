@@ -15,16 +15,20 @@ import Profile from './pages/Profile';
 import WeekPlan from './pages/WeekPlan';
 import Rewards from './pages/Rewards';
 import ParentPanel from './pages/ParentPanel';
+import Shop from './pages/Shop';
+import Collection from './pages/Collection';
 import { ReadingProvider } from './lib/ReadingContext';
 import Celebrations from './components/Celebrations';
 import Login, { NewPassword } from './components/Login';
 import { GameProvider, useGame } from './lib/GameContext';
+import { SessionProvider, useSession } from './lib/SessionContext';
+import { formatClock } from './lib/useTimer';
 import { IconBack, IconBook, IconCalendar, IconForest, IconToday, IconUser } from './components/Icons';
 
 /** Alt menüdeki sekmeler */
 type MainTab = 'today' | 'forest' | 'library' | 'history' | 'profile';
 /** Bir sekmenin içinden açılan alt sayfalar */
-type SubPage = 'plan' | 'rewards' | 'parent' | 'courses';
+type SubPage = 'plan' | 'rewards' | 'parent' | 'courses' | 'shop' | 'collection';
 type Tab = MainTab | SubPage;
 
 const TABS: { id: MainTab; label: string; icon: () => ReactNode }[] = [
@@ -41,6 +45,8 @@ const SUB: Record<SubPage, { title: string; parent: MainTab }> = {
   rewards: { title: 'Ödül hedeflerim', parent: 'profile' },
   parent: { title: 'Aile paneli', parent: 'profile' },
   courses: { title: 'Dersler', parent: 'profile' },
+  shop: { title: 'Dükkân', parent: 'forest' },
+  collection: { title: 'Koleksiyon defteri', parent: 'profile' },
 };
 
 const ALL: Tab[] = [...TABS.map((t) => t.id), ...(Object.keys(SUB) as SubPage[])];
@@ -119,9 +125,16 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
   return (
     <ApiContext.Provider value={api}>
       <GameProvider>
+      <SessionProvider>
       <ReadingProvider>
       <div className="app">
-        <TopBar sub={isSub(tab) ? tab : null} onBack={() => isSub(tab) && go(SUB[tab].parent)} onForest={() => go('forest')} />
+        <TopBar
+          sub={isSub(tab) ? tab : null}
+          onBack={() => isSub(tab) && go(SUB[tab].parent)}
+          onForest={() => go('forest')}
+          onShop={() => go('shop')}
+          onToday={tab === 'today' ? null : () => go('today')}
+        />
         {demo && (
           <div className="demo-banner">
             Demo modu — veriler yalnızca bu tarayıcıda saklanıyor.{' '}
@@ -132,6 +145,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
                 try {
                   localStorage.removeItem(DEMO_KEY);
                   localStorage.removeItem('ct-timer-v1');
+                  localStorage.removeItem('ct-goal-v1');
                   localStorage.removeItem('ct-break-v1');
                 } catch {
                   /* yok say */
@@ -154,6 +168,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               goForest={() => go('forest')}
               goPlan={() => go('plan')}
               goRewards={() => go('rewards')}
+              goShop={() => go('shop')}
               onPlant={() => {
                 setPlantIntent(true);
                 go('forest');
@@ -175,6 +190,10 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <WeekPlan courses={courses} goToday={() => go('today')} goCourses={() => go('courses')} />
           ) : tab === 'rewards' ? (
             <Rewards />
+          ) : tab === 'shop' ? (
+            <Shop goCollection={() => go('collection')} />
+          ) : tab === 'collection' ? (
+            <Collection />
           ) : tab === 'parent' ? (
             <ParentPanel courses={courses} goPlan={() => go('plan')} />
           ) : (
@@ -190,16 +209,52 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
           ))}
         </nav>
         <Celebrations />
+        <IdlePrompt />
       </div>
       </ReadingProvider>
+      </SessionProvider>
       </GameProvider>
     </ApiContext.Provider>
   );
 }
 
-/** Üst çubuk: ana sekmelerde marka + seri + cüzdan; alt sayfalarda geri tuşu + başlık. */
-function TopBar({ sub, onBack, onForest }: { sub: SubPage | null; onBack: () => void; onForest: () => void }) {
+/** Uzun süre dokunulmadıysa: "Hâlâ çalışıyor musun?" — cevap gelmezse seans duraklar (SessionContext) */
+function IdlePrompt() {
+  const ses = useSession();
+  if (ses.idleAsk == null) return null;
+  const left = Math.max(0, Math.ceil((ses.idleAsk - ses.now) / 1000));
+  return (
+    <div className="idle-overlay" role="alertdialog" aria-modal="true" aria-labelledby="idle-title">
+      <div className="card idle-card">
+        <div className="idle-face" aria-hidden>
+          👀
+        </div>
+        <h2 id="idle-title">Hâlâ çalışıyor musun?</h2>
+        <p className="muted">Bir süredir ekrana dokunmadın. {left} saniye içinde cevap gelmezse sayaç durur.</p>
+        <button className="btn primary big full" onClick={ses.stillHere} autoFocus>
+          Evet, çalışıyorum
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Üst çubuk: ana sekmelerde marka + seri + cüzdan; alt sayfalarda geri tuşu + başlık. Seans açıkken başka sekmede süre görünür. */
+function TopBar({
+  sub,
+  onBack,
+  onForest,
+  onShop,
+  onToday,
+}: {
+  sub: SubPage | null;
+  onBack: () => void;
+  onForest: () => void;
+  onShop: () => void;
+  onToday: (() => void) | null;
+}) {
   const { stats } = useGame();
+  const ses = useSession();
   return (
     <header className="topbar">
       {sub ? (
@@ -214,11 +269,19 @@ function TopBar({ sub, onBack, onForest }: { sub: SubPage | null; onBack: () => 
       )}
       {stats && (
         <div className="top-chips">
+          {ses.session && onToday && (
+            <button className={`chip timer-chip${ses.paused ? ' off' : ''}`} title="Çalışma sayacı — Bugün'e git" onClick={onToday}>
+              <span aria-hidden>{ses.paused ? '⏸' : '⏱'}</span> {formatClock(ses.elapsedMs)}
+            </button>
+          )}
           <span className={`chip streak${stats.streak === 0 ? ' off' : ''}`} title="Seri">
             <span aria-hidden>🔥</span> {stats.streak}
           </span>
           <button className="chip coin" title="Bugünkü cüzdanım — ormana git" onClick={onForest}>
             <span aria-hidden>🪙</span> {stats.today.left}
+          </button>
+          <button className="chip gem" title="Elmaslarım — dükkân" onClick={onShop}>
+            <span aria-hidden>💎</span> {stats.crystals}
           </button>
         </div>
       )}

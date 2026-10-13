@@ -59,7 +59,7 @@ export function cellPosition(cell: number): [number, number] {
 }
 
 /** Izgaranın kenarından biraz dışarısı: süsler ve hayvanlar ızgaraya girmesin */
-const GRID_HALF = COLS / 2 + 0.35;
+export const GRID_HALF = COLS / 2 + 0.35;
 
 /** Tohumlanmış sözde rastgele sayı üreteci (mulberry32) */
 export function rng(seed: string) {
@@ -152,6 +152,16 @@ export function islandLayout(month: string, p: IslandProgress): IslandLayout {
     add('log', 1, [1.4, 1.4]);
   }
   return { decor, pond, campfire };
+}
+
+/** Solgun fidanların yeri: kimliğinden tohumlanır, gölete/kamp ateşine düşmez */
+export function wiltSpots<T extends { item: { id: string } }>(wilts: T[], layout: IslandLayout, radius: number): { w: T; x: number; z: number }[] {
+  const avoid = [...(layout.pond ? [{ ...layout.pond, r: layout.pond.r + 0.4 }] : []), ...(layout.campfire ? [{ ...layout.campfire, r: 1 }] : [])];
+  return wilts.map((w) => {
+    const pt = ringPoint(rng(`solgun:${w.item.id}`), radius, avoid) ?? [radius - 1, 0];
+    avoid.push({ x: pt[0], z: pt[1], r: 0.5 });
+    return { w, x: pt[0], z: pt[1] };
+  });
 }
 
 /** Günün saatine göre ışık. 6–10 sabah, 10–17 gündüz, 17–20 akşam, 20–6 gece. */

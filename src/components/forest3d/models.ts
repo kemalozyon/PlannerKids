@@ -1,4 +1,4 @@
-// 3D model tablosu: Kenney Nature Kit + Cube Pets (CC0, bkz. src/assets/models/LICENSE.md).
+// 3D model tablosu: Kenney Nature Kit + Cube Pets + Mini Characters (karakter ve aksesuar) (CC0, bkz. src/assets/models/LICENSE.md).
 // Modeller küçük (.glb); Vite her birine URL verir, tek dosyalık demo derlemesinde içine gömülür.
 import { useGLTF } from '@react-three/drei';
 import { useMemo } from 'react';
@@ -6,11 +6,18 @@ import { Color, Mesh, MeshStandardMaterial, type Material, type Object3D } from 
 
 const nature = import.meta.glob('../../assets/models/nature/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 const pets = import.meta.glob('../../assets/models/pets/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const characters = import.meta.glob('../../assets/models/characters/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const accessories = import.meta.glob('../../assets/models/accessories/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 const byName = (files: Record<string, string>) =>
   Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split('/').pop()!.replace('.glb', ''), url]));
 export const NATURE = byName(nature);
 export const PETS = byName(pets);
+/** Gezinti karakterleri (Kenney Mini Characters): idle, walk, sprint, jump, fall, emote-yes… animasyonlu */
+export const CHARACTERS = byName(characters);
+export const ACCESSORIES = byName(accessories);
+/** Herhangi bir modelin adresi (doğa, hayvan, karakter, aksesuar) */
+export const modelUrl = (name: string): string => NATURE[name] ?? PETS[name] ?? CHARACTERS[name] ?? ACCESSORIES[name];
 
 /** Bir türün 3D görünüşü. models: küçük / büyük / dev ağaç evrelerindeki model. */
 interface Look {
@@ -85,7 +92,7 @@ function recolorMaterial(m: Material, c: Recolor): Material {
 /** Yüklenen modelin boyanmış, gölgeli bir kopyası. Aynı model+renk için bir kez hazırlanır. */
 const cache = new Map<string, Object3D>();
 export function useModel(name: string, colors: Recolor = {}): Object3D {
-  const url = NATURE[name] ?? PETS[name];
+  const url = modelUrl(name);
   const { scene } = useGLTF(url);
   const key = `${name}|${JSON.stringify(colors)}`;
   const template = useMemo(() => {
