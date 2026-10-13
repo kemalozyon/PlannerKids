@@ -1,11 +1,14 @@
 import type { DemoDb } from './api';
 import { addDays, parseLocalDate, toLocalDate, weekStart } from './date';
 import { itemById } from './catalog';
+import { DEFAULT_LOOK } from './avatar';
+import type { LedgerEntry } from './types';
 
 /**
- * Demo modu için ~5 haftalık örnek geçmiş. Her kayıt bir seans = ormanda bir ağaç (süresine göre fidan …
- * dev ağaç); iki yarım seans kuru ağaç. Toplam ~45 saat: bahçede açıklık, dere, tepe ve göl açık.
- * Odada ve bahçede birkaç satın alınmış eşya yerleştirilmiş.
+ * Demo modu için ~5 haftalık örnek geçmiş. Çalışılan her gün bahçede bir ağaç (türü tarihten, büyüklüğü günün
+ * toplamından); iki gün elle yazılmış süre (ağaç verir, Elmas vermez), bir gün yalnızca yarım seans (kuru ağaç).
+ * Toplam ~45 saat: Göl Kıyısı ve Orman Köyü haritaları açık, ev hâlâ Çayır Evi'nde (taşınmayı denemek için).
+ * Odada, bahçede ve bu ayın ağaç bahçesinde birkaç satın alınmış eşya yerleştirilmiş.
  */
 export function demoSeed(): DemoDb {
   const today = toLocalDate();
@@ -35,8 +38,11 @@ export function demoSeed(): DemoDb {
     const date = addDays(today, off);
     if (skip(date)) continue;
     const sessions = 1 + Math.floor(rnd() * 4);
+    // Bazı günler sayaç tutulmadan çalışılmış: süre elle yazılmış
+    const manual = off === -3 || off === -16;
     for (let i = 0; i < sessions; i++) {
       logs.push({
+        ...(manual ? { source: 'manual' as const } : {}),
         id: `l-${off}-${i}`,
         course_id: courses[Math.floor(rnd() * courses.length)].id,
         date,
@@ -61,29 +67,37 @@ export function demoSeed(): DemoDb {
     { id: 'tk-2', course_id: 'c-tr', title: 'Kitaptan 10 sayfa oku', date: today, done: true, created_at: t },
     { id: 'tk-3', course_id: 'c-ing', title: 'Renkleri tekrar et', date: today, done: false, created_at: t },
   ];
-  // Yarıda bırakılan iki seans: ormanda kuru ağaç
+  // Yarıda bırakılan seanslar: o gün başka kayıt yoksa kuru ağaç (-10. gün)
   const abandoned: NonNullable<DemoDb['abandoned']> = [
     { id: 'a-1', date: addDays(today, -5), minutes: 12, created_at: `${addDays(today, -5)}T06:00:00.000Z` },
     { id: 'a-2', date: addDays(today, -10), minutes: 8, created_at: `${addDays(today, -10)}T15:00:00.000Z` },
   ];
 
   return {
-    courses, logs, tasks, reflections, abandoned, ...demoReading(today, t), ...demoFamily(today, logs), ...demoGame(t),
+    courses, logs, tasks, reflections, abandoned, ...demoReading(today, t), ...demoFamily(today, logs), ...demoGame(t, today),
     reportSettings: { parent_email: 'ebeveyn@ornek.com', child_name: 'Ece', send_hour: 21, timezone: 'Europe/Istanbul', enabled: true },
   };
 }
 
 /**
- * Oyun ekonomisi: odada mavi koltuk, halı ve saksı; bahçede çit, çiçek ve bank. Elmaslar ilk açılışta
- * geçmiş kayıtlardan kazanılır (syncEconomy); burada yalnızca harcamalar var.
+ * Oyun ekonomisi: odada kanepe, sehpa, masada laptop ve lamba, duvarda poster, saat ve harita; bahçede çit,
+ * çiçek, bank ve fener; bu ayın ağaç bahçesinde taş yol ve bostan. Elmaslar ilk açılışta geçmiş kayıtlardan
+ * kazanılır (syncEconomy); burada yalnızca harcamalar var.
  */
-function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped'> {
-  const bought = ['mob:koltuk-mavi', 'mob:hali', 'bitki:saksi', 'isik:ayakli', 'dis:cit', 'dis:cit', 'dis:cit', 'dis:cicek-sari', 'dis:cicek-mor', 'dis:bank'];
+function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped'> {
+  const bought = [
+    'mob:koltuk-mavi', 'mob:sehpa', 'mob:laptop', 'isik:masa-lambasi', 'mob:radyo', 'duvar:gezegenler', 'duvar:saat', 'duvar:harita',
+    'dis:cit', 'dis:cit', 'dis:cit', 'dis:cicek-sari', 'dis:cicek-mor', 'dis:bank', 'isik:fener',
+    'dis:tas-yol', 'dis:tas-yol', 'dis:tas-yol', 'dis:cicek-kirmizi', 'dis:kabak', 'k:sap-kep',
+    'mob:somine', 'mob:tv-dolabi', 'mob:tv', 'dis:salincak',
+  ];
   const owned = bought.map((item_id, i) => ({ id: `o-${i}`, item_id, via: 'buy' as const, ref: null, created_at: t }));
-  const ledger = owned.map((o) => {
+  const ledger: LedgerEntry[] = owned.map((o) => {
     const a = itemById(o.item_id)!.acquire;
     return { id: `lg-${o.id}`, currency: 'crystal' as const, kind: 'buy' as const, ref: o.id, amount: -(a.kind === 'buy' ? a.price : 0), note: o.item_id, created_at: t };
   });
+  // Yeni eşyaları (şömine, TV, salıncak) denemek için aile hediyesi
+  ledger.push({ id: 'lg-hediye', currency: 'crystal', kind: 'gift', ref: 'demo', amount: 240, note: 'Demo hediyesi', created_at: t });
   return {
     owned,
     ledger,
@@ -92,27 +106,49 @@ function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equi
         floor: 'zemin:ahsap',
         wall: 'duvar:krem',
         items: [
-          { item: 'mob:kitaplik', x: 0, y: 1, rot: 90 },
-          { item: 'mob:masa', x: 2, y: 0, rot: 0 },
-          { item: 'mob:sandalye', x: 2, y: 1, rot: 180 },
-          { item: 'mob:hali', x: 3, y: 4, rot: 0 },
-          { item: 'mob:koltuk-mavi', x: 3, y: 6, rot: 180 },
-          { item: 'bitki:saksi', x: 7, y: 7, rot: 0 },
-          { item: 'isik:ayakli', x: 0, y: 7, rot: 0 },
+          { item: 'mob:yatak', x: 0, y: 0, rot: 0 },
+          { item: 'mob:kitaplik', x: 2, y: 0, rot: 0 },
+          { item: 'mob:masa', x: 5, y: 0, rot: 0 },
+          { item: 'mob:sandalye', x: 5, y: 1, rot: 180 },
+          { item: 'mob:laptop', x: 6, y: 0, rot: 0 },
+          { item: 'isik:masa-lambasi', x: 5, y: 0, rot: 0 },
+          { item: 'isik:ayakli', x: 7, y: 0, rot: 0 },
+          { item: 'bitki:saksi', x: 8, y: 0, rot: 0 },
+          { item: 'hali:dikdortgen', x: 4, y: 4, rot: 0 },
+          { item: 'mob:sehpa', x: 4, y: 6, rot: 0 },
+          { item: 'mob:radyo', x: 5, y: 6, rot: 0 },
+          { item: 'mob:koltuk-mavi', x: 4, y: 7, rot: 180 },
+          { item: 'mob:somine', x: 10, y: 0, rot: 0 },
+          { item: 'mob:tv-dolabi', x: 4, y: 4, rot: 0 },
+          { item: 'mob:tv', x: 4, y: 4, rot: 0 },
+          { item: 'duvar:gezegenler', x: 1, y: -1, rot: 0 },
+          { item: 'duvar:saat', x: 4, y: -1, rot: 0 },
+          { item: 'duvar:harita', x: -1, y: 1, rot: 270 },
         ],
       },
       garden: {
         items: [
           { item: 'dis:cit', x: 0, y: 6, rot: 0 },
           { item: 'dis:cit', x: 1, y: 6, rot: 0 },
-          { item: 'dis:cit', x: 3, y: 6, rot: 0 },
-          { item: 'dis:cicek-sari', x: 5, y: 3, rot: 0 },
-          { item: 'dis:cicek-mor', x: 6, y: 3, rot: 0 },
-          { item: 'dis:bank', x: 6, y: 5, rot: 90 },
+          { item: 'dis:cit', x: 2, y: 6, rot: 0 },
+          { item: 'dis:cicek-sari', x: 6, y: 4, rot: 0 },
+          { item: 'dis:cicek-mor', x: 7, y: 4, rot: 0 },
+          { item: 'dis:bank', x: 9, y: 6, rot: 0 },
+          { item: 'isik:fener', x: 5, y: 5, rot: 0 },
+          { item: 'dis:salincak', x: 16, y: 3, rot: 0 },
+        ],
+      },
+      [`m:${today.slice(0, 7)}`]: {
+        items: [
+          { item: 'dis:tas-yol', x: 6, y: 13, rot: 90 },
+          { item: 'dis:tas-yol', x: 7, y: 13, rot: 90 },
+          { item: 'dis:tas-yol', x: 8, y: 13, rot: 90 },
+          { item: 'dis:cicek-kirmizi', x: 0, y: 0, rot: 0 },
+          { item: 'dis:kabak', x: 14, y: 0, rot: 0 },
         ],
       },
     },
-    equipped: { character: 'char:female-b', accessory: null, pets: [] },
+    equipped: { look: { ...DEFAULT_LOOK, hat: 'k:sap-kep', hatColor: '#06d6a0' }, pets: [] },
   };
 }
 
@@ -127,6 +163,11 @@ function demoReading(today: string, t: string): Pick<DemoDb, 'books' | 'readingL
     { ...base, id: 'b-charlie', title: "Charlie'nin Çikolata Fabrikası", author: 'Roald Dahl', pages: 176, genre: 'Fantastik', recommended_by: 'Annem', color: '#7a4a2a', status: 'done', current_page: 176, started_on: d(-12), finished_on: d(-2), rating: 4, fav_character: 'Charlie', review: 'Altın bileti bulan çocuk fabrikayı geziyor.', favorite_part: 'Çikolata nehrinin olduğu oda.' },
     { ...base, id: 'b-pal', title: 'Pal Sokağı Çocukları', author: 'Ferenc Molnár', pages: 208, genre: 'Macera', recommended_by: 'Öğretmenim', color: '#2f6fd6', status: 'done', current_page: 208, started_on: d(-34), finished_on: d(-22), rating: 5, fav_character: 'Nemeçek', review: 'Grund için savaşan çocukların hikâyesi.', favorite_part: 'Nemeçek’in hasta hâliyle arkadaşlarına koştuğu an.' },
     { ...base, id: 'b-heidi', title: 'Heidi', author: 'Johanna Spyri', pages: 140, genre: 'Macera', recommended_by: 'Kütüphane', color: '#16a37f', status: 'done', current_page: 140, started_on: d(-40), finished_on: d(-30), rating: 3, fav_character: 'Dede', review: null },
+    { ...base, id: 'b-alice', title: 'Alice Harikalar Diyarında', author: 'Lewis Carroll', pages: 160, genre: 'Fantastik', recommended_by: 'Kütüphane', color: '#4fa3e0', status: 'done', current_page: 160, started_on: d(-60), finished_on: d(-50), rating: 4, fav_character: 'Şapkacı', review: null, favorite_part: 'Çılgın çay partisi.' },
+    { ...base, id: 'b-pinokyo', title: 'Pinokyo', author: 'Carlo Collodi', pages: 192, genre: 'Fantastik', recommended_by: 'Dedem', color: '#d94f3d', status: 'done', current_page: 192, started_on: d(-75), finished_on: d(-62), rating: 4, fav_character: 'Cırcır böceği', review: null, favorite_part: 'Burnunun uzadığı an.' },
+    { ...base, id: 'b-oz', title: 'Oz Büyücüsü', author: 'L. Frank Baum', pages: 176, genre: 'Fantastik', recommended_by: 'Öğretmenim', color: '#2f9d63', status: 'done', current_page: 176, started_on: d(-90), finished_on: d(-78), rating: 5, fav_character: 'Teneke Adam', review: null, favorite_part: 'Sarı tuğlalı yolda ilk yürüyüş.' },
+    { ...base, id: 'b-polly', title: 'Pollyanna', author: 'Eleanor H. Porter', pages: 220, genre: 'Macera', recommended_by: 'Annem', color: '#f2c94c', status: 'done', current_page: 220, started_on: d(-110), finished_on: d(-95), rating: 4, fav_character: 'Pollyanna', review: null, favorite_part: 'Mutluluk oyununu öğrettiği yer.' },
+    { ...base, id: 'b-ruzgar', title: 'Rüzgârın Dilinden', author: 'Kenneth Grahame', pages: 200, genre: 'Macera', recommended_by: 'Kütüphane', color: '#8d6346', status: 'done', current_page: 200, started_on: d(-130), finished_on: d(-115), rating: 3, fav_character: 'Kurbağa', review: null, favorite_part: 'Nehir kıyısında piknik.' },
     { ...base, id: 'b-seker', title: 'Şeker Portakalı', author: 'José Mauro de Vasconcelos', pages: 184, genre: 'Macera', recommended_by: 'Annem', color: '#f2a03d', status: 'reading', current_page: 150, started_on: d(-6) },
     { ...base, id: 'b-matilda', title: 'Matilda', author: 'Roald Dahl', pages: 240, genre: 'Mizah', recommended_by: 'Arkadaşım', color: '#8b5cf6', status: 'reading', current_page: 40, started_on: d(-3) },
     { ...base, id: 'b-momo', title: 'Momo', author: 'Michael Ende', pages: 304, genre: 'Fantastik', recommended_by: 'Öğretmenim', color: '#3d4a5c', status: 'want' },

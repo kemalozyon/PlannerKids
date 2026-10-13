@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { toLocalDate } from '../lib/date';
-import type { WorldTree } from '../lib/world';
+import type { DayTree } from '../lib/world';
 import { useGame } from '../lib/GameContext';
 import { useReading } from '../lib/ReadingContext';
 import type { DailyReport, Reflection, ReportSettings } from '../lib/types';
@@ -120,7 +120,7 @@ function EndDaySheet({
   ready: boolean;
   demo: boolean;
   /** Bugün dikilen ağaçlar */
-  trees: WorldTree[];
+  trees: DayTree[];
   readToday: boolean;
   onClose: () => void;
   goForest: () => void;
@@ -138,8 +138,8 @@ function EndDaySheet({
   const wrote = !!ref && (ref.rating != null || !!ref.note?.trim());
   const grown = trees.filter((t) => !t.dry);
   const treeText = grown.length
-    ? `Bugün ormanına ${grown.length} ağaç dikildi: ${grown.map((t) => t.icon).join(' ')}`
-    : 'Bugün henüz ağaç yok: sayaçla bir seans bitirince ormanına bir ağaç dikilir.';
+    ? `Bugünün ağacı bahçende: ${grown[0].name} ${grown[0].species.icon}`
+    : 'Bugün henüz ağaç yok: çalışınca bu ayın bahçesine bugünün ağacı dikilir.';
 
   return (
     <Sheet title="Günü kapatalım 🌙" onClose={onClose}>
@@ -188,7 +188,7 @@ function EndDaySheet({
           Ebeveyn ayarlarına git
         </button>
       )}
-      <p className="muted small center">Günde bir rapor gider. Bitirdikten sonra çalışmaya devam edersen ormanın yine büyür.</p>
+      <p className="muted small center">Günde bir rapor gider. Bitirdikten sonra çalışmaya devam edersen bugünün ağacı yine büyür.</p>
     </Sheet>
   );
 }

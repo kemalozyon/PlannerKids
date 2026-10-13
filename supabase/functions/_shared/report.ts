@@ -12,7 +12,7 @@ export interface ReportInput {
   tasks: { title: string; done: boolean }[];
   reading: { book: string; pages: number; minutes: number }[];
   finishedBooks: { title: string; rating: number | null; review: string | null }[];
-  /** Bugün sayaçla biten seanslar: her biri ormana bir ağaç diker (türü süreye göre) */
+  /** Bugünün ağacı (çalışılan her gün bahçeye bir ağaç; büyüklüğü günün toplam dakikasından). Çalışılmadıysa boş. */
   trees: { minutes: number }[];
 }
 
@@ -26,16 +26,18 @@ export function genitive(name: string): string {
   return `${name}'${endsWithVowel ? 'n' : ''}${v}n`;
 }
 
-/** Seans süresine göre ağaç türü (src/config/economy.json → world.trees ile aynı; logic.test.ts denetler) */
-export const TREE_NAMES: { min: number; name: string }[] = [
+/** Günün toplamına göre ağacın büyüklüğü (src/config/economy.json → world.stages ile aynı; logic.test.ts denetler) */
+export const TREE_STAGES: { min: number; name: string }[] = [
   { min: 0, name: 'Fidan' },
-  { min: 15, name: 'Çalı' },
-  { min: 30, name: 'Genç ağaç' },
-  { min: 45, name: 'Çam' },
-  { min: 60, name: 'Meşe' },
-  { min: 90, name: 'Dev ağaç' },
+  { min: 20, name: 'Küçük' },
+  { min: 45, name: 'Orta boy' },
+  { min: 90, name: 'Büyük' },
+  { min: 150, name: 'Dev' },
 ];
-const treeName = (m: number) => TREE_NAMES.filter((t) => m >= t.min).at(-1)?.name ?? 'Ağaç';
+const treeName = (m: number) => {
+  const i = Math.max(0, TREE_STAGES.filter((t) => m >= t.min).length - 1);
+  return i === 0 ? 'Fidan' : `${TREE_STAGES[i].name} ağaç`;
+};
 const MOOD_LABELS = ['', 'Çok zordu', 'Biraz zordu', 'Fena değil', 'İyiydi', 'Süperdi'];
 const MOOD_FACES = ['', '😞', '🙁', '😐', '🙂', '😄'];
 
@@ -153,7 +155,7 @@ export function reportUserPrompt(f: ReportFacts): string {
     tasks: { done: f.tasksDone, total: f.tasksTotal },
     reading: { pages: f.readingPages, minutes: f.readingMinutes, books: f.readingBooks },
     finished_books: f.finishedBooks,
-    plants_planted_in_forest_game: f.plants,
+    tree_planted_in_garden_game: f.plants,
   };
   return `Bugünün verileri:\n${JSON.stringify(data, null, 2)}`;
 }
@@ -278,7 +280,7 @@ export function renderEmail(f: ReportFacts, n: Narrative, opts: { generatedBy: '
       ${f.weekAverage ? row('Önceki günlerin ortalaması', formatMin(f.weekAverage)) : ''}
       ${row('Son 7 günde çalıştığı gün', `${f.studiedDaysThisWeek}/7`)}
       ${f.tasksTotal ? row('Yapılacaklar', `${f.tasksDone}/${f.tasksTotal} tamam`) : ''}
-      ${f.plants.length ? row('Ormanına diktiği', f.plants.join(', ')) : ''}
+      ${f.plants.length ? row('Bahçesine diktiği', f.plants.join(', ')) : ''}
     </table>
 
     ${reading}

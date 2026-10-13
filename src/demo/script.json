@@ -7,7 +7,7 @@
       "hash": "today",
       "target": "today",
       "title": "Merhaba!",
-      "text": "Merhaba! Burası senin çalışma dünyan. Her çalıştığın dakika, kendi ormanını ve evini büyütür. Hadi birlikte gezelim."
+      "text": "Merhaba! Burası senin çalışma dünyan. Çalıştığın her gün bahçene bir ağaç diker, evini büyütür. Hadi birlikte gezelim."
     },
     {
       "id": "02-sayac",
@@ -36,7 +36,7 @@
       "view": "room",
       "target": "world",
       "title": "Senin odan",
-      "text": "Burası senin odan. Bir yere dokun, karakterin oraya yürüsün. Kitaplığa dokunursan bitirdiğin kitapları raflarda görürsün."
+      "text": "Burası senin odan. Bir yere dokun, karakterin oraya yürüsün; kapıdan çıkıp bahçeye, oradan ağaç bahçelerine yürüyebilirsin. Bir eşyaya dokununca oturabilir, ışığı ya da televizyonu açabilirsin."
     },
     {
       "id": "06-duzenle",
@@ -44,30 +44,37 @@
       "view": "room",
       "target": "edit",
       "title": "Odanı düzenle",
-      "text": "Düzenle'ye dokun, aldığın eşyaları sürükleyip yerleştir. Yeşil yer uygun, kırmızı yer dolu demek. Döndürebilir ya da envantere geri koyabilirsin."
+      "text": "Düzenle'ye dokun: eşyalar kare kare yerleşir. Bir eşyaya dokunup seç, sürükleyip taşı ya da döndür. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Gezerken de bir eşyayı taşıyabilirsin."
     },
     {
       "id": "07-orman",
       "hash": "forest",
-      "view": "outdoor",
+      "view": "month",
       "target": "world",
-      "title": "Büyüyen orman",
-      "text": "Kapıdan çıkınca bahçen ve ormanın seni bekliyor. Her çalışma seansı bir ağaç diker; uzun çalışırsan daha büyük bir ağaç. Her ay yeni bir bölge açılır."
+      "title": "Her gün bir ağaç",
+      "text": "Çalıştığın her gün, o ayın bahçesine bir ağaç dikilir. Ne kadar çok çalışırsan ağaç o kadar büyür. Bir ağaca yaklaşınca o gün neler yaptığını görürsün. Gelecek ayların bahçeleri günü gelince açılır."
     },
     {
       "id": "08-arazi",
       "hash": "forest",
-      "view": "outdoor",
+      "view": "garden",
       "target": "lands",
-      "title": "Dünyan büyüyor",
-      "text": "Toplam çalışman arttıkça bahçen genişler: önce bir dere, sonra bir tepe, bir göl ve bir köprü. Arazi satın alınamaz, yalnızca çalışarak büyür."
+      "title": "Arazin büyür",
+      "text": "Toplam çalışman arttıkça arazin kendiliğinden genişler: önce bir dere ve köprü, sonra tepe, göl ve sahil. Evin de büyür, eşyaların yerinde kalır. Arazi yalnızca çalışarak büyür."
     },
     {
       "id": "09-dukkan",
       "hash": "shop",
       "target": "shop",
       "title": "Dükkân",
-      "text": "Kazandığın Elmasla odana mobilya, bahçene süs alabilirsin. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+      "text": "Kazandığın Elmasla odana mobilya, bahçene süs, karakterine kıyafet alabilirsin. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+    },
+    {
+      "id": "09b-karakter",
+      "hash": "profile",
+      "target": "avatar",
+      "title": "Karakterin",
+      "text": "Profil'de karakterini istediğin gibi kur: saçını, kıyafetlerini, şapkanı ve gözlüğünü seç. Bazı parçalar ücretsiz, bazıları Elmasla alınır."
     },
     {
       "id": "10-kitaplik",
@@ -81,7 +88,7 @@
       "hash": "today",
       "target": "timer",
       "title": "Hadi başlayalım!",
-      "text": "Hepsi bu kadar! Şimdi ilk seansını başlat ve ormanına ilk ağacını dik. Kolay gelsin!"
+      "text": "Hepsi bu kadar! Şimdi ilk seansını başlat ve bugünün ağacını dik. Kolay gelsin!"
     }
   ]
 }

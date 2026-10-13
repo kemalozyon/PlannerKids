@@ -1,15 +1,17 @@
 // Oyunlaştırma: hepsi mevcut kayıtlardan türetilir.
-// Uzun vadeli ilerleme = her seansın ağacıyla büyüyen orman + çalıştıkça genişleyen bahçe + rozetler.
-// Elmas, seri, seviye ve ağaçlar yalnızca sayaçla ölçülen (ve eski) kayıtlardan gelir; elle yazılan süre sayılmaz.
+// Uzun vadeli ilerleme = her çalışılan günün ağacıyla dolan aylık bahçeler + çalıştıkça açılan haritalar + rozetler.
+// Elmas, seri, seviye ve haritalar yalnızca sayaçla ölçülen (ve eski) kayıtlardan gelir; ağaçlar elle yazılan
+// süreyle de dikilir (çocuk bazen sayaç tutmadan çalışır).
 import { weekStart } from './date';
 import { completedPlanDays } from './plan';
 import { balances, chestsNow, dayTotalsOf, freezeDates, QUESTS, questsNow, trusted, type ChestState, type QuestState, type UnlockProgress } from './economy';
 import { computeStreak } from './streak';
 import { levelOf, skillsOf, type LevelInfo, type Skill } from './level';
-import { CFG, type Land } from './config';
-import { creaturesOf, forestOf, landsOf, libraryOpen, type SpaceId, type SpaceLayout, type WorldTree } from './world';
+import { CFG } from './config';
+import { normalizeEquipped } from './avatar';
+import { creaturesOf, dayTrees, mapsOf, type DayTree, type SpaceId, type SpaceLayout } from './world';
 import {
-  DEFAULT_EQUIPPED,
+  type WorldState,
   type Abandoned,
   type Book,
   type Course,
@@ -43,11 +45,13 @@ export interface GameInput {
   // Oyun ekonomisi (0008 yoksa boş)
   ledger?: LedgerEntry[];
   owned?: OwnedItem[];
-  equipped?: Equipped | null;
+  /** Kayıttaki görünüş (eski biçim de olabilir) */
+  equipped?: unknown;
   books?: Book[];
   courses?: Course[];
   /** Kayıtlı dünya alanları (0012 yoksa boş) */
   spaces?: Partial<Record<SpaceId, SpaceLayout>>;
+  /** Kullanıcının haritası (0015 yoksa ilk harita) */
 }
 
 export interface GameStats {
@@ -63,18 +67,18 @@ export interface GameStats {
   /** Bütün kayıtlar (rapor ve geçmiş için) */
   totalMinutes: number;
   dayTotals: Map<string, number>;
-  /** Sayaçla ölçülen (ve eski) toplam: seviye, arazi ve kilitler buna göre */
+  /** Sayaçla ölçülen (ve eski) toplam: seviye, haritalar ve kilitler buna göre */
   trustedMinutes: number;
-  /** Bütün ağaçlar (kuru dahil), eskiden yeniye */
-  forest: WorldTree[];
-  /** Kuru olmayan ağaç sayısı */
+  /** Her çalışılan günün ağacı (kuru dahil), eskiden yeniye */
+  forest: DayTree[];
+  /** Kuru olmayan ağaç (çalışılan gün) sayısı */
   treeCount: number;
-  /** Bahçenin arazileri */
-  lands: { unlocked: Land[]; current: Land; next: Land | null };
-  /** Ormana gelen canlılar */
+  /** Arazi: bugünkü aşama (saatten türer), açılanlar, sıradaki */
+  world: WorldState;
+  maps: ReturnType<typeof mapsOf>;
+  /** Bahçelere gelen canlılar */
   creatures: ReturnType<typeof creaturesOf>;
   booksDone: number;
-  libraryOpen: boolean;
   badges: Badge[];
   /** Planı tamamen bitirilmiş günler */
   planDays: string[];
@@ -126,11 +130,11 @@ export function computeStats({
   const trustedTotals = dayTotalsOf(ok);
   const trustedMinutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
   const first = [...trustedTotals.keys()].filter((d) => (trustedTotals.get(d) ?? 0) > 0).sort()[0] ?? null;
-  const { streak, best: bestStreak, tier: streakTier, freezesLeft } = computeStreak((d) => trustedTotals.get(d) ?? 0, first, today, freezeDates(owned));
+  const { streak, best: bestStreak, tier: streakTier, freezesLeft, bonus: streakBonus } = computeStreak((d) => trustedTotals.get(d) ?? 0, first, today, freezeDates(owned));
 
-  const forest = forestOf(logs, abandoned);
+  const forest = dayTrees(logs, abandoned, new Set(streakBonus.keys()));
   const living = forest.filter((t) => !t.dry);
-  const atLeast = (min: number) => living.filter((t) => t.minutes >= min).length;
+  const atLeast = (stage: number) => living.filter((t) => t.stageIndex >= stage).length;
   const perMonth = new Map<string, number>();
   living.forEach((t) => perMonth.set(t.month, (perMonth.get(t.month) ?? 0) + 1));
 
@@ -142,10 +146,11 @@ export function computeStats({
   }
   const planDays = completedPlanDays(plans, logs).filter((d) => d <= today);
   const maxCoursesInWeek = Math.max(0, ...[...weekCourses.values()].map((s) => s.size));
-  const lands = landsOf(trustedMinutes);
+  const maps = mapsOf(trustedMinutes);
+  const ws: WorldState = { map: maps.current.id };
   const booksDone = books.filter((b) => b.status === 'done').length;
-  const big = CFG.world.trees.find((t) => t.id === 'mese')!.min;
-  const giant = CFG.world.trees.at(-1)!.min;
+  const stages = CFG.world.stages;
+  const species = new Set(living.map((t) => t.species.id)).size;
 
   const b = (id: string, icon: string, title: string, desc: string, value: number, target: number): Badge => ({
     id,
@@ -158,21 +163,22 @@ export function computeStats({
   });
 
   const badges: Badge[] = [
-    b('plant1', '🌱', 'İlk Ağaç', 'Sayaçla çalışıp ilk ağacını dik', living.length, 1),
+    b('plant1', '🌱', 'İlk Ağaç', 'Çalıştığın ilk gün bahçene ağaç dikilir', living.length, 1),
     b('streak3', '🔥', 'Isınma Turu', '3 günlük seri yap', bestStreak, 3),
     b('streak7', '⚡', 'Bir Hafta', '7 günlük seri yap', bestStreak, 7),
     b('streak30', '🏔️', 'Dağ Gibi', '30 günlük seri yap', bestStreak, 30),
-    b('grove10', '🌳', 'Koru', 'Ormanında 10 ağaç olsun', living.length, 10),
-    b('big1', '🌳', 'Koca Ağaç', `Bir seansta ${big} dk çalışıp meşe dik`, atLeast(big), 1),
-    b('giant1', '🌲', 'Dev', `Bir seansta ${giant} dk çalışıp dev ağaç dik`, atLeast(giant), 1),
-    b('forester', '🏕️', 'Ormancı', '50 ağaç dik', living.length, 50),
-    b('land3', '🗺️', 'Kâşif', 'Bahçende 3 arazi açılsın', lands.unlocked.length, 3),
+    b('grove10', '🌳', 'Koru', 'Bahçelerinde 10 ağaç olsun', living.length, 10),
+    b('big1', '🌳', 'Koca Ağaç', `Bir günde ${stages[3].min} dk çalışıp büyük ağaç dik`, atLeast(3), 1),
+    b('giant1', '🌲', 'Dev', `Bir günde ${stages[4].min} dk çalışıp dev ağaç dik`, atLeast(4), 1),
+    b('forester', '🏕️', 'Ormancı', '50 gün çalışıp 50 ağaç dik', living.length, 50),
+    b('species8', '🌸', 'Botanikçi', '8 farklı türde ağacın olsun', species, 8),
+    b('map2', '🗺️', 'Kâşif', 'İkinci haritayı aç', maps.unlocked.length, 2),
     b('feel7', '😊', 'Duygu Günlüğü', '7 gün "nasıl geçti" yaz', reflectionDays, 7),
     b('tasks10', '✅', 'Liste Avcısı', '10 görevi bitir', doneTasks, 10),
     b('variety', '🎨', 'Çok Yönlü', 'Bir haftada 3 farklı derse çalış', maxCoursesInWeek, 3),
     b('plan1', '📋', 'Planlı Gün', 'Bir günün planını tamamla', planDays.length, 1),
     b('plan10', '🗓️', 'Plan Ustası', '10 günün planını tamamla', planDays.length, 10),
-    b('month15', '🌲', 'Gür Orman', 'Bir ayda 15 ağaç dik', Math.max(0, ...perMonth.values()), 15),
+    b('month15', '🌲', 'Gür Bahçe', 'Bir ayda 15 ağaç dik', Math.max(0, ...perMonth.values()), 15),
   ];
 
   const level = levelOf(trustedMinutes);
@@ -190,17 +196,17 @@ export function computeStats({
     trustedMinutes,
     forest,
     treeCount: living.length,
-    lands,
+    world: ws,
+    maps,
     creatures: creaturesOf(living.length),
     booksDone,
-    libraryOpen: libraryOpen({ totalMinutes: trustedMinutes, booksDone }),
     badges,
     planDays,
     crystals: bal.crystal,
     stars: bal.star,
     ledger,
     owned,
-    equipped: equipped ?? DEFAULT_EQUIPPED,
+    equipped: normalizeEquipped(equipped),
     spaces,
     quests: questsNow({ logs, plans, books, today }),
     chests: chestsNow(today, trustedTotals, owned),
@@ -237,33 +243,33 @@ export type Celebration = { kind: 'tree' | 'badge' | 'land' | 'streak'; title: s
 /** İki durum arasındaki kutlanacak gelişmeleri bulur. */
 export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
   const out: Celebration[] = [];
-  // Yeni ağaçlar (her seans bir ağaç)
-  const had = new Set(prev.forest.map((t) => t.id));
-  const fresh = next.forest.filter((t) => !had.has(t.id));
-  const grown = fresh.filter((t) => !t.dry);
-  if (grown.length) {
-    const t = grown.at(-1)!;
-    out.push({
-      kind: 'tree',
-      icon: t.icon,
-      title: `Yeni ağaç: ${t.name}!`,
-      detail: `${t.minutes} dk çalıştın, ormanına bir ${t.name.toLocaleLowerCase('tr-TR')} dikildi. Ormanında ${next.treeCount} ağaç var.`,
-    });
+  // Bugünün ağacı: yeni dikildi ya da büyüdü
+  const had = new Map(prev.forest.map((t) => [t.id, t]));
+  for (const t of next.forest) {
+    if (t.dry) continue;
+    const was = had.get(t.id);
+    if (!was || was.dry) {
+      out.push({
+        kind: 'tree',
+        icon: t.icon,
+        title: `Bugünün ağacı: ${t.name}!`,
+        detail: `Bugün çalıştın, ${t.species.name.toLocaleLowerCase('tr-TR')} ağacın bu ayın bahçesine dikildi. Çalıştıkça büyüyecek.`,
+      });
+    } else if (t.stageIndex > was.stageIndex) {
+      out.push({ kind: 'tree', icon: t.species.icon, title: `Ağacın büyüdü: ${t.name}!`, detail: `Bugün ${t.minutes} dk çalıştın.` });
+    }
   }
   if (next.streak > prev.streak && next.streak >= 2 && prev.todayPending) {
     out.push({ kind: 'streak', icon: '🔥', title: `${next.streak} günlük seri!`, detail: 'Harika gidiyorsun.' });
   }
-  // Dünya büyüdü: yeni arazi, yeni canlı, kütüphane odası
-  const wasLand = new Set(prev.lands.unlocked.map((l) => l.id));
-  for (const l of next.lands.unlocked) {
-    if (!wasLand.has(l.id)) out.push({ kind: 'land', icon: l.icon, title: `Dünyan büyüdü: ${l.name}!`, detail: l.desc });
+  // Dünya büyüdü: arazi genişledi, yeni canlı geldi
+  const wasMap = new Set(prev.maps.unlocked.map((m) => m.id));
+  for (const m of next.maps.unlocked) {
+    if (!wasMap.has(m.id)) out.push({ kind: 'land', icon: m.icon, title: `Arazin genişledi: ${m.name}!`, detail: `${m.desc} Eşyaların yerinde duruyor.` });
   }
   const wasCreature = new Set(prev.creatures.map((c) => c.id));
   for (const c of next.creatures) {
-    if (!wasCreature.has(c.id)) out.push({ kind: 'land', icon: c.icon, title: `Ormanına bir ${c.name.toLocaleLowerCase('tr-TR')} geldi!`, detail: 'Orman büyüdükçe yeni canlılar gelir.' });
-  }
-  if (next.libraryOpen && !prev.libraryOpen) {
-    out.push({ kind: 'land', icon: '📚', title: 'Kütüphane odası açıldı!', detail: 'Evindeki yeni kapıdan kütüphanene geçebilirsin.' });
+    if (!wasCreature.has(c.id)) out.push({ kind: 'land', icon: c.icon, title: `Bahçene bir ${c.name.toLocaleLowerCase('tr-TR')} geldi!`, detail: 'Ağaçların çoğaldıkça yeni canlılar gelir.' });
   }
   // Yeni Elmas kazançları tek kutlamada
   const seen = new Set(prev.ledger.map((e) => e.id));

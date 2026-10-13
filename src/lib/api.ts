@@ -6,7 +6,7 @@ import { CFG } from './config';
 import { toLocalDate } from './date';
 import { balances, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
 import { levelOf } from './level';
-import { layoutProblem, type SpaceId, type SpaceLayout } from './world';
+import { dayTrees, isHome, isMonthSpace, layoutProblem, mapFor, type SpaceId, type SpaceLayout } from './world';
 import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
@@ -323,7 +323,7 @@ interface DemoDb {
   spaces?: Partial<Record<SpaceId, SpaceLayout>>;
 }
 
-export const DEMO_KEY = 'ct-demo-db-v13';
+export const DEMO_KEY = 'ct-demo-db-v15';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -713,10 +713,10 @@ export function localApi(seed: () => DemoDb): Api {
     },
     async getEquipped() {
       const e = load().equipped;
-      return e ? { ...e, pets: [...e.pets] } : null;
+      return e ? structuredClone(e) : null;
     },
     async saveEquipped(e) {
-      load().equipped = { ...e, pets: [...e.pets] };
+      load().equipped = structuredClone(e);
       save();
     },
     async listSpaces() {
@@ -728,13 +728,15 @@ export function localApi(seed: () => DemoDb): Api {
       // Sunucudaki save_space ile aynı kurallar (world.ts)
       const ok = trusted(db.logs);
       const minutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
-      const ctx = { totalMinutes: minutes, booksDone: (db.books ?? []).filter((b) => b.status === 'done').length };
-      const progress = { bestStreak: 0, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees: ok.length };
+      // Arazi saatle yerinde büyür (sunucuda world_ctx.map)
+      const ctx = { map: mapFor(minutes).id, today: toLocalDate() };
+      const trees = dayTrees(db.logs, []).length;
+      const progress = { bestStreak: 0, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees };
       const elsewhere = (id: string) =>
         Object.entries(db.spaces!)
           .filter(([s]) => s !== space)
           .reduce((n, [, l]) => n + (l?.items.filter((p) => p.item === id).length ?? 0), 0);
-      if (!['room', 'library', 'garden'].includes(space)) throw new Error('Alan geçersiz');
+      if (!isHome(space) && !isMonthSpace(space)) throw new Error('Alan geçersiz');
       const bad = layoutProblem(space, layout, ctx, (it) => ownedCount(it, db.owned ?? [], progress), elsewhere);
       if (bad) throw new Error(bad.message);
       db.spaces[space] = structuredClone(layout);

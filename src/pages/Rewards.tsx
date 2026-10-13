@@ -33,7 +33,7 @@ export default function Rewards() {
 
   return (
     <div className="stack">
-      <p className="muted">Ailenle birlikte koyduğunuz gerçek ödüller. Ödüller ormandaki paranı harcamaz, sadece ilerlemeni sayar.</p>
+      <p className="muted">Ailenle birlikte koyduğunuz gerçek ödüller. Ödüller Elmasını harcamaz, sadece ilerlemeni sayar.</p>
       {error && <div className="error">{error}</div>}
 
       {top ? (

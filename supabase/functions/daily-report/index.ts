@@ -54,13 +54,13 @@ function supabaseSource(db: SupabaseClient): DataSource {
     async gather(userId, date, childName): Promise<ReportInput> {
       const weekStart = addDaysISO(date, -6);
       const [logs, refl, tasks, rlogs, finished] = await Promise.all([
-        db.from('study_logs').select('date,duration_minutes,note,source,courses(name,color)').eq('user_id', userId).gte('date', weekStart).lte('date', date),
+        db.from('study_logs').select('date,duration_minutes,note,courses(name,color)').eq('user_id', userId).gte('date', weekStart).lte('date', date),
         db.from('daily_reflections').select('rating,note').eq('user_id', userId).eq('date', date).maybeSingle(),
         db.from('tasks').select('title,done').eq('user_id', userId).eq('date', date),
         db.from('reading_logs').select('pages,minutes,books(title)').eq('user_id', userId).eq('date', date),
         db.from('books').select('title,rating,review').eq('user_id', userId).eq('finished_on', date),
       ]);
-      type LogRow = { date: string; duration_minutes: number; note: string | null; source?: string; courses: { name: string; color: string } | null };
+      type LogRow = { date: string; duration_minutes: number; note: string | null; courses: { name: string; color: string } | null };
       const logRows = must(logs) as unknown as LogRow[];
       const week = Array.from({ length: 7 }, (_, i) => addDaysISO(weekStart, i)).map((d) => ({
         date: d,
@@ -78,8 +78,8 @@ function supabaseSource(db: SupabaseClient): DataSource {
         tasks: must(tasks) as ReportInput['tasks'],
         reading: (must(rlogs) as unknown as RLog[]).map((r) => ({ book: r.books?.title ?? 'Kitap', pages: r.pages, minutes: r.minutes })),
         finishedBooks: must(finished) as ReportInput['finishedBooks'],
-        // Her sayaç seansı bir ağaç (elle yazılan süre ağaç vermez)
-        trees: logRows.filter((l) => l.date === date && l.source !== 'manual').map((l) => ({ minutes: l.duration_minutes })),
+        // Çalışılan her gün bahçeye bir ağaç; büyüklüğü günün toplamından (elle yazılan süre dahil)
+        trees: week.at(-1)!.minutes > 0 ? [{ minutes: week.at(-1)!.minutes }] : [],
       };
     },
   };

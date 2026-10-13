@@ -97,7 +97,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       setError((e as Error).message);
     }
   };
-  /** Seansı bırak: uzun sürdüyse ormanda kuru ağaç kalır */
+  /** Seansı bırak: uzun sürdüyse (o gün başka kayıt yoksa) bahçede kuru ağaç kalır */
   const abandon = async () => {
     setFocusOpen(false);
     setFinishing(false);
@@ -123,7 +123,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
           🌱
         </div>
         <h2>Hoş geldin! 🌱</h2>
-        <p className="muted">Sayaçla çalıştığın her seans ormanına bir ağaç diker; dünyan çalıştıkça büyür. Önce derslerini ekleyelim.</p>
+        <p className="muted">Çalıştığın her gün bahçene bir ağaç dikilir; dünyan çalıştıkça büyür. Önce derslerini ekleyelim.</p>
         <div className="empty-actions">
           <button
             className="btn primary big"
@@ -688,7 +688,7 @@ function TourCard() {
       </span>
       <div className="grow">
         <strong>Hoş geldin! Dünyanı tanıyalım mı?</strong>
-        <p className="muted small">2 dakikalık sesli bir tur: sayaç, Elmas, odan, ormanın ve kitaplığın.</p>
+        <p className="muted small">2 dakikalık sesli bir tur: sayaç, Elmas, odan, ağaç bahçelerin, karakterin ve kitaplığın.</p>
         <div className="note-actions">
           <button
             className="btn primary sm"

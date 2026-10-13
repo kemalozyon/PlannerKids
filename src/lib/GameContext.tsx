@@ -18,6 +18,7 @@ interface GameCtx {
   equip: (e: Equipped) => Promise<void>;
   /** Odanın/bahçenin yerleşimini kaydet (sunucu doğrular; geçersizse hata fırlatır) */
   saveSpace: (space: SpaceId, layout: SpaceLayout) => Promise<void>;
+  /** Yeni haritaya taşın (evin dekoru baştan yapılır) */
   celebrations: (Celebration & { key: number })[];
   dismiss: (key: number) => void;
 }
@@ -40,16 +41,6 @@ function legacyStars(today: string): number[] {
     return s.date === today && Array.isArray(s.got) ? s.got : [];
   } catch {
     return [];
-  }
-}
-
-/** Kayıtlı görünüş yoksa eski gezinti seçimi (ct-avatar-v1) kullanılır */
-function legacyAvatar(): Equipped | null {
-  try {
-    const v = localStorage.getItem('ct-avatar-v1');
-    return v ? { character: `char:${v.replace('character-', '')}`, accessory: null, pets: [] } : null;
-  } catch {
-    return null;
   }
 }
 
@@ -101,7 +92,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       abandoned,
       ledger,
       owned,
-      equipped: equipped ?? legacyAvatar(),
+      equipped,
       books,
       courses,
       spaces: Object.fromEntries(spaces.map((s) => [s.space, s.layout])),

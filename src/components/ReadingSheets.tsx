@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { daysBetween, formatDay, formatMinutes, toLocalDate } from '../lib/date';
-import { CFG } from '../lib/config';
 import { useGame } from '../lib/GameContext';
 import { BOOK_COLORS, GENRES, RECOMMENDERS, inkOn, pickBookColor } from '../lib/reading';
 import { useReading } from '../lib/ReadingContext';
@@ -405,7 +404,7 @@ export function ReadingFlow({
   return (
     <Sheet title="Kitaplığında yerini aldı 📚" onClose={onClose}>
       <p>
-        <strong>{book.title}</strong> artık odandaki kitaplığın rafında. Raf dolunca yeni raf eklenir; {CFG.world.library.books} kitapta kütüphane odan açılır.
+        <strong>{book.title}</strong> artık evindeki kütüphane odasının rafında. Kitaplığa dokununca sırtını görürsün.
       </p>
       <div className="actions">
         <button className="btn ghost" onClick={onClose}>

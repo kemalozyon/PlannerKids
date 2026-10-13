@@ -5,14 +5,16 @@ import type { Course } from '../lib/types';
 import { formatClock } from '../lib/useTimer';
 import type { SessionApi } from '../lib/SessionContext';
 import ConfirmButton from './ConfirmButton';
-import { treeKind } from '../lib/world';
+import { speciesOf, stageOf, treeLabel } from '../lib/world';
+import { useGame } from '../lib/GameContext';
+import { toLocalDate } from '../lib/date';
 
 const GOALS = [25, 40];
 const SOUND_KEY = 'ct-focus-sound-v1';
 
 /**
- * Tam ekran odak modu: halka sayaç, seans uzadıkça değişen ağaç (her seans ormana bir ağaç diker; türü
- * süreye göre), tur seçimi (25 / 40 / serbest), tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
+ * Tam ekran odak modu: halka sayaç, çalıştıkça büyüyen bugünün ağacı (her gün bir ağaç; büyüklüğü günün
+ * toplamına göre), tur seçimi (25 / 40 / serbest), tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
  * Açıkken ekranın kararmaması istenir (Wake Lock): kağıttan çalışırken ekran kapanıp sayaç durmasın.
  */
 export default function FocusMode({
@@ -28,7 +30,7 @@ export default function FocusMode({
   /** Bugün kaydedilmiş oturum sayısı (bu oturum hariç) */
   roundsToday: number;
   onFinish: () => void;
-  /** İptal (uzun sürdüyse adada solgun fidan kalır) */
+  /** İptal (uzun sürdüyse ve o gün başka kayıt yoksa bahçede kuru ağaç kalır) */
   onCancel: () => void;
   onClose: () => void;
 }) {
@@ -60,8 +62,12 @@ export default function FocusMode({
   const R = 112;
   const C = 2 * Math.PI * R;
 
-  const kind = treeKind(Math.floor(elapsedMin));
-  const nx = CFG.world.trees.find((k) => k.min > elapsedMin);
+  // Bugünün ağacı: günün toplamı (bu seans dahil) büyüklüğünü, tarih türünü belirler
+  const { stats } = useGame();
+  const dayMin = (stats?.todayMinutes ?? 0) + elapsedMin;
+  const species = speciesOf(toLocalDate());
+  const { stage } = stageOf(Math.floor(dayMin));
+  const nx = CFG.world.stages.find((k) => k.min > dayMin);
   const color = course?.color ?? 'var(--accent)';
   const rounds = Math.min(6, roundsToday + 1);
 
@@ -113,7 +119,7 @@ export default function FocusMode({
             <div className="focus-center">
               <div className="clock">{formatClock(ses.elapsedMs)}</div>
               <div className="focus-tree" aria-hidden>
-                {kind.icon}
+                {species.icon}
               </div>
             </div>
           </div>
@@ -121,10 +127,10 @@ export default function FocusMode({
             {goal != null && !reached && <>Turun bitmesine {formatMinutes(Math.ceil(goal - elapsedMin))} · </>}
             {nx ? (
               <>
-                Bu seans bir <strong className="ink">{kind.name.toLocaleLowerCase('tr-TR')}</strong> dikecek · {nx.icon} {nx.name.toLocaleLowerCase('tr-TR')} olmasına {formatMinutes(Math.ceil(nx.min - elapsedMin))}
+                Bugünün ağacı: <strong className="ink">{treeLabel(species, stage)}</strong> · büyümesine {formatMinutes(Math.ceil(nx.min - dayMin))}
               </>
             ) : (
-              <>Bu seans ormanına bir dev ağaç dikecek! 🌲</>
+              <>Bugünün ağacı dev bir {species.name.toLocaleLowerCase('tr-TR')} oldu! {species.icon}</>
             )}
           </div>
           <div className="rounds" aria-label={`Bugün ${rounds}. oturumun`}>
@@ -173,7 +179,7 @@ export default function FocusMode({
             }}
           />
         </section>
-        <p className="muted small center">Seansı bitirince ormanına ağaç dikilir ve 💎 Elmas kazanırsın. Yarıda bırakırsan kuru ağaç kalır.</p>
+        <p className="muted small center">Seansı bitirince bugünün ağacı büyür ve 💎 Elmas kazanırsın. Yarıda bırakırsan (o gün başka çalışma yoksa) kuru ağaç kalır.</p>
       </div>
     </div>
   );

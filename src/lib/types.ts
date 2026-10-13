@@ -1,5 +1,6 @@
 import type { SessionState, StudySession } from './session';
 import type { SpaceId, SpaceLayout } from './world';
+import type { AvatarLook } from './avatar';
 
 export interface Course {
   id: string;
@@ -131,7 +132,7 @@ export interface Api {
   getEquipped(): Promise<Equipped | null>;
   saveEquipped(e: Equipped): Promise<void>;
 
-  /** Dünya alanları (oda, kütüphane, bahçe); kaydı olmayan alan listede yok (0012_spaces.sql) */
+  /** Dünya alanları (oda, kütüphane, bahçe, aylık bahçeler); kaydı olmayan alan listede yok */
   listSpaces(): Promise<{ space: SpaceId; layout: SpaceLayout }[]>;
   /** Yerleşimi sunucu doğrular (sınır, sabit karo, çakışma, envanter) ve kaydeder */
   saveSpace(space: SpaceId, layout: SpaceLayout): Promise<void>;
@@ -297,11 +298,13 @@ export interface OwnedItem {
 }
 
 
-/** Görünüş: gezinti karakteri, aksesuar ve yanındaki hayvanlar */
+/** Görünüş: parça parça avatar ve yanındaki hayvanlar (avatar.ts) */
 export interface Equipped {
-  character: string;
-  accessory: string | null;
+  look: AvatarLook;
   pets: string[];
 }
 
-export const DEFAULT_EQUIPPED: Equipped = { character: 'char:female-b', accessory: null, pets: [] };
+/** Arazinin bugünkü aşaması: güvenilir toplam dakikadan türer, saklanmaz (0017_world_v3.sql → world_ctx) */
+export interface WorldState {
+  map: string;
+}

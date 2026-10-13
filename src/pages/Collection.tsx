@@ -1,5 +1,5 @@
 // Koleksiyon defteri: bütün eşyalar türlerine göre; sahip olunmayanlar gölge gibi görünür ve nasıl
-// açılacağı yazar. Altta ormanın bölgeleri: her ay yeni bir bölge, geçmiş aylar Dünyam'da gezilebilir.
+// açılacağı yazar. Altta ağaç bahçeleri: her ay bir bahçe, çalışılan her gün bir ağaç.
 import { useMemo, useState } from 'react';
 import ItemCard from '../components/ItemCard';
 import { CATEGORIES, ITEMS, type Item } from '../lib/catalog';
@@ -20,7 +20,7 @@ export default function Collection({ goWorld }: { goWorld: () => void }) {
       if (t.dry) e.dry++;
       else {
         e.trees++;
-        e.icons.push(t.icon);
+        e.icons.push(t.species.icon);
       }
       m.set(t.month, e);
     }
@@ -77,13 +77,13 @@ export default function Collection({ goWorld }: { goWorld: () => void }) {
 
       <section className="card">
         <div className="card-head">
-          <h2>🗺️ Ormanının bölgeleri</h2>
+          <h2>🌳 Ağaç bahçelerin</h2>
           <button className="link small" onClick={goWorld}>
             Dünyamda gez →
           </button>
         </div>
         {months.length === 0 ? (
-          <p className="muted small">Sayaçla çalıştığın her seans ormanına bir ağaç diker; her ay yeni bir bölge açılır.</p>
+          <p className="muted small">Çalıştığın her gün o ayın bahçesine bir ağaç dikilir; ne kadar çok çalışırsan o kadar büyür.</p>
         ) : (
           <ul className="list region-list">
             {months.map(([m, e]) => (
@@ -96,7 +96,7 @@ export default function Collection({ goWorld }: { goWorld: () => void }) {
                   </span>
                 </span>
                 <span className="muted small nowrap">
-                  {e.trees} ağaç{e.dry ? ` · ${e.dry} kuru` : ''}
+                  {e.trees} ağaç · {new Set(stats.forest.filter((t) => t.month === m && !t.dry).map((t) => t.species.id)).size} tür{e.dry ? ` · ${e.dry} kuru` : ''}
                 </span>
               </li>
             ))}

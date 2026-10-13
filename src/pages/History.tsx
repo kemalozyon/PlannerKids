@@ -7,7 +7,6 @@ import { addDays, formatDay, formatMinutes, formatShort, parseLocalDate, toLocal
 import { formatMonth, monthOf, shiftMonth } from '../lib/forest';
 import { WEEKDAYS, weekDates } from '../lib/plan';
 import type { Course, Reflection, StudyLog } from '../lib/types';
-import type { WorldTree } from '../lib/world';
 
 /** Isı haritası seviyeleri (dakika alt sınırı) */
 const LEVELS = [0, 1, 60, 110, 150];
@@ -87,10 +86,8 @@ export default function History({ courses }: { courses: Course[] }) {
   const maxDay = Math.max(60, ...wdays.map((d) => totals.get(d) ?? 0));
   const isThisWeek = week === weekStart(today);
 
-  // Günde tek ağaç; eski verilerde birden çoksa en büyüğü
-  /** O günün en büyük ağacı (takvimde küçük simge) */
-  const treeOf = (d: string) =>
-    (stats?.forest ?? []).filter((t) => t.date === d && !t.dry).reduce<WorldTree | null>((b, t) => (!b || t.minutes > b.minutes ? t : b), null);
+  /** O günün ağacı (takvimde küçük simge) */
+  const treeOf = (d: string) => (stats?.forest ?? []).find((t) => t.date === d && !t.dry) ?? null;
 
   return (
     <div className="stack">
@@ -151,7 +148,7 @@ export default function History({ courses }: { courses: Course[] }) {
               >
                 <span>{Number(d.slice(-2))}</span>
                 <span className="cal-mood" aria-hidden>
-                  {tree && <span className="cal-tree">{tree.icon}</span>}
+                  {tree && <span className="cal-tree">{tree.species.icon}</span>}
                   {r?.rating ? MOODS[r.rating - 1].face : null}
                 </span>
               </button>
@@ -231,7 +228,7 @@ export default function History({ courses }: { courses: Course[] }) {
       {open && (
         <DaySheet
           date={open}
-          trees={stats?.forest.filter((t) => t.date === open) ?? []}
+          tree={stats?.forest.find((t) => t.date === open) ?? null}
           minutes={stats?.dayTotals.get(open) ?? totals.get(open) ?? 0}
           courses={courses}
           onClose={() => setOpen(null)}

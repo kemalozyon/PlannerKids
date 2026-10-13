@@ -800,10 +800,18 @@ button.world-chip { cursor: pointer; }
 .world-chip.on { background: #fff3c4; }
 .world-actions { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .world-actions .btn { background: rgba(255, 255, 255, .92); color: #1c1d1f; box-shadow: 0 3px 10px rgba(0, 0, 0, .15); padding: 7px 12px; font-size: .85rem; min-height: 0; }
+/* Oynarken bir eşyanın kullanma çubuğu: otur, aç-kapa, taşı… */
+.use-bar {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 7px 8px; border-radius: 14px; background: rgba(255, 255, 255, .95); color: #1c1d1f; box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+}
+.use-bar .btn { padding: 6px 10px; min-height: 0; font-size: .85rem; }
+.use-bar .btn:not(.primary) { background: #f3efe6; color: #1c1d1f; }
+.use-name { flex: 1 0 100%; min-width: 0; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .world-hint {
   position: absolute; top: 46px; left: 0; right: 0; text-align: center; font-size: .72rem; pointer-events: none;
   color: rgba(40, 30, 20, .65);
-}.world-wrap.editing { height: clamp(420px, 120vw, 600px); }
+}.world-wrap.editing { height: clamp(540px, 150vw, 760px); }
 .edit-bar {
   position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   background: rgba(255, 248, 220, .94); color: #1c1d1f; box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
@@ -1043,6 +1051,7 @@ button.world-chip { cursor: pointer; }
   background: color-mix(in srgb, #000 45%, transparent); animation: fadeIn 0.2s ease;
 }
 .idle-card { max-width: 360px; width: 100%; text-align: center; }
+.game-lock { margin: 32px auto 0; }
 .idle-face { font-size: 2.6rem; animation: idleLook 1.6s ease-in-out infinite; }
 @keyframes idleLook { 50% { transform: scale(1.12); } }
 @media (prefers-reduced-motion: reduce) { .idle-face { animation: none; } }
@@ -1068,3 +1077,71 @@ button.world-chip { cursor: pointer; }
 /* driver.js tur sırasında her şeye pointer-events: none verir; altyazı paneli tıklanabilir kalsın */
 .driver-active .tour-panel, .driver-active .tour-panel * { pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { .tour-text span { transition: none; } }
+
+/* ---------- Dünyam v2: ay seçici, kilitli bahçe, harita, envanter sekmeleri ---------- */
+button.chip { border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; font: inherit; font-size: 0.82rem; }
+button.chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.month-bar { display: flex; align-items: center; gap: 4px; }
+.month-chips { display: flex; gap: 5px; overflow-x: auto; flex: 1; scrollbar-width: none; padding: 2px; }
+.month-chips .chip { flex: none; }
+.month-chips .chip.locked { color: var(--muted); background: var(--bg); }
+.world-wrap.big { height: min(82vh, 760px); }
+.world-locked {
+  position: absolute; left: 50%; top: 56%; transform: translate(-50%, -50%); display: grid; gap: 4px; text-align: center;
+  width: min(86%, 320px); padding: 12px 14px; border-radius: 16px; background: rgba(255, 255, 255, .92); color: #1c1d1f;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .15); font-size: .85rem; pointer-events: none;
+}
+.inv-tabs { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+.inv-tabs button {
+  flex: none; border: 1px solid #e6e1d6; background: #fff; color: #1c1d1f; border-radius: 999px; padding: 4px 10px;
+  font: inherit; font-size: .75rem; font-weight: 700; cursor: pointer;
+}
+.inv-tabs button.on { background: #ffe58a; border-color: #e2b400; }
+.swatch.round { border-radius: 50%; width: 30px; height: 30px; }
+.move-banner {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px; margin: 6px 0 8px;
+  background: color-mix(in srgb, var(--gold, #e2b400) 16%, var(--card)); font-size: .88rem;
+}
+.map-row { display: flex; gap: 6px; margin: 8px 0; }
+.map-dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 1.1rem; background: var(--bg); border: 2px solid var(--line); }
+.map-dot.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.map-dot.off { filter: grayscale(1); opacity: .45; }
+.day-extra { margin-top: 10px; }
+.day-extra ul { margin: 4px 0 0; padding-left: 18px; }
+.shop-group { display: grid; gap: 6px; }
+.shop-sub { margin: 6px 0 0; font-size: .95rem; }
+
+/* ---------- Karakterim ve karakter düzenleyici ---------- */
+.look-row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.avatar-preview {
+  width: 120px; height: 150px; flex: none; border-radius: 18px;
+  background: radial-gradient(circle at 50% 75%, color-mix(in srgb, var(--accent) 14%, var(--bg)), var(--bg));
+}
+.avatar-preview.emoji { display: grid; place-items: center; font-size: 4rem; }
+.avatar-preview.big { width: 100%; height: clamp(220px, 42vh, 360px); border-radius: 0; }
+.avatar-editor {
+  position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+  max-width: 640px; margin: 0 auto;
+}
+.ae-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.ae-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.ae-tabs button {
+  flex: none; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 12px;
+  font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer;
+}
+.ae-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ae-body { flex: 1; overflow-y: auto; padding: 10px 12px; display: grid; gap: 12px; align-content: start; }
+.ae-sub { margin: 4px 0 -4px; font-size: .95rem; }
+.ae-row { display: grid; gap: 6px; }
+.ae-colors, .ae-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.ae-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.ae-part {
+  position: relative; display: grid; justify-items: center; gap: 2px; padding: 10px 4px 8px; border-radius: 14px; cursor: pointer;
+  border: 2px solid var(--line); background: var(--card); color: var(--text); font: inherit; font-size: .72rem; line-height: 1.2; text-align: center;
+}
+.ae-part > span:first-child { font-size: 1.7rem; }
+.ae-part.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.ae-part.locked > span:first-child { filter: grayscale(.6); opacity: .75; }
+.ae-price { position: absolute; top: 4px; right: 5px; font-size: .65rem; font-weight: 800; color: var(--muted); }
+.ae-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line); display: grid; gap: 6px; background: var(--card); }
+.ae-missing { display: grid; gap: 6px; }

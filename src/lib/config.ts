@@ -53,42 +53,90 @@ export interface EconomyConfig {
   world: WorldConfig;
 }
 
-/** Bir alandaki sabit karo: kapı (yürünür, eşya konmaz), ev, su, köprü, tepe, koru */
+/**
+ * Bir alandaki sabit karo: kapı (yürünür, eşya konmaz), bahçe kapısı (ağaç bahçelerine), ev, su, köprü, tepe,
+ * koru, kütüphanenin gömme rafları, pencere (duvarda: arka duvar y = -1, sol duvar x = -1), aylık bahçede ekim yeri.
+ * Kapı ve bahçe kapısının `edge`'i, dünyada komşu alana açıldığı kenardır (worldPlan.ts → links).
+ */
 export interface FixedTile {
-  kind: 'door' | 'house' | 'water' | 'bridge' | 'hill' | 'grove';
+  kind: 'door' | 'gate' | 'house' | 'water' | 'bridge' | 'hill' | 'grove' | 'shelf' | 'window' | 'plot';
   x: number;
   y: number;
   w?: number;
   h?: number;
-  /** Kapının götürdüğü alan */
-  to?: SpaceId;
-  /** Bu kadar kitap bitince açılır (kütüphane kapısı) */
-  books?: number;
-  /** Bahçede bu arazi açılınca görünür */
-  land?: string;
+  /** Kapının götürdüğü yer */
+  to?: 'room' | 'library' | 'garden' | 'forest';
+  /** Kapının açıldığı kenar: n kuzey (y−1), s güney (y+1), e doğu (x+1), w batı (x−1) */
+  edge?: 'n' | 's' | 'e' | 'w';
+  /** Ekim yerinin günü (aylık bahçe) */
+  day?: number;
 }
 
-export type SpaceId = 'room' | 'library' | 'garden';
+/** Ay bahçesi: m:YYYY-MM */
+export type MonthSpace = `m:${string}`;
+/** Evin alanları (haritaya göre) ve aylık ağaç bahçeleri */
+export type SpaceId = 'room' | 'library' | 'garden' | MonthSpace;
+export type HomeSpace = 'room' | 'library' | 'garden';
 
-export interface Land {
+export interface SpaceDef {
+  w: number;
+  h: number;
+  fixed: FixedTile[];
+}
+
+/**
+ * Arazinin büyüme aşaması: toplam (güvenilir) çalışma saatiyle kendiliğinden açılır; ev ve bahçe aynı yerde
+ * büyür (yalnızca doğuya ve güneye), yeni özellikler (dere, tepe, göl, deniz) yalnızca yeni açılan karolarda.
+ */
+export interface MapDef {
   id: string;
   name: string;
   icon: string;
   hours: number;
-  w: number;
-  h: number;
   desc: string;
+  theme: { scenery: 'meadow' | 'lake' | 'forest' | 'mountain' | 'beach'; ground: string; side: string; wall: string; roof: string; floors: number };
+  room: SpaceDef;
+  library: SpaceDef;
+  garden: SpaceDef;
+}
+
+/** Ağacın büyüklüğü: günün toplam dakikasına göre */
+export interface StageDef {
+  id: string;
+  name: string;
+  /** {s}: tür adı küçük harfle, {S}: büyük harfle */
+  label: string;
+  icon?: string;
+  min: number;
+  scale: number;
+}
+
+/** Ağaç türü: tarihten seçilir; months verilmişse o aylarda daha sık çıkar */
+export interface SpeciesDef {
+  id: string;
+  name: string;
+  icon: string;
+  model: string;
+  leaf: string;
+  wood?: string;
+  fruit?: string;
+  months?: number[];
 }
 
 export interface WorldConfig {
-  room: { w: number; h: number; fixed: FixedTile[] };
-  library: { w: number; h: number; books: number; fixed: FixedTile[] };
-  garden: { lands: Land[]; fixed: FixedTile[]; pathRow: number };
-  region: { min: number; max: number; tilesPerTree: number };
-  trees: { id: string; name: string; icon: string; min: number }[];
+  maps: MapDef[];
+  /** Kitaplık görünümünde (ShelfView) raf başına kitap */
+  library: { perShelf: number };
+  season: { from: string; to: string };
+  monthGarden: { w: number; h: number; x0: number; y0: number; step: number; gate: { x: number; y: number } };
+  stages: StageDef[];
+  glowMinutes: number;
+  species: SpeciesDef[];
+  dry: Omit<SpeciesDef, 'months' | 'fruit'>;
   creatures: { id: string; name: string; icon: string; trees: number; model?: string; fly?: boolean }[];
-  shelf: { perShelf: number };
 }
+
+export type ItemUse = 'sit' | 'lie' | 'swing' | 'light' | 'tv' | 'fire';
 
 /** items.json'daki ham eşya tanımı */
 export interface ItemDef {
@@ -114,13 +162,36 @@ export interface ItemDef {
   w?: number;
   h?: number;
   rotations?: number[];
-  placement?: 'indoor' | 'outdoor' | 'both';
+  placement?: 'indoor' | 'outdoor' | 'both' | 'wall';
   /** Malzeme adı → renk (ör. koltuğun kumaşı) */
   tint?: Record<string, string>;
   /** Bu malzeme ışık saçar (lamba) */
   glow?: string;
   /** Dokununca açılan pencere (kitaplık) */
   opens?: 'shelf';
+  /** Alt kategori (dükkân ve envanter) */
+  sub?: string;
+  /** Üstüne küçük eşya konabilir (masa, sehpa, tezgâh) */
+  surface?: boolean;
+  /** Yere ya da bir yüzeyin üstüne konabilir (laptop, masa lambası) */
+  small?: boolean;
+  /** Kodla çizilen resim (duvar süsü) */
+  art?: string;
+  /** Kodla çizilen eşya (kitaplık, salıncak, şömine) */
+  proc?: 'bookcase' | 'swing' | 'fireplace';
+  /** Ne işe yarar: otur, yat, sallan; ışık, TV, ateş aç-kapa */
+  use?: ItemUse;
+  /** Oturma/yatma yüksekliği (birim) */
+  seat?: number;
+  /** TV ekranı: modelin genişliğine, yüksekliğine ve orta yüksekliğine oran */
+  screen?: [number, number, number];
+  /** Zemin/duvar deseni */
+  pattern?: string;
+  /** Avatar parçası */
+  slot?: 'hair' | 'top' | 'bottom' | 'shoes' | 'hat' | 'glasses' | 'back';
+  style?: string;
+  /** Rengi değişmeyen parça */
+  fixed?: boolean;
   desc?: string;
   /** Zemin/duvar kaplamasının rengi */
   color?: string;

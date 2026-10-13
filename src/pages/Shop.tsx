@@ -3,7 +3,8 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import ItemCard, { priceText } from '../components/ItemCard';
 import Sheet from '../components/Sheet';
-import { CATEGORIES, companionSlots, ITEMS, placeable, RARITY, type Category, type Item } from '../lib/catalog';
+import { CATEGORIES, companionSlots, groupOf, groupTitle, ITEMS, placeable, RARITY, type Category, type Item } from '../lib/catalog';
+import { lookParts, SLOT_KEY, wear } from '../lib/avatar';
 import { buyCheck, owns, unlockHint, unlockValue } from '../lib/economy';
 import { useGame } from '../lib/GameContext';
 import type { Equipped } from '../lib/types';
@@ -12,15 +13,16 @@ import { hasWebGL } from '../lib/webgl';
 const ItemPreview = lazy(() => import('../components/forest3d/ItemPreview'));
 
 const WHAT: Record<Category, string> = {
-  mobilya: 'Odana yerleştirirsin: Dünyam → ✏️ Düzenle.',
-  zemin: 'Odanın zemini olur: Dünyam → ✏️ Düzenle.',
-  duvar: 'Odanın duvarlarını boyar: Dünyam → ✏️ Düzenle.',
-  bitki: 'Odana ya da bahçene koyabilirsin.',
+  mobilya: 'Odana yerleştirirsin: Dünyam → ✏️ Düzenle. Küçük eşyalar masa ve sehpaların üstüne de konur.',
   isik: 'Akşamları etrafını aydınlatır.',
-  dis: 'Bahçene yerleştirirsin: Dünyam → Bahçe → ✏️ Düzenle.',
-  karakter: 'Dünyanda bu karakterle yürürsün.',
-  aksesuar: 'Karakterinin başına takılır.',
-  evcil: 'Satın alınamaz: ormanın büyüdükçe kendiliğinden gelir. Gelince yanına alabilirsin.',
+  bitki: 'Odana ya da bahçene koyabilirsin.',
+  hali: 'Yere serilir; üstüne mobilya koyabilirsin.',
+  duvarsus: 'Odanın duvarına asarsın: Dünyam → ✏️ Düzenle, sonra duvara dokun.',
+  zemin: 'Odanın zemini olur: Dünyam → ✏️ Düzenle.',
+  duvar: 'Odanın duvarlarını kaplar: Dünyam → ✏️ Düzenle.',
+  dis: 'Bahçene ya da ağaç bahçelerine yerleştirirsin: Dünyam → ✏️ Düzenle.',
+  kiyafet: 'Karakterin giyer: Profil → Karakterim.',
+  evcil: 'Satın alınamaz: bahçelerinde ağaçlar çoğaldıkça kendiliğinden gelir. Gelince yanına alabilirsin.',
   diger: 'Hafta içi bir gün çalışamazsan serin bir kademe düşmez (en çok 7 gün öncesini kapatır).',
 };
 
@@ -34,7 +36,9 @@ export default function Shop({ goCollection }: { goCollection: () => void }) {
   const count = (id: string) => stats.owned.filter((o) => o.item_id === id).length;
   const have = (i: Item) => owns(i, stats.owned, stats.unlock);
   const cats = CATEGORIES.find((c) => c.id === tab)?.cats ?? [];
-  const list = ITEMS.filter((i) => cats.includes(i.category)).sort((a, b) => Number(have(b) && !b.repeat) - Number(have(a) && !a.repeat) || 0);
+  const list = ITEMS.filter((i) => cats.includes(i.category));
+  // Alt kategorilere göre (mobilya: oturma, masa…; kıyafet: saç, üst…)
+  const groups = [...list.reduce((m, i) => m.set(groupOf(i), [...(m.get(groupOf(i)) ?? []), i]), new Map<string, Item[]>())];
 
   return (
     <div className="stack">
@@ -56,14 +60,19 @@ export default function Shop({ goCollection }: { goCollection: () => void }) {
         ))}
       </div>
 
-      <div className="item-grid">
-        {list.map((i) => {
-          const mine = have(i);
-          const a = i.acquire;
-          const foot = mine && !i.repeat ? (isEquipped(stats.equipped, i) ? '✓ Kullanıyorsun' : '✓ Sende') : a.kind === 'unlock' ? unlockShort(i, stats.unlock) : priceText(i);
-          return <ItemCard key={i.id} item={i} have={mine} count={i.repeat ? count(i.id) : 0} footer={foot} onClick={() => setOpen(i)} />;
-        })}
-      </div>
+      {groups.map(([g, items]) => (
+        <section key={g} className="shop-group">
+          {groups.length > 1 && <h3 className="shop-sub">{groupTitle(g)}</h3>}
+          <div className="item-grid">
+            {items.map((i) => {
+              const mine = have(i);
+              const a = i.acquire;
+              const foot = mine && !i.repeat ? (isEquipped(stats.equipped, i) ? '✓ Kullanıyorsun' : '✓ Sende') : a.kind === 'unlock' ? unlockShort(i, stats.unlock) : priceText(i);
+              return <ItemCard key={i.id} item={i} have={mine} count={i.repeat ? count(i.id) : 0} footer={foot} onClick={() => setOpen(i)} />;
+            })}
+          </div>
+        </section>
+      ))}
 
       {open && (
         <ItemSheet
@@ -81,7 +90,7 @@ export default function Shop({ goCollection }: { goCollection: () => void }) {
   );
 }
 
-const isEquipped = (e: Equipped, i: Item) => e.character === i.id || e.accessory === i.id || e.pets.includes(i.id);
+const isEquipped = (e: Equipped, i: Item) => lookParts(e.look).includes(i.id) || e.pets.includes(i.id);
 
 function unlockShort(i: Item, p: Parameters<typeof unlockValue>[1]): string {
   const a = i.acquire;
@@ -126,9 +135,12 @@ export function ItemSheet({
   };
 
   let use: { label: string; next: Equipped } | null = null;
-  if (mine && item.category === 'karakter' && e.character !== item.id) use = { label: '👕 Bu karakterle gez', next: { ...e, character: item.id } };
-  if (mine && item.category === 'aksesuar')
-    use = e.accessory === item.id ? { label: 'Çıkar', next: { ...e, accessory: null } } : { label: '✨ Tak', next: { ...e, accessory: item.id } };
+  if (mine && item.category === 'kiyafet' && item.slot) {
+    const s = SLOT_KEY[item.slot];
+    const wearing = e.look[s.key] === item.id;
+    if (!wearing) use = { label: '👕 Giy', next: { ...e, look: wear(e.look, item) } };
+    else if (s.optional) use = { label: 'Çıkar', next: { ...e, look: { ...e.look, [s.key]: null } } };
+  }
   if (mine && item.category === 'evcil')
     use = e.pets.includes(item.id)
       ? { label: 'Adada bırak', next: { ...e, pets: e.pets.filter((p) => p !== item.id) } }
@@ -138,7 +150,7 @@ export function ItemSheet({
     <Sheet title={item.name} onClose={onClose}>
       {can3D ? (
         <Suspense fallback={<div className="item-preview emoji">{item.icon}</div>}>
-          <ItemPreview item={item} />
+          <ItemPreview item={item} look={item.category === 'kiyafet' ? wear(e.look, item) : undefined} />
         </Suspense>
       ) : (
         <div className="item-preview emoji">{item.icon}</div>

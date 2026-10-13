@@ -1,59 +1,64 @@
-// "Yakından gez": çocuk kendi karakteriyle bahçesinde ve ormanında üçüncü şahıs kamerayla yürür. Sahne dünya
-// görünümüyle aynıdır (world3d/Outdoor, aynı karo ızgarası); burada yalnızca kamera ve kontroller farklı.
-// Ağacın yanına gidince o seansı açar, her gün bahçeye saklanan yıldızları toplar. Seviye atladıkça yeni
-// yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş yerde sürükleyerek etrafa bakılır;
-// klavyede WASD/oklar, Shift koş, boşluk zıpla (basılı tut: süzül), E bak, Esc çık.
-import { useAnimations, useGLTF } from '@react-three/drei';
+// "Yakından gez": çocuk kendi avatarıyla bütün dünyada (ev, bahçe, orman yolu, ay bahçeleri) üçüncü şahıs
+// kamerayla yürür. Sahne dünya görünümüyle aynıdır (world3d/WorldScene, aynı dünya planı); yalnızca kamera ve
+// kontroller farklı. Alanlar arasında yalnızca kapılardan geçilir; eve girince çatı kalkar. Bir ağaca yaklaşınca o günün özeti çıkar, "Bak" ile gün kartı açılır; her gün saklanan yıldızlar
+// toplanır. Seviye atladıkça yeni yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş
+// yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar, Shift koş, boşluk zıpla (basılı tut: süzül), E bak, Esc çık.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
-import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type Group, type PointLight } from 'three';
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { itemById, type Item } from '../../lib/catalog';
+import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type DirectionalLight, type Group, type PointLight } from 'three';
+import type { AvatarLook } from '../../lib/avatar';
+import { CFG, type MapDef } from '../../lib/config';
 import { dayPhase } from '../../lib/dayPhase';
-import { formatShort } from '../../lib/date';
+import { formatMinutes, formatShort } from '../../lib/date';
 import { dailyStars, moveDir, nearest, resolveMove, STAR_REACH } from '../../lib/explore';
 import type { Perks } from '../../lib/level';
 import { setSoundOn, sfx, soundOn } from '../../lib/sfx';
-import type { Equipped } from '../../lib/types';
-import { fixedTiles, outdoorBlocked, type OutdoorMap, type SpaceLayout, type WorldCtx, type WorldTree } from '../../lib/world';
-import type { CFG } from '../../lib/config';
-import { ItemModel } from '../world3d/items';
+import type { Book } from '../../lib/types';
+import { isIndoor, isMonthSpace, key, plotOf, type DayTree, type SpaceId, type SpaceLayout, type Step, type Tile } from '../../lib/world';
+import { canStep, regionAt, worldBlocked, type RegionId, type WorldPlan } from '../../lib/worldPlan';
+import AvatarModel, { type AvatarAnim } from '../avatar/AvatarModel';
 import { LIGHT } from '../world3d/light';
-import Outdoor from '../world3d/Outdoor';
-import { Accessory } from './Accessory';
-import { modelUrl } from './models';
+import type { TvData } from '../world3d/art';
+import WorldScene from '../world3d/WorldScene';
 
-/** İlk gezintide karakter seçimi bir kez gösterilir */
-const SEEN_KEY = 'ct-explore-v3';
-const AVATAR_SCALE = 1.1;
 const WALK = 2.2;
 const RUN = 4;
 const GRAVITY = 14;
 const JUMP_V = 5;
 /** Bir ağacın "yanında" sayılma uzaklığı */
-const REACH = 1.2;
+const REACH = 1.3;
+
+/** Bu kadar karo uzaktaki alanlar sade çizilir */
+const NEAR = 22;
+const NO_CHANNELS: Record<string, number> = {};
 
 export interface ExploreProps {
-  map: OutdoorMap;
-  garden: SpaceLayout;
-  ctx: WorldCtx;
+  plan: WorldPlan;
+  map: MapDef;
+  layouts: Partial<Record<SpaceId, SpaceLayout>>;
+  /** Bütün ağaçlar */
+  forest: DayTree[];
   creatures: typeof CFG.world.creatures;
   today: string;
+  /** Karakterin dünyadaki karosu (dünya görünümünde kaldığı yer) */
+  start: Tile;
+  books: Book[];
+  reading: Book[];
+  /** Işık/TV/ateş (dünya görünümüyle aynı) */
+  power: Record<string, boolean>;
+  tv: TvData;
   /** Üstte bir pencere açıkken karakter durur, tuşlar dinlenmez */
   paused: boolean;
-  onTree: (t: WorldTree) => void;
+  onTree: (t: DayTree) => void;
   onClose: () => void;
-  /** Görünüş ve sahip olunan karakterler (seçim için) */
-  equipped: Equipped;
-  characters: Item[];
-  onEquip: (e: Equipped) => Promise<void>;
+  look: AvatarLook;
   perks: Perks;
   /** Bugün toplanan yıldızlar (sırası) */
   starsGot: number[];
   onStar: (i: number) => Promise<void>;
 }
 
-type Near = { key: string; x: number; z: number; tree: WorldTree };
+type Near = { key: string; x: number; z: number; tree: DayTree };
 
 /** Kontrol durumu: her karede okunur, React state'i değil (yeniden çizim olmasın) */
 interface Ctl {
@@ -69,7 +74,6 @@ interface Ctl {
   dist: number;
   lastLook: number;
   paused: boolean;
-  picking: boolean;
 }
 
 interface PlayerState {
@@ -83,70 +87,78 @@ interface PlayerState {
   jumps: number;
 }
 
-const firstTime = () => {
-  try {
-    return !localStorage.getItem(SEEN_KEY);
-  } catch {
-    return false;
-  }
-};
-
 export default function Explore(props: ExploreProps) {
-  const { map, garden, ctx, today, paused, onTree, onClose, equipped, characters, perks } = props;
-  const blocked = useMemo(() => outdoorBlocked(map, garden, ctx), [map, garden, ctx]);
-  const fixed = useMemo(() => fixedTiles('garden', ctx), [ctx]);
-  const size = { w: map.width, h: map.height };
-  const stars = useMemo(() => dailyStars(today, map, blocked), [today, map, blocked]);
-  const trees = useMemo<Near[]>(
-    () =>
-      map.regions.flatMap((r) =>
-        r.trees.flatMap((t) => {
-          const s = r.spots.get(t.id);
-          return s ? [{ key: t.id, x: r.ox + s.x + 0.5, z: r.oy + s.y + 0.5, tree: t }] : [];
-        }),
-      ),
-    [map],
+  const { plan, map, layouts, forest, today, paused, onTree, onClose, perks } = props;
+  const size = { w: plan.w, h: plan.h };
+  const blocked = useMemo(() => worldBlocked(plan, layouts), [plan, layouts]);
+  const step = useMemo<Step>(() => (a, b) => canStep(plan, a, b), [plan]);
+  // Yıldızlar dışarıda saklanır (ev içinde değil)
+  const stars = useMemo(() => {
+    const out = new Set(blocked);
+    for (const r of plan.regions) if (isIndoor(r.id as SpaceId)) for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.add(key(x, y));
+    return dailyStars(today, 'world', size, out);
+  }, [today, plan, blocked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const trees = useMemo<Near[]>(() => {
+    const out: Near[] = [];
+    for (const r of plan.regions) {
+      if (!isMonthSpace(r.id) || r.locked) continue;
+      const month = r.id.slice(2);
+      for (const t of forest) {
+        if (t.month !== month) continue;
+        const p = plotOf(month, Number(t.date.slice(8, 10)));
+        out.push({ key: t.id, x: r.x + p.x + 0.5, z: r.y + p.y + 0.5, tree: t });
+      }
+    }
+    return out;
+  }, [plan, forest]);
+  const start = useMemo(() => ({ x: props.start.x + 0.5, z: props.start.y + 0.5 }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [here, setHere] = useState<RegionId | null>(() => regionAt(plan, props.start)?.id ?? null);
+  const [center, setCenter] = useState<Tile>(props.start);
+  const nearRegions = useMemo(() => {
+    const out = new Set<RegionId>();
+    for (const r of plan.regions) {
+      const dx = Math.max(r.x - center.x, 0, center.x - (r.x + r.w));
+      const dy = Math.max(r.y - center.y, 0, center.y - (r.y + r.h));
+      if (Math.hypot(dx, dy) < NEAR) out.add(r.id);
+    }
+    return out;
+  }, [plan, center]);
+  const onTile = useCallback(
+    (t: Tile) => {
+      setHere(regionAt(plan, t)?.id ?? null);
+      setCenter((c) => (Math.abs(c.x - t.x) + Math.abs(c.y - t.y) > 3 ? t : c));
+    },
+    [plan],
   );
-  const accessory = equipped.accessory ? (itemById(equipped.accessory) ?? null) : null;
 
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
   const [sound, setSound] = useState(soundOn);
-  const [avatar, setAvatar] = useState(() => (characters.some((c) => c.id === equipped.character) ? equipped.character : characters[0]?.id));
-  const [picking, setPicking] = useState(firstTime);
   const [near, setNear] = useState<Near | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>('Joystick ile yürü · boş yerde sürükleyip etrafına bak');
   const [party, setParty] = useState(false);
   const [pendingStars, setPendingStars] = useState<number[]>([]);
 
-  const ctl = useRef<Ctl>({ jx: 0, jy: 0, joy: false, keys: new Set(), jump: false, jumpHeld: false, yaw: 0, pitch: 0.5, dist: 5.4, lastLook: 0, paused, picking });
-  // Evin kapısının önünden başla; kamera önden (güneyden) eve doğru bakar
-  const player = useRef<PlayerState>({ x: 2.5, z: 5.5, y: 0, vy: 0, face: Math.PI, jumps: 0 });
+  const ctl = useRef<Ctl>({ jx: 0, jy: 0, joy: false, keys: new Set(), jump: false, jumpHeld: false, yaw: 0, pitch: 0.5, dist: 5.4, lastLook: 0, paused });
+  // Kapının önünden başla; kamera önden (güneyden) bakar
+  const player = useRef<PlayerState>({ x: start.x, z: start.z, y: 0, vy: 0, face: Math.PI, jumps: 0 });
   const nearRef = useRef<Near | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const got = useMemo(() => new Set([...props.starsGot, ...pendingStars]), [props.starsGot, pendingStars]);
 
   useEffect(() => {
-    // Bir pencere açıkken karakter durur
-    const stop = paused || picking;
-    ctl.current.paused = stop;
-    ctl.current.picking = picking;
-    if (stop) {
+    ctl.current.paused = paused;
+    if (paused) {
       ctl.current.keys.clear();
       ctl.current.jx = ctl.current.jy = 0;
     }
-  }, [paused, picking]);
-
-  const flash = useCallback((m: string, ms = 2600) => {
-    setMsg(m);
-    clearTimeout(msgTimer.current);
-    msgTimer.current = setTimeout(() => setMsg(null), ms);
-  }, []);
+  }, [paused]);
 
   useEffect(() => {
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const id = setInterval(() => setPhase(dayPhase(new Date().getHours())), 60_000);
+    msgTimer.current = setTimeout(() => setMsg(null), 3500);
     return () => {
       document.body.style.overflow = overflow;
       document.body.style.cursor = '';
@@ -165,6 +177,7 @@ export default function Explore(props: ExploreProps) {
   const onNear = useCallback((n: Near | null) => {
     nearRef.current = n;
     setNear(n);
+    if (n) sfx.pop();
   }, []);
 
   const collect = useCallback(
@@ -189,11 +202,9 @@ export default function Explore(props: ExploreProps) {
       const c = ctl.current;
       if (paused) return;
       if (e.code === 'Escape') {
-        if (c.picking) setPicking(false);
-        else onClose();
+        onClose();
         return;
       }
-      if (c.paused) return;
       if (e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat) c.jump = true;
@@ -231,7 +242,6 @@ export default function Explore(props: ExploreProps) {
     const l = look.current;
     if (!l || l.id !== e.pointerId) return;
     const c = ctl.current;
-    if (c.picking) return;
     c.yaw -= (e.clientX - l.x) * 0.008;
     c.pitch = Math.min(1.1, Math.max(0.12, c.pitch + (e.clientY - l.y) * 0.005));
     c.lastLook = performance.now();
@@ -242,31 +252,15 @@ export default function Explore(props: ExploreProps) {
     if (look.current?.id === e.pointerId) look.current = null;
   };
 
-  const choose = (step: number) => {
-    const i = Math.max(0, characters.findIndex((c) => c.id === avatar));
-    setAvatar(characters[(i + step + characters.length) % characters.length].id);
-    sfx.pop();
-  };
-  const startWalking = () => {
-    try {
-      localStorage.setItem(SEEN_KEY, '1');
-    } catch {
-      /* yok say */
-    }
-    setPicking(false);
-    if (avatar !== equipped.character) props.onEquip({ ...equipped, character: avatar }).catch(() => {});
-    flash('Joystick ile yürü · boş yerde sürükleyip etrafına bak', 3500);
-  };
-
   const L = LIGHT[phase];
-  const avatarItem = itemById(avatar) ?? characters[0];
+  const inside = here === 'room' || here === 'library';
 
   return (
     <div
       className={`explore phase-${phase}`}
       style={{ background: L.sky }}
       role="dialog"
-      aria-label="Bahçende ve ormanında gezinti"
+      aria-label="Dünyanda gezinti"
       onPointerDown={lookDown}
       onPointerMove={lookMove}
       onPointerUp={lookUp}
@@ -275,20 +269,33 @@ export default function Explore(props: ExploreProps) {
         ctl.current.dist = Math.min(8, Math.max(2.8, ctl.current.dist + e.deltaY * 0.004));
       }}
     >
-      <Canvas shadows dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }} camera={{ fov: 55, near: 0.1, far: 160, position: [2.5, 4, 9] }}>
+      <Canvas shadows dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }} camera={{ fov: 55, near: 0.1, far: 160, position: [start.x, 4, start.z + 6] }}>
         <hemisphereLight args={[L.sky2, L.ground, L.hemiI]} />
-        <directionalLight position={[12, 20, 8]} intensity={L.sunI} color={L.sun} castShadow shadow-mapSize={[1024, 1024]} shadow-camera-left={-40} shadow-camera-right={40} shadow-camera-top={40} shadow-camera-bottom={-40} />
+        <Sun player={player} color={L.sun} intensity={L.sunI} />
         <fog attach="fog" args={[L.fog, 18, 60]} />
         <Suspense fallback={null}>
-          <Outdoor map={map} fixed={fixed} growId={null} onGrown={() => {}} onTree={(t) => onTree(t)} onHouse={() => {}} creatures={props.creatures} labels={false} />
-          {garden.items.map((it, i) => {
-            const item = itemById(it.item);
-            return item?.model ? <ItemModel key={i} item={item} x={it.x} y={it.y} rot={it.rot} /> : null;
-          })}
+          <WorldScene
+            plan={plan}
+            map={map}
+            layouts={layouts}
+            forest={forest}
+            creatures={props.creatures}
+            open={inside}
+            night={phase === 'gece' || phase === 'aksam'}
+            near={nearRegions}
+            labels={false}
+            growId={null}
+            onGrown={() => {}}
+            books={props.books}
+            reading={props.reading}
+            phase={phase}
+            power={props.power}
+            channels={NO_CHANNELS}
+            tv={props.tv}
+            center={center}
+          />
           {stars.map((s, i) => !got.has(i) && <Star key={i} x={s.x} z={s.z} i={i} />)}
-        </Suspense>
-        <Suspense fallback={null}>
-          {avatarItem && <Player key={avatarItem.id} model={avatarItem.model!} accessory={accessory} player={player} ctl={ctl} blocked={blocked} size={size} perks={perks} />}
+          <Player look={props.look} player={player} ctl={ctl} blocked={blocked} step={step} size={size} perks={perks} onTile={onTile} />
         </Suspense>
         {perks.trail && <Trail player={player} />}
         <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
@@ -306,11 +313,6 @@ export default function Explore(props: ExploreProps) {
           </span>
         )}
         <span className="grow" />
-        {!picking && characters.length > 1 && (
-          <button className="explore-chip" aria-label="Karakterini değiştir" onClick={() => setPicking(true)}>
-            👕
-          </button>
-        )}
         <button
           className="explore-chip"
           aria-label={sound ? 'Sesi kapat' : 'Sesi aç'}
@@ -323,10 +325,10 @@ export default function Explore(props: ExploreProps) {
         </button>
       </div>
 
-      {msg && !picking && <div className="explore-msg">{msg}</div>}
-      {near && !picking && !msg && (
+      {msg && !near && <div className="explore-msg">{msg}</div>}
+      {near && (
         <div className="explore-msg near" role="status">
-          {near.tree.icon} {near.tree.name} · {formatShort(near.tree.date)} · {near.tree.minutes} dk
+          {near.tree.dry ? near.tree.icon : near.tree.species.icon} <strong>{formatShort(near.tree.date)}</strong> · {formatMinutes(near.tree.minutes)} · {near.tree.name}
         </div>
       )}
       {party && (
@@ -337,48 +339,26 @@ export default function Explore(props: ExploreProps) {
         </div>
       )}
 
-      {picking ? (
-        <div className="avatar-pick">
-          <strong>Karakterini seç</strong>
-          <div className="avatar-row">
-            <button className="explore-round" aria-label="Önceki karakter" onClick={() => choose(-1)}>
-              ‹
-            </button>
-            <span className="muted">
-              {avatarItem?.name} · {characters.findIndex((c) => c.id === avatar) + 1}/{characters.length}
-            </span>
-            <button className="explore-round" aria-label="Sonraki karakter" onClick={() => choose(1)}>
-              ›
-            </button>
-          </div>
-          <button className="btn primary" onClick={startWalking}>
-            Hadi gezelim!
-          </button>
-        </div>
-      ) : (
-        <>
-          <Joystick ctl={ctl} />
-          <button
-            className="explore-round explore-jump"
-            aria-label="Zıpla"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              ctl.current.jump = true;
-              ctl.current.jumpHeld = true;
-            }}
-            onPointerUp={() => (ctl.current.jumpHeld = false)}
-            onPointerCancel={() => (ctl.current.jumpHeld = false)}
-            onPointerLeave={() => (ctl.current.jumpHeld = false)}
-          >
-            ⤴
-          </button>
-          {near && (
-            <button className="explore-act" onClick={act}>
-              👀 Bak
-              <span className="explore-key">E</span>
-            </button>
-          )}
-        </>
+      <Joystick ctl={ctl} />
+      <button
+        className="explore-round explore-jump"
+        aria-label="Zıpla"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          ctl.current.jump = true;
+          ctl.current.jumpHeld = true;
+        }}
+        onPointerUp={() => (ctl.current.jumpHeld = false)}
+        onPointerCancel={() => (ctl.current.jumpHeld = false)}
+        onPointerLeave={() => (ctl.current.jumpHeld = false)}
+      >
+        ⤴
+      </button>
+      {near && (
+        <button className="explore-act" onClick={act}>
+          👀 O güne bak
+          <span className="explore-key">E</span>
+        </button>
       )}
     </div>
   );
@@ -416,45 +396,30 @@ function Brain({
   return null;
 }
 
-/** Seçilen karakter: kontrollere göre yürür, koşar, zıplar; engellere çarpar, kıyıdan düşmez. */
+/** Avatar: kontrollere göre yürür, koşar, zıplar, süzülür; engellere çarpar, kıyıdan düşmez. */
 function Player({
-  model,
-  accessory,
+  look,
   player,
   ctl,
   blocked,
+  step,
   size,
   perks,
+  onTile,
 }: {
-  model: string;
-  accessory: Item | null;
+  look: AvatarLook;
   player: MutableRefObject<PlayerState>;
   ctl: MutableRefObject<Ctl>;
   blocked: Set<string>;
+  step: Step;
   size: { w: number; h: number };
   perks: Perks;
+  onTile: (t: Tile) => void;
 }) {
-  const { scene, animations } = useGLTF(modelUrl(model));
-  const obj = useMemo(() => {
-    const o = cloneSkinned(scene);
-    o.traverse((c) => {
-      c.castShadow = true;
-    });
-    return o;
-  }, [scene]);
   const group = useRef<Group>(null);
-  const { actions } = useAnimations(animations, group);
-  const playing = useRef<string | null>(null);
-  const emoteUntil = useRef(performance.now() + 1300);
-
-  const play = (name: string) => {
-    if (playing.current === name) return;
-    const next = actions[name] ?? actions.idle;
-    if (!next) return;
-    if (playing.current) actions[playing.current]?.fadeOut(0.15);
-    next.reset().fadeIn(0.15).play();
-    playing.current = name;
-  };
+  const tile = useRef('');
+  const anim = useRef<AvatarAnim>({ state: 'wave' });
+  const waveUntil = useRef(performance.now() + 1300);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
@@ -465,7 +430,7 @@ function Player({
     let ix = 0;
     let iy = 0;
     let run = false;
-    if (!c.paused && !c.picking) {
+    if (!c.paused) {
       const k = c.keys;
       ix = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
       iy = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
@@ -480,7 +445,7 @@ function Player({
     const mag = Math.hypot(dx, dz);
     if (mag > 0.05) {
       const speed = (run ? RUN * perks.runBoost : WALK) * Math.max(0.35, mag);
-      const [x, z] = resolveMove([p.x, p.z], [p.x + dx * speed * dt, p.z + dz * speed * dt], blocked, size.w, size.h);
+      const [x, z] = resolveMove([p.x, p.z], [p.x + dx * speed * dt, p.z + dz * speed * dt], blocked, size.w, size.h, step);
       p.x = x;
       p.z = z;
       let diff = Math.atan2(dx, dz) - p.face;
@@ -497,35 +462,40 @@ function Player({
     if (grounded) p.jumps = perks.doubleJump ? 1 : 0;
     if (c.jump) {
       c.jump = false;
-      if (!c.paused && !c.picking && (grounded || p.jumps > 0)) {
+      if (!c.paused && (grounded || p.jumps > 0)) {
         if (!grounded) p.jumps--;
         p.vy = grounded ? JUMP_V : JUMP_V * 0.85;
         sfx.jump();
       }
     }
+    let gliding = false;
     if (p.y > 0 || p.vy > 0) {
       p.vy -= GRAVITY * dt;
       // Süzülme: zıplama basılıyken yavaş iner
-      if (perks.glide && c.jumpHeld && p.vy < -1.1) p.vy = -1.1;
+      if (perks.glide && c.jumpHeld && p.vy < -1.1) {
+        p.vy = -1.1;
+        gliding = true;
+      }
       p.y = Math.max(0, p.y + p.vy * dt);
       if (p.y === 0) p.vy = 0;
     }
-    if (c.picking || performance.now() < emoteUntil.current) play(c.picking && performance.now() > emoteUntil.current ? 'idle' : 'emote-yes');
-    else if (p.y > 0.05) play(p.vy > 0 ? 'jump' : 'fall');
-    else if (mag > 0.05) play(run ? 'sprint' : 'walk');
-    else play('idle');
-    g.position.set(p.x, p.y + 0.05, p.z);
+    anim.current.state =
+      performance.now() < waveUntil.current ? 'wave' : p.y > 0.05 ? (gliding ? 'glide' : p.vy > 0 ? 'jump' : 'fall') : mag > 0.05 ? (run ? 'run' : 'walk') : 'idle';
+    g.position.set(p.x, p.y + 0.02, p.z);
     g.rotation.y = p.face;
+    const t = { x: Math.floor(p.x), y: Math.floor(p.z) };
+    if (tile.current !== `${t.x},${t.y}`) {
+      tile.current = `${t.x},${t.y}`;
+      onTile(t);
+    }
   });
 
   return (
-    <group ref={group} scale={AVATAR_SCALE}>
-      <primitive object={obj} />
-      {accessory && <Accessory item={accessory} body={obj} />}
+    <group ref={group}>
+      <AvatarModel look={look} anim={anim} live />
     </group>
   );
 }
-
 
 /** Orman Bilgesi: yürürken arkada altın parıltılar */
 function Trail({ player }: { player: MutableRefObject<PlayerState> }) {
@@ -561,6 +531,32 @@ function Trail({ player }: { player: MutableRefObject<PlayerState> }) {
   );
 }
 
+/** Güneş gölgesi karakteri izler (dünya geniş) */
+function Sun({ player, color, intensity }: { player: MutableRefObject<PlayerState>; color: string; intensity: number }) {
+  const ref = useRef<DirectionalLight>(null);
+  useFrame(() => {
+    const l = ref.current;
+    if (!l) return;
+    const p = player.current;
+    l.position.set(p.x + 12, 20, p.z + 8);
+    l.target.position.set(p.x, 0, p.z);
+    l.target.updateMatrixWorld();
+  });
+  return (
+    <directionalLight
+      ref={ref}
+      intensity={intensity}
+      color={color}
+      castShadow
+      shadow-mapSize={[1024, 1024]}
+      shadow-camera-left={-24}
+      shadow-camera-right={24}
+      shadow-camera-top={24}
+      shadow-camera-bottom={-24}
+    />
+  );
+}
+
 /** Karakterin önünü aydınlatan yumuşak ışık; akşam ve gece fener gibi daha güçlü */
 function Lantern({ player, night }: { player: MutableRefObject<PlayerState>; night: boolean }) {
   const ref = useRef<PointLight>(null);
@@ -573,7 +569,7 @@ function Lantern({ player, night }: { player: MutableRefObject<PlayerState>; nig
   return <pointLight ref={ref} color={night ? '#ffd9a0' : '#ffffff'} intensity={night ? 5 : 1.6} distance={night ? 6 : 4} decay={1.4} />;
 }
 
-/** Kamera karakteri arkadan ve yukarıdan yumuşakça izler; karakter seçilirken önden gösterir. */
+/** Kamera karakteri arkadan ve yukarıdan yumuşakça izler. */
 function FollowCam({ player, ctl }: { player: MutableRefObject<PlayerState>; ctl: MutableRefObject<Ctl> }) {
   const { camera } = useThree();
   const want = useMemo(() => new Vector3(), []);
@@ -582,11 +578,11 @@ function FollowCam({ player, ctl }: { player: MutableRefObject<PlayerState>; ctl
   useFrame((_, dt) => {
     const c = ctl.current;
     const p = player.current;
-    const [yaw, pitch, dist] = c.picking ? [p.face, 0.25, 3.3] : [c.yaw, c.pitch, c.dist];
+    const [yaw, pitch, dist] = [c.yaw, c.pitch, c.dist];
     want.set(p.x + Math.sin(yaw) * Math.cos(pitch) * dist, p.y + 0.6 + Math.sin(pitch) * dist, p.z + Math.cos(yaw) * Math.cos(pitch) * dist);
     const k = first.current ? 1 : 1 - Math.exp(-Math.min(dt, 0.1) * 7);
     camera.position.lerp(want, k);
-    target.set(p.x, p.y + (c.picking ? 0.45 : 0.7), p.z);
+    target.set(p.x, p.y + 0.7, p.z);
     camera.lookAt(target);
     first.current = false;
   });

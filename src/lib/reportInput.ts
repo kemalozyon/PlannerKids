@@ -16,6 +16,7 @@ export async function gatherReportInput(api: Api, date: string, childName: strin
   ]);
   const course = new Map(courses.map((c) => [c.id, c]));
   const book = new Map(books.map((b) => [b.id, b]));
+  const today = logs.filter((l) => l.date === date).reduce((s, l) => s + l.duration_minutes, 0);
   return {
     date,
     childName,
@@ -30,6 +31,7 @@ export async function gatherReportInput(api: Api, date: string, childName: strin
     tasks: tasks.map((t) => ({ title: t.title, done: t.done })),
     reading: rlogs.filter((r) => r.date === date).map((r) => ({ book: book.get(r.book_id)?.title ?? 'Kitap', pages: r.pages, minutes: r.minutes })),
     finishedBooks: books.filter((b) => b.finished_on === date).map((b) => ({ title: b.title, rating: b.rating, review: b.review })),
-    trees: logs.filter((l) => l.date === date && l.source !== 'manual').map((l) => ({ minutes: l.duration_minutes })),
+    // Günün ağacı: büyüklüğü günün toplamından
+    trees: today > 0 ? [{ minutes: today }] : [],
   };
 }

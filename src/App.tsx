@@ -118,7 +118,6 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
   /** Odadaki kitaplığı aç (kitap bitirince "Kitaplığımda gör") */
   const goShelf = () => {
     try {
-      localStorage.setItem('ct-world-view-v1', 'room');
       sessionStorage.setItem('ct-open-shelf', '1');
     } catch {
       /* yok say */
@@ -185,7 +184,9 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               demo={!!demo}
             />
           ) : tab === 'forest' ? (
-            <World courses={courses} goShop={() => go('shop')} />
+            <GameLock goToday={() => go('today')}>
+              <World courses={courses} goShop={() => go('shop')} />
+            </GameLock>
           ) : tab === 'library' ? (
             <Library onShelf={goShelf} />
           ) : tab === 'history' ? (
@@ -197,9 +198,13 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
           ) : tab === 'rewards' ? (
             <Rewards />
           ) : tab === 'shop' ? (
-            <Shop goCollection={() => go('collection')} />
+            <GameLock goToday={() => go('today')}>
+              <Shop goCollection={() => go('collection')} />
+            </GameLock>
           ) : tab === 'collection' ? (
-            <Collection goWorld={() => go('forest')} />
+            <GameLock goToday={() => go('today')}>
+              <Collection goWorld={() => go('forest')} />
+            </GameLock>
           ) : tab === 'parent' ? (
             <ParentPanel courses={courses} goPlan={() => go('plan')} />
           ) : (
@@ -226,6 +231,37 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
       </SessionProvider>
       </GameProvider>
     </ApiContext.Provider>
+  );
+}
+
+/** Çalışma sürerken dünya, dükkân ve koleksiyon kapalı: önce bitir ya da ara ver (süre oyuna akmasın) */
+function GameLock({ goToday, children }: { goToday: () => void; children: ReactNode }) {
+  const ses = useSession();
+  const [busy, setBusy] = useState(false);
+  if (!ses.running) return <>{children}</>;
+  return (
+    <section className="card idle-card game-lock" role="status">
+      <div className="idle-face" aria-hidden>
+        ⏱
+      </div>
+      <h2>Çalışırken dünyan kapalı</h2>
+      <p className="muted">Sayacın çalışıyor ({formatClock(ses.elapsedMs)}). Önce çalışmanı bitir ya da kısa bir ara ver; arada sayaç durur.</p>
+      <div className="stack">
+        <button className="btn primary big full" onClick={goToday}>
+          Sayaca dön
+        </button>
+        <button
+          className="btn full"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            ses.pause('game').catch(() => {}).finally(() => setBusy(false));
+          }}
+        >
+          ☕ Ara ver ve gir
+        </button>
+      </div>
+    </section>
   );
 }
 

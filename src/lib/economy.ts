@@ -224,7 +224,7 @@ export interface UnlockProgress {
   level: number;
   /** Toplam (güvenilir) çalışma saati */
   hours: number;
-  /** Dikilen ağaç sayısı (kuru ağaçlar hariç) */
+  /** Ağaç sayısı: çalışılan gün (kuru ağaçlar hariç) */
   trees: number;
 }
 
@@ -259,7 +259,7 @@ export function unlockHint(item: Item): string {
   if (a.by === 'plans') return `📋 ${a.target} günün planını tamamla`;
   if (a.by === 'gold') return a.target === 1 ? '🥇 Bir derste altına ulaş' : `🥇 ${a.target} derste altına ulaş`;
   if (a.by === 'hours') return `⏱️ Toplam ${a.target} saat çalış`;
-  if (a.by === 'trees') return `🌳 Ormanında ${a.target} ağaç olunca kendiliğinden gelir`;
+  if (a.by === 'trees') return item.category === 'evcil' ? `🌳 Bahçelerinde ${a.target} ağaç olunca kendiliğinden gelir` : `🌳 Bahçelerinde ${a.target} ağaç olsun`;
   return `⭐ ${['Çırak', 'Kâşif', 'Orman Bekçisi', 'Bahçıvan', 'Orman Ustası', 'Orman Bilgesi', 'Efsane'][a.target]} seviyesine ulaş`;
 }
 

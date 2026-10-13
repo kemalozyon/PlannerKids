@@ -1,8 +1,8 @@
-// "Yakından gez" (üçüncü şahıs gezinti) için saf mantık. Dış mekân karo ızgarasıdır (world.ts): karakter
-// yürünemeyen karolara (ağaç, ev, su, tepe, mobilya) giremez, kenarlarından kayarak geçer.
+// "Yakından gez" (üçüncü şahıs gezinti) için saf mantık. Bahçe karo ızgarasıdır (world.ts): karakter
+// yürünemeyen karolara (ağaç, ev, su, tepe, eşya) giremez, kenarlarından kayarak geçer.
 import { STARS_PER_DAY } from './economy';
 import { rng } from './rng';
-import { key, type OutdoorMap } from './world';
+import { key, type Step } from './world';
 
 /** Karakterin yarıçapı (karo = 1) */
 export const PLAYER_R = 0.25;
@@ -22,11 +22,34 @@ export function standable(x: number, z: number, blocked: Set<string>, w: number,
   return true;
 }
 
-/** Hareket: önce tamamı, olmazsa yalnızca x ya da yalnızca z (duvara sürtünerek kayma) */
-export function resolveMove(from: [number, number], to: [number, number], blocked: Set<string>, w: number, h: number): [number, number] {
-  if (standable(to[0], to[1], blocked, w, h)) return to;
-  if (standable(to[0], from[1], blocked, w, h)) return [to[0], from[1]];
-  if (standable(from[0], to[1], blocked, w, h)) return [from[0], to[1]];
+/** Karakterin kutusunun köşeleri bir karodan ötekine geçerken kenar (duvar, çit) engelliyor mu */
+function crosses(from: [number, number], to: [number, number], step?: Step): boolean {
+  if (!step) return true;
+  for (const [dx, dz] of [
+    [-PLAYER_R, -PLAYER_R],
+    [PLAYER_R, -PLAYER_R],
+    [-PLAYER_R, PLAYER_R],
+    [PLAYER_R, PLAYER_R],
+  ]) {
+    const a = { x: Math.floor(from[0] + dx), y: Math.floor(from[1] + dz) };
+    const b = { x: Math.floor(to[0] + dx), y: Math.floor(to[1] + dz) };
+    if (a.x === b.x && a.y === b.y) continue;
+    // Çapraz geçişte iki yoldan biri açık olmalı
+    const ok = a.x !== b.x && a.y !== b.y ? (step(a, { x: b.x, y: a.y }) && step({ x: b.x, y: a.y }, b)) || (step(a, { x: a.x, y: b.y }) && step({ x: a.x, y: b.y }, b)) : step(a, b);
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Hareket: önce tamamı, olmazsa yalnızca x ya da yalnızca z (duvara sürtünerek kayma).
+ * `step` verilirse bölgeler arası (oda → bahçe) yalnızca kapıdan geçilir (worldPlan.ts → canStep).
+ */
+export function resolveMove(from: [number, number], to: [number, number], blocked: Set<string>, w: number, h: number, step?: Step): [number, number] {
+  const ok = (p: [number, number]) => standable(p[0], p[1], blocked, w, h) && crosses(from, p, step);
+  if (ok(to)) return to;
+  if (ok([to[0], from[1]])) return [to[0], from[1]];
+  if (ok([from[0], to[1]])) return [from[0], to[1]];
   return from;
 }
 
@@ -64,13 +87,11 @@ export const STAR_COUNT = STARS_PER_DAY;
 /** Bu kadar yakına gelince yıldız toplanır */
 export const STAR_REACH = 0.6;
 
-/** Günün yıldızları: tarihe göre sabit, bahçenin ve bu ayın bölgesinin boş karolarında */
-export function dailyStars(date: string, map: OutdoorMap, blocked: Set<string>): { x: number; z: number }[] {
-  const rand = rng(`yildiz:${date}`);
-  const r = map.regions[0];
+/** Günün yıldızları: tarihe ve alana göre sabit, alanın boş karolarında */
+export function dailyStars(date: string, space: string, size: { w: number; h: number }, blocked: Set<string>): { x: number; z: number }[] {
+  const rand = rng(`yildiz:${date}:${space}`);
   const free: [number, number][] = [];
-  const maxX = r ? r.ox + r.size : map.garden.w;
-  for (let y = 0; y < map.height; y++) for (let x = 0; x < maxX; x++) if (!blocked.has(key(x, y))) free.push([x, y]);
+  for (let y = 0; y < size.h; y++) for (let x = 0; x < size.w; x++) if (!blocked.has(key(x, y))) free.push([x, y]);
   const out: { x: number; z: number }[] = [];
   while (out.length < STAR_COUNT && free.length) {
     const [x, y] = free.splice(Math.floor(rand() * free.length), 1)[0];

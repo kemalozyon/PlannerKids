@@ -1,7 +1,7 @@
 // Tanıtım turunun seslerini ElevenLabs ile üretir: her sahne için public/demo/<sahne>.mp3 ve kelime
 // zamanları public/demo/<sahne>.json. Uygulama canlı TTS çağırmaz; yalnızca bu statik dosyaları çalar.
 //
-//   npm run demo:audio                 → bütün sahneler (var olanları atlar)
+//   npm run demo:audio                 → yeni ve metni değişen sahneler (aynı metnin sesi varsa atlar)
 //   npm run demo:audio -- --force      → hepsini yeniden üret
 //   npm run demo:audio -- --only 02-sayac
 //
@@ -31,7 +31,7 @@ for (const s of scenes) {
   if (only && s.id !== only) continue;
   const mp3 = new URL(`${s.id}.mp3`, out);
   const json = new URL(`${s.id}.json`, out);
-  if (!force && existsSync(mp3) && existsSync(json)) {
+  if (!force && existsSync(mp3) && existsSync(json) && JSON.parse(readFileSync(json, 'utf8')).text === s.text) {
     console.log(`= ${s.id} (var, atlandı)`);
     continue;
   }

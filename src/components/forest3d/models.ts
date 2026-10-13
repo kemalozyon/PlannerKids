@@ -1,4 +1,4 @@
-// 3D model tablosu: Kenney Nature Kit + Furniture Kit + Cube Pets + Mini Characters (CC0, bkz. ASSETS_LICENSES.md).
+// 3D model tablosu: Kenney Nature Kit + Furniture Kit + Cube Pets (CC0, bkz. ASSETS_LICENSES.md). Avatar kodla çizilir.
 // Modeller küçük (.glb); Vite her birine URL verir, tek dosyalık demo derlemesinde içine gömülür.
 import { useGLTF } from '@react-three/drei';
 import { useMemo } from 'react';
@@ -6,21 +6,16 @@ import { Color, Mesh, MeshStandardMaterial, type Material, type Object3D } from 
 
 const nature = import.meta.glob('../../assets/models/nature/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 const pets = import.meta.glob('../../assets/models/pets/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
-const characters = import.meta.glob('../../assets/models/characters/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
-const accessories = import.meta.glob('../../assets/models/accessories/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 const furniture = import.meta.glob('../../assets/models/furniture/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 const byName = (files: Record<string, string>) =>
   Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split('/').pop()!.replace('.glb', ''), url]));
 const NATURE = byName(nature);
 const PETS = byName(pets);
-/** Gezinti karakterleri (Kenney Mini Characters): idle, walk, sprint, jump, fall, emote-yes… animasyonlu */
-const CHARACTERS = byName(characters);
-const ACCESSORIES = byName(accessories);
 /** Kenney Furniture Kit (meshopt) */
 const FURNITURE = byName(furniture);
-/** Herhangi bir modelin adresi (doğa, hayvan, karakter, aksesuar, mobilya) */
-export const modelUrl = (name: string): string => NATURE[name] ?? PETS[name] ?? CHARACTERS[name] ?? ACCESSORIES[name] ?? FURNITURE[name];
+/** Herhangi bir modelin adresi (doğa, hayvan, mobilya) */
+export const modelUrl = (name: string): string => NATURE[name] ?? PETS[name] ?? FURNITURE[name];
 
 export interface Recolor {
   /** Yaprak (leafs*) */

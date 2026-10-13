@@ -1,5 +1,5 @@
-// Odadaki kitaplığa dokununca açılan raflar: bitirilen kitaplar sırtlarıyla (Open Library kapağı varsa
-// kapakla) dizilir. Her rafta 12 kitap; raf dolunca yeni raf eklenir, 36 kitapta kütüphane odası açılır.
+// "Bütün kitaplarım": bitirilen kitaplar sırtlarıyla (Open Library kapağı varsa kapakla) dizilir. Her rafta 12
+// kitap; raf dolunca yeni raf eklenir. Evdeki kitaplıklarda ve kütüphane odasında aynı kitaplar 3D durur.
 import { useState } from 'react';
 import { CFG } from '../lib/config';
 import { formatShort } from '../lib/date';
@@ -7,7 +7,9 @@ import { inkOn } from '../lib/reading';
 import type { Book } from '../lib/types';
 import Sheet from './Sheet';
 
-const PER = CFG.world.shelf.perShelf;
+const PER = CFG.world.library.perShelf;
+
+export { BookCard };
 
 export default function ShelfView({ books, onClose }: { books: Book[]; onClose: () => void }) {
   const [open, setOpen] = useState<Book | null>(null);
@@ -15,12 +17,10 @@ export default function ShelfView({ books, onClose }: { books: Book[]; onClose: 
   const reading = books.filter((b) => b.status === 'reading');
   // Son raf doluysa boş bir raf daha: "sıradaki kitapların yeri"
   const shelves = Math.max(1, Math.ceil(done.length / PER) + (done.length && done.length % PER === 0 ? 1 : 0));
-  const need = CFG.world.library.books;
   return (
     <Sheet title="📚 Kitaplığım" onClose={onClose}>
       <p className="muted small">
-        {done.length ? `${done.length} kitap bitirdin.` : 'Bitirdiğin kitaplar burada rafa dizilir.'}{' '}
-        {done.length < need ? `${need} kitapta kütüphane odan açılır (${done.length}/${need}).` : 'Kütüphane odan açık!'}
+        {done.length ? `${done.length} kitap bitirdin. Hepsi evindeki kütüphane odasının raflarında da duruyor.` : 'Bitirdiğin kitaplar burada ve kütüphane odanın raflarında dizilir.'}
       </p>
       <div className="bc-case">
         {Array.from({ length: shelves }, (_, s) => {

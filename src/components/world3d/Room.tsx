@@ -1,75 +1,228 @@
-// Odanın kabuğu: dama zemin, arkadaki iki duvar (kaplama rengiyle), kapılar ve pencere.
-// Kamera öndeki köşeden baktığı için yalnızca arka duvarlar çizilir (izometrik oda).
+// Odanın içi: desenli zemin, arkadaki iki duvar (kaplama rengi ve deseniyle), kapılar ve pencereler.
+// Kamera öndeki köşeden baktığı için içeriden yalnızca arka duvarlar çizilir (izometrik oda, Habbo gibi); ön ve
+// doğu duvarları, çatı evin dış kabuğundadır (House.tsx). Odanın sol duvarı kütüphaneyle aradaki iç duvardır:
+// kenarı 'w' olan kapı orada gerçek bir açıklıktır, karakter içinden yürüyerek geçer.
+// Kütüphane odasında arka duvar boyunca gömme raflar ve bitirilen kitaplar durur.
 import type { ThreeEvent } from '@react-three/fiber';
-import { useLayoutEffect, useMemo, useRef } from 'react';
-import { Color, Object3D, type InstancedMesh } from 'three';
+import { useMemo } from 'react';
+import { Color, type Texture } from 'three';
 import type { Item } from '../../lib/catalog';
 import type { FixedTile } from '../../lib/config';
-import { rng } from '../../lib/rng';
+import type { Book } from '../../lib/types';
+import { patternTexture } from './art';
+import { Bookcase, ReadingStack } from './Books';
 import { isTap } from './light';
 
-const WALL_H = 2.4;
+export const WALL_H = 2.6;
 const T = 0.14;
 
-export default function Room({
-  w,
-  h,
-  floor,
-  wall,
-  doors,
-  onDoor,
-}: {
+export interface RoomProps {
   w: number;
   h: number;
   floor: Item | undefined;
   wall: Item | undefined;
-  doors: FixedTile[];
+  fixed: FixedTile[];
   onDoor: (d: FixedTile) => void;
-}) {
+  /** Kütüphane: gömme raflardaki kitaplar */
+  shelfBooks?: Book[];
+  reading?: Book[];
+  onBook?: (b: Book) => void;
+  /** Pencereden görünen dış dünya (art.ts → windowTexture: gerçek saate göre) */
+  view?: Texture;
+}
+
+export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view }: RoomProps) {
   const c1 = floor?.color ?? '#c89a6a';
   const c2 = floor?.color2 ?? c1;
   const wc = wall?.color ?? '#f3e6cf';
-  const leftDoor = doors.some((d) => d.x === 0);
+  const wc2 = wall?.color2 ?? wc;
+  const floorMap = useMemo(() => {
+    const t = patternTexture(floor?.pattern ?? (floor?.color2 ? 'checker' : 'plain'), c1, c2, 'floor').clone();
+    const checker = !floor?.pattern;
+    t.repeat.set(checker ? w / 2 : w, checker ? h / 2 : h);
+    t.needsUpdate = true;
+    return t;
+  }, [floor, c1, c2, w, h]);
+  // Duvarlardaki açıklıklar: arka duvarda kenarı 'n', sol duvarda 'w' olan kapılar
+  const gapsBack = fixed.filter((f) => f.kind === 'door' && f.edge === 'n' && f.y === 0).map((f) => f.x);
+  const gapsLeft = fixed.filter((f) => f.kind === 'door' && f.edge === 'w' && f.x === 0).map((f) => f.y);
+  // Eski tip (kenarsız) kapılar duvara çizilir; kenarlı kapılardan yalnızca açıklık olanlar kasa ister
+  const doors = fixed.filter((f) => f.kind === 'door' && !f.edge);
+  const openings = fixed.filter((f) => f.kind === 'door' && ((f.edge === 'n' && f.y === 0) || (f.edge === 'w' && f.x === 0)));
+  const windows = fixed.filter((f) => f.kind === 'window');
+  const shelves = fixed.filter((f) => f.kind === 'shelf');
   return (
     <group>
-      <Checker w={w} h={h} c1={c1} c2={c2} />
-      {/* Arka duvar (z = 0) ve sol duvar (x = 0) */}
-      <mesh position={[w / 2, WALL_H / 2, -T / 2]} receiveShadow>
-        <boxGeometry args={[w + T, WALL_H, T]} />
-        <meshStandardMaterial color={wc} />
+      {/* Zemin */}
+      <mesh position={[w / 2, -0.05, h / 2]} receiveShadow>
+        <boxGeometry args={[w, 0.1, h]} />
+        <meshStandardMaterial color={c2} />
       </mesh>
-      <mesh position={[-T / 2, WALL_H / 2, h / 2]} receiveShadow>
-        <boxGeometry args={[T, WALL_H, h]} />
-        <meshStandardMaterial color={new Color(wc).multiplyScalar(0.9)} />
+      <mesh position={[w / 2, 0.001, h / 2]} rotation-x={-Math.PI / 2} receiveShadow>
+        <planeGeometry args={[w, h]} />
+        <meshStandardMaterial map={floorMap} />
       </mesh>
-      {/* Süpürgelik */}
-      <mesh position={[w / 2, 0.06, 0.01]}>
-        <boxGeometry args={[w, 0.12, 0.03]} />
+      {/* Arka duvar (z = 0) ve sol duvar (x = 0), kapı açıklıklarıyla parça parça */}
+      <WallStrip len={w} gaps={gapsBack} side="back" wall={wall} c1={wc} c2={wc2} />
+      <WallStrip len={h} gaps={gapsLeft} side="left" wall={wall} c1={wc} c2={wc2} />
+      <mesh position={[w / 2 - T / 2, WALL_H + 0.03, -T / 2]}>
+        <boxGeometry args={[w + T * 2, 0.06, T + 0.04]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>
-      <mesh position={[0.01, 0.06, h / 2]}>
-        <boxGeometry args={[0.03, 0.12, h]} />
+      <mesh position={[-T / 2, WALL_H + 0.03, h / 2]}>
+        <boxGeometry args={[T + 0.04, 0.06, h]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>
-      {wall?.stars && <WallStars w={w} h={h} />}
-      {/* Pencere (sol duvarda, kapı yoksa ortada) */}
-      <group position={[0.02, 1.35, leftDoor ? 2 : h / 2]}>
-        <mesh>
-          <boxGeometry args={[0.04, 1, 1.4]} />
-          <meshStandardMaterial color="#ffffff" />
-        </mesh>
-        <mesh position={[0.02, 0, 0]}>
-          <boxGeometry args={[0.03, 0.86, 1.26]} />
-          <meshStandardMaterial color="#a8dcff" emissive="#a8dcff" emissiveIntensity={0.35} />
-        </mesh>
-        <mesh position={[0.04, 0, 0]}>
-          <boxGeometry args={[0.02, 0.86, 0.05]} />
-          <meshStandardMaterial color="#ffffff" />
-        </mesh>
-      </group>
+      {windows.map((f) => (
+        <Window key={`${f.x},${f.y}`} f={f} view={view} />
+      ))}
       {doors.map((d) => (
         <Door key={`${d.x},${d.y}`} d={d} onDoor={onDoor} />
       ))}
+      {openings.map((d) => (
+        <Doorway key={`o${d.x},${d.y}`} d={d} onDoor={onDoor} />
+      ))}
+      {shelves.map((f) => (
+        <group key={`${f.x},${f.y}`} position={[f.x + (f.w ?? 1) / 2, 0, 0.42]}>
+          <Bookcase w={f.w ?? 1} books={shelfBooks} onBook={onBook} />
+          {reading.length > 0 && (
+            <group position={[(f.w ?? 1) / 2 - 0.5, 1.72, -0.18]}>
+              <ReadingStack books={reading} onBook={onBook} />
+            </group>
+          )}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** Bir duvarın parçaları: [0, len) boyunca, açıklıkların (1 karo) dışında; açıklığın üstünde lento */
+function WallStrip({ len, gaps, side, wall, c1, c2 }: { len: number; gaps: number[]; side: 'back' | 'left'; wall: Item | undefined; c1: string; c2: string }) {
+  const parts = useMemo(() => {
+    const out: [number, number][] = [];
+    let at = 0;
+    for (const g of [...gaps].sort((a, b) => a - b)) {
+      if (g > at) out.push([at, g]);
+      at = g + 1;
+    }
+    if (at < len) out.push([at, len]);
+    return out;
+  }, [len, gaps]);
+  const maps = useMemo(
+    () =>
+      parts.map(([a, b]) => {
+        const t = patternTexture(wall?.pattern ?? (wall?.stars ? 'stars' : 'plain'), c1, c2, 'wall').clone();
+        t.repeat.set(b - a, 1);
+        t.needsUpdate = true;
+        return t;
+      }),
+    [parts, wall, c1, c2],
+  );
+  const back = side === 'back';
+  const shade = new Color(c1).multiplyScalar(back ? 0.95 : 0.85);
+  const LINTEL = 2.05;
+  // Duvar boyunca a…b parçasını yerleştir (arka duvar x boyunca, sol duvar z boyunca)
+  const at = (a: number, b: number, y: number, off: number): [number, number, number] => (back ? [(a + b) / 2, y, off] : [off, y, (a + b) / 2]);
+  return (
+    <group>
+      {parts.map(([a, b], i) => {
+        const n = b - a;
+        // Köşede iki duvar üst üste biner (boşluk kalmasın)
+        const s0 = a === 0 ? -T : a;
+        return (
+          <group key={a}>
+            <mesh position={at(s0, b, WALL_H / 2, -T / 2)} receiveShadow>
+              <boxGeometry args={back ? [b - s0, WALL_H, T] : [T, WALL_H, b - s0]} />
+              <meshStandardMaterial color={shade} />
+            </mesh>
+            <mesh position={at(a, b, WALL_H / 2, 0.001)} rotation-y={back ? 0 : Math.PI / 2} receiveShadow>
+              <planeGeometry args={[n, WALL_H]} />
+              <meshStandardMaterial map={maps[i]} color={back ? '#ffffff' : '#e6e6e6'} />
+            </mesh>
+            {/* Süpürgelik */}
+            <mesh position={at(a, b, 0.06, 0.012)}>
+              <boxGeometry args={back ? [n, 0.12, 0.03] : [0.03, 0.12, n]} />
+              <meshStandardMaterial color="#8a6a4a" />
+            </mesh>
+          </group>
+        );
+      })}
+      {gaps.map((g) => (
+        <group key={`l${g}`}>
+          <mesh position={at(g, g + 1, (LINTEL + WALL_H) / 2, -T / 2)}>
+            <boxGeometry args={back ? [1, WALL_H - LINTEL, T] : [T, WALL_H - LINTEL, 1]} />
+            <meshStandardMaterial color={shade} />
+          </mesh>
+          <mesh position={at(g, g + 1, (LINTEL + WALL_H) / 2, 0.001)} rotation-y={back ? 0 : Math.PI / 2}>
+            <planeGeometry args={[1, WALL_H - LINTEL]} />
+            <meshStandardMaterial color={c1} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** Duvardaki açıklık: kasa ve eşikte paspas (kapı kanadı yok, içinden yürünür) */
+function Doorway({ d, onDoor }: { d: FixedTile; onDoor: (d: FixedTile) => void }) {
+  const back = d.edge === 'n';
+  const click = (e: ThreeEvent<MouseEvent>) => {
+    if (!isTap(e)) return;
+    e.stopPropagation();
+    onDoor(d);
+  };
+  const color = d.to === 'library' ? '#8b5cf6' : d.to === 'room' ? '#d9a35f' : '#b07a4a';
+  return (
+    <group position={back ? [d.x + 0.5, 0, 0] : [0, 0, d.y + 0.5]} rotation-y={back ? 0 : Math.PI / 2} onClick={click}>
+      {[-0.5, 0.5].map((s) => (
+        <mesh key={s} position={[s, 1.03, 0]}>
+          <boxGeometry args={[0.08, 2.06, T + 0.06]} />
+          <meshStandardMaterial color="#6b4a2f" />
+        </mesh>
+      ))}
+      <mesh position={[0, 2.08, 0]}>
+        <boxGeometry args={[1.08, 0.08, T + 0.06]} />
+        <meshStandardMaterial color="#6b4a2f" />
+      </mesh>
+      <mesh position={[0, 2.3, 0.01]}>
+        <circleGeometry args={[0.13, 16]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+      <mesh position={[0, 0.006, 0.35]} rotation-x={-Math.PI / 2}>
+        <planeGeometry args={[0.8, 0.5]} />
+        <meshStandardMaterial color={d.to === 'library' ? '#c9b6ff' : '#9fd39a'} />
+      </mesh>
+    </group>
+  );
+}
+
+function Window({ f, view }: { f: FixedTile; view?: Texture }) {
+  const back = f.y === -1;
+  const len = back ? (f.w ?? 1) : (f.h ?? 1);
+  const pos: [number, number, number] = back ? [f.x + len / 2, 1.45, 0.02] : [0.02, 1.45, f.y + len / 2];
+  const ww = len - 0.2;
+  return (
+    <group position={pos} rotation-y={back ? 0 : Math.PI / 2}>
+      <mesh>
+        <boxGeometry args={[ww + 0.12, 1.1, 0.05]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+      <mesh position={[0, 0, 0.03]}>
+        <planeGeometry args={[ww, 0.96]} />
+        {view ? <meshBasicMaterial map={view} toneMapped={false} /> : <meshStandardMaterial color="#a8dcff" emissive="#a8dcff" emissiveIntensity={0.35} />}
+      </mesh>
+      <mesh position={[0, 0, 0.04]}>
+        <boxGeometry args={[0.05, 0.96, 0.02]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+      <mesh position={[0, 0, 0.04]}>
+        <boxGeometry args={[ww, 0.05, 0.02]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+      <mesh position={[0, -0.58, 0.08]}>
+        <boxGeometry args={[ww + 0.2, 0.05, 0.16]} />
+        <meshStandardMaterial color="#e8e0d4" />
+      </mesh>
     </group>
   );
 }
@@ -81,79 +234,35 @@ function Door({ d, onDoor }: { d: FixedTile; onDoor: (d: FixedTile) => void }) {
     e.stopPropagation();
     onDoor(d);
   };
-  const pos: [number, number, number] = onBack ? [d.x + 0.5, 0.9, 0.02] : [0.02, 0.9, d.y + 0.5];
+  const pos: [number, number, number] = onBack ? [d.x + 0.5, 0.95, 0.02] : [0.02, 0.95, d.y + 0.5];
+  const color = d.to === 'library' ? '#8b5cf6' : d.to === 'room' ? '#d9a35f' : '#b07a4a';
   return (
     <group position={pos} rotation-y={onBack ? 0 : Math.PI / 2} onClick={click}>
       <mesh>
-        <boxGeometry args={[0.92, 1.8, 0.05]} />
+        <boxGeometry args={[0.96, 1.9, 0.05]} />
         <meshStandardMaterial color="#6b4a2f" />
       </mesh>
       <mesh position={[0, 0, 0.03]}>
-        <boxGeometry args={[0.78, 1.68, 0.03]} />
-        <meshStandardMaterial color={d.to === 'library' ? '#8b5cf6' : '#b07a4a'} />
+        <boxGeometry args={[0.82, 1.78, 0.03]} />
+        <meshStandardMaterial color={color} />
       </mesh>
-      <mesh position={[0.28, -0.05, 0.06]}>
+      <mesh position={[0.3, -0.05, 0.06]}>
         <sphereGeometry args={[0.045, 10, 8]} />
         <meshStandardMaterial color="#ffd54a" metalness={0.6} roughness={0.3} />
       </mesh>
-      {/* Kapının önündeki paspas: dışarıya ya da kütüphaneye götürür */}
-      <mesh position={[0, -0.88, 0.5]} rotation-x={-Math.PI / 2}>
+      {/* Kapının üstündeki işaret ve önündeki paspas */}
+      <mesh position={[0, 1.15, 0.03]}>
+        <circleGeometry args={[0.13, 16]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+      <mesh position={[0, 1.15, 0.035]}>
+        <circleGeometry args={[0.09, d.to === 'library' ? 4 : 3]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+      <mesh position={[0, -0.93, 0.5]} rotation-x={-Math.PI / 2}>
         <planeGeometry args={[0.8, 0.5]} />
         <meshStandardMaterial color={d.to === 'library' ? '#c9b6ff' : '#9fd39a'} />
       </mesh>
-    </group>
-  );
-}
-
-function Checker({ w, h, c1, c2 }: { w: number; h: number; c1: string; c2: string }) {
-  const ref = useRef<InstancedMesh>(null);
-  const count = Math.ceil((w * h) / 2);
-  useLayoutEffect(() => {
-    const m = ref.current;
-    if (!m) return;
-    const o = new Object3D();
-    let i = 0;
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        if ((x + y) % 2) continue;
-        o.position.set(x + 0.5, 0.001, y + 0.5);
-        o.rotation.x = -Math.PI / 2;
-        o.updateMatrix();
-        m.setMatrixAt(i++, o.matrix);
-      }
-    m.count = i;
-    m.instanceMatrix.needsUpdate = true;
-  }, [w, h]);
-  return (
-    <group>
-      <mesh position={[w / 2, -0.05, h / 2]} receiveShadow>
-        <boxGeometry args={[w, 0.1, h]} />
-        <meshStandardMaterial color={c2} />
-      </mesh>
-      <instancedMesh ref={ref} args={[undefined, undefined, count]} receiveShadow>
-        <planeGeometry args={[1, 1]} />
-        <meshStandardMaterial color={c1} />
-      </instancedMesh>
-    </group>
-  );
-}
-
-/** Yıldızlı gece duvarı */
-function WallStars({ w, h }: { w: number; h: number }) {
-  const stars = useMemo(() => {
-    const r = rng('duvar-yildiz');
-    return Array.from({ length: 26 }, (_, i) =>
-      i % 2 ? ([r() * w, 0.4 + r() * (WALL_H - 0.6), 0.015] as const) : ([0.015, 0.4 + r() * (WALL_H - 0.6), r() * h] as const),
-    );
-  }, [w, h]);
-  return (
-    <group>
-      {stars.map((p, i) => (
-        <mesh key={i} position={p as [number, number, number]}>
-          <sphereGeometry args={[0.035, 6, 4]} />
-          <meshBasicMaterial color="#fff6c8" />
-        </mesh>
-      ))}
     </group>
   );
 }

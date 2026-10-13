@@ -75,7 +75,9 @@ export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onC
         try {
           const res = await fetch(`${base}demo/${scene.id}.json`);
           if (!res.ok) throw new Error('yok');
-          const data = (await res.json()) as { words: Word[] };
+          const data = (await res.json()) as { words: Word[]; text?: string };
+          // Metin değiştiyse eski ses başka şey söyler: yeniden üretilene kadar yazılı anlatım
+          if (data.text != null && data.text !== scene.text) throw new Error('eski ses');
           if (!alive) return;
           const a = new Audio(`${base}demo/${scene.id}.mp3`);
           audio.current = a;
