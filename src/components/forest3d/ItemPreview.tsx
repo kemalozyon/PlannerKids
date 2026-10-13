@@ -3,7 +3,7 @@
 import { useAnimations, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef } from 'react';
-import { Box3, Vector3, type Group } from 'three';
+import { Box3, Color, Mesh, MeshStandardMaterial, Vector3, type Group } from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { Item } from '../../lib/catalog';
 import { modelUrl } from './models';
@@ -16,17 +16,33 @@ export default function ItemPreview({ item }: { item: Item }) {
         <hemisphereLight args={['#ffffff', '#7a6a50', 1.3]} />
         <directionalLight position={[3, 5, 4]} intensity={2.2} />
         <Suspense fallback={null}>
-          <Model key={item.id} name={item.model} />
+          <Model key={item.id} item={item} />
         </Suspense>
       </Canvas>
     </div>
   );
 }
 
-/** Model 1.6 birim yüksekliğe sığdırılır, ortalanır ve yavaşça döner */
-function Model({ name }: { name: string }) {
-  const { scene, animations } = useGLTF(modelUrl(name));
-  const obj = useMemo(() => cloneSkinned(scene), [scene]);
+/** Model 1.6 birim yüksekliğe sığdırılır, ortalanır ve yavaşça döner; kumaş/lamba rengi items.json → tint */
+function Model({ item }: { item: Item }) {
+  const { scene, animations } = useGLTF(modelUrl(item.model!));
+  const obj = useMemo(() => {
+    const o = cloneSkinned(scene);
+    o.traverse((c) => {
+      if (!(c instanceof Mesh) || !(c.material instanceof MeshStandardMaterial)) return;
+      const color = item.tint?.[c.material.name];
+      const glow = item.glow === c.material.name;
+      if (!color && !glow) return;
+      const m = c.material.clone();
+      if (color) m.color = new Color(color);
+      if (glow) {
+        m.emissive = new Color(color ?? '#ffe7a3');
+        m.emissiveIntensity = 0.9;
+      }
+      c.material = m;
+    });
+    return o;
+  }, [scene, item]);
   const fit = useMemo(() => {
     const box = new Box3().setFromObject(obj);
     const size = box.getSize(new Vector3());

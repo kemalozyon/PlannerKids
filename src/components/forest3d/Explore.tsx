@@ -1,85 +1,59 @@
-// Ormanda gezinti: çocuk kendi karakteriyle ayın adasında üçüncü şahıs kamerayla yürür. Ağaçların yanına
-// gidip o günü açar, hayvanları sever (bir süre peşinden gelirler), günün yıldızlarını toplar, dükkândan
-// aldığı yapı ve süsleri adasına yerleştirir. Seviye atladıkça yeni yetenekler açılır (level.ts).
-// Dokunmatikte sol altta joystick + zıpla, boş yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar,
-// Shift koş, boşluk zıpla (basılı tut: süzül), E etkileşim, Esc çık.
-import { Html, useAnimations, useGLTF } from '@react-three/drei';
+// "Yakından gez": çocuk kendi karakteriyle bahçesinde ve ormanında üçüncü şahıs kamerayla yürür. Sahne dünya
+// görünümüyle aynıdır (world3d/Outdoor, aynı karo ızgarası); burada yalnızca kamera ve kontroller farklı.
+// Ağacın yanına gidince o seansı açar, her gün bahçeye saklanan yıldızları toplar. Seviye atladıkça yeni
+// yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş yerde sürükleyerek etrafa bakılır;
+// klavyede WASD/oklar, Shift koş, boşluk zıpla (basılı tut: süzül), E bak, Esc çık.
+import { useAnimations, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
-import { Color, ExtrudeGeometry, InstancedMesh, Mesh, MeshBasicMaterial, Object3D, Shape, Vector3, type Group, type PointLight } from 'three';
+import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type Group, type PointLight } from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { itemById, type Item } from '../../lib/catalog';
+import { dayPhase } from '../../lib/dayPhase';
 import { formatShort } from '../../lib/date';
-import { canPlace, dailyStars, moveDir, nearest, obstacles, resolveMove, STAR_REACH, type Circle } from '../../lib/explore';
-import { BIOMES, cellPosition, dayPhase, islandLayout, islandProgress, wiltSpots } from '../../lib/island';
+import { dailyStars, moveDir, nearest, resolveMove, STAR_REACH } from '../../lib/explore';
 import type { Perks } from '../../lib/level';
 import { setSoundOn, sfx, soundOn } from '../../lib/sfx';
-import type { Equipped, ForestTree, OwnedItem } from '../../lib/types';
-import { REVIVE_MIN, type Wilt } from '../../lib/wilt';
-import { modelUrl, preloadNature, useModel } from './models';
-import { LIGHT, PET_OF, PlacedModel, Sparkles, treeTop, World, type PetState, type PlacedThing } from './world';
+import type { Equipped } from '../../lib/types';
+import { fixedTiles, outdoorBlocked, type OutdoorMap, type SpaceLayout, type WorldCtx, type WorldTree } from '../../lib/world';
+import type { CFG } from '../../lib/config';
+import { ItemModel } from '../world3d/items';
+import { LIGHT } from '../world3d/light';
+import Outdoor from '../world3d/Outdoor';
+import { Accessory } from './Accessory';
+import { modelUrl } from './models';
 
 /** İlk gezintide karakter seçimi bir kez gösterilir */
-const SEEN_KEY = 'ct-explore-v2';
-/** Karakterin boyu ≈ 0.9 birim (bir ızgara karesi 1 birim) */
-const AVATAR_SCALE = 1.25;
+const SEEN_KEY = 'ct-explore-v3';
+const AVATAR_SCALE = 1.1;
 const WALK = 2.2;
 const RUN = 4;
 const GRAVITY = 14;
 const JUMP_V = 5;
-/** Bir şeyin "yanında" sayılma uzaklığı */
-const REACH = 1.35;
-/** Sevilen hayvan bu kadar süre peşinden gelir (ms) */
-const FOLLOW_MS = 20_000;
+/** Bir ağacın "yanında" sayılma uzaklığı */
+const REACH = 1.2;
 
 export interface ExploreProps {
-  month: string;
-  trees: ForestTree[];
-  wilts: Wilt[];
-  totalMinutes: number;
-  /** Bugünün tarihi (solgun fidan ve yıldızlar için) */
+  map: OutdoorMap;
+  garden: SpaceLayout;
+  ctx: WorldCtx;
+  creatures: typeof CFG.world.creatures;
   today: string;
-  /** Yıldızlar ve yerleştirme yalnızca bu ayın adasında */
-  current: boolean;
-  minutesOf: (date: string) => number;
   /** Üstte bir pencere açıkken karakter durur, tuşlar dinlenmez */
   paused: boolean;
-  onTree: (t: ForestTree) => void;
-  onWilt: (w: Wilt) => void;
+  onTree: (t: WorldTree) => void;
   onClose: () => void;
   /** Görünüş ve sahip olunan karakterler (seçim için) */
   equipped: Equipped;
   characters: Item[];
   onEquip: (e: Equipped) => Promise<void>;
   perks: Perks;
-  crystals: number;
   /** Bugün toplanan yıldızlar (sırası) */
   starsGot: number[];
   onStar: (i: number) => Promise<void>;
-  /** Bu ayın adasındaki yapılar ve süsler */
-  placed: PlacedThing[];
-  /** Adada olmayan, yerleştirilebilecek eşyalar */
-  inventory: { owned: OwnedItem; item: Item }[];
-  onPlace: (ownedId: string, x: number, z: number, rot: number) => Promise<void>;
-  onMovePlaced: (id: string, x: number, z: number, rot: number) => Promise<void>;
-  onRemovePlaced: (id: string) => Promise<void>;
-  onShop: () => void;
 }
 
-type Near =
-  | { kind: 'tree'; key: string; x: number; z: number; tree: ForestTree }
-  | { kind: 'wilt'; key: string; x: number; z: number; w: Wilt }
-  | { kind: 'pet'; key: string; x: number; z: number; id: string }
-  | { kind: 'placed'; key: string; x: number; z: number; t: PlacedThing };
-
-/** Yerleştirilen (ya da taşınan) eşya */
-interface Placing {
-  item: Item;
-  ownedId: string;
-  /** Taşınıyorsa yerleşimin kimliği */
-  moveId?: string;
-  rot: number;
-}
+type Near = { key: string; x: number; z: number; tree: WorldTree };
 
 /** Kontrol durumu: her karede okunur, React state'i değil (yeniden çizim olmasın) */
 interface Ctl {
@@ -118,22 +92,22 @@ const firstTime = () => {
 };
 
 export default function Explore(props: ExploreProps) {
-  const { month, trees, wilts, totalMinutes, today, current, minutesOf, paused, onTree, onWilt, onClose, equipped, characters, perks, placed, inventory } = props;
-  const progress = useMemo(() => islandProgress(totalMinutes), [totalMinutes]);
-  const R = progress.radius;
-  const layout = useMemo(() => islandLayout(month, progress), [month, progress]);
-  const [placing, setPlacing] = useState<Placing | null>(null);
-  const spotsOf = (list: PlacedThing[]) => list.map((t) => ({ x: t.p.x, z: t.p.z, r: t.item.r ?? 0.4, walk: t.item.walk }));
-  const obs = useMemo(() => obstacles(trees, layout, spotsOf(placed.filter((t) => t.p.id !== placing?.moveId))), [trees, layout, placed, placing?.moveId]);
-  // Yerleştirirken başka hiçbir şeyin üstüne binmesin (yollar ve çiçekler dahil)
-  const taken = useMemo(
-    () => [...obstacles(trees, layout), ...spotsOf(placed.filter((t) => t.p.id !== placing?.moveId)).map((s) => ({ x: s.x, z: s.z, r: s.r * 0.8 }))],
-    [trees, layout, placed, placing?.moveId],
+  const { map, garden, ctx, today, paused, onTree, onClose, equipped, characters, perks } = props;
+  const blocked = useMemo(() => outdoorBlocked(map, garden, ctx), [map, garden, ctx]);
+  const fixed = useMemo(() => fixedTiles('garden', ctx), [ctx]);
+  const size = { w: map.width, h: map.height };
+  const stars = useMemo(() => dailyStars(today, map, blocked), [today, map, blocked]);
+  const trees = useMemo<Near[]>(
+    () =>
+      map.regions.flatMap((r) =>
+        r.trees.flatMap((t) => {
+          const s = r.spots.get(t.id);
+          return s ? [{ key: t.id, x: r.ox + s.x + 0.5, z: r.oy + s.y + 0.5, tree: t }] : [];
+        }),
+      ),
+    [map],
   );
-  const spots = useMemo(() => wiltSpots(wilts, layout, R), [wilts, layout, R]);
-  const stars = useMemo(() => (current ? dailyStars(today, trees, layout, R) : []), [current, today, trees, layout, R]);
-  const companions = useMemo(() => equipped.pets.map(itemById).filter((i): i is Item => !!i?.model), [equipped.pets]);
-  const accessory = equipped.accessory ? itemById(equipped.accessory) ?? null : null;
+  const accessory = equipped.accessory ? (itemById(equipped.accessory) ?? null) : null;
 
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
   const [sound, setSound] = useState(soundOn);
@@ -142,31 +116,26 @@ export default function Explore(props: ExploreProps) {
   const [near, setNear] = useState<Near | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [party, setParty] = useState(false);
-  const [panel, setPanel] = useState<'none' | 'bag' | 'edit'>('none');
-  const [ghostOk, setGhostOk] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [pendingStars, setPendingStars] = useState<number[]>([]);
-  const [bursts, setBursts] = useState<{ x: number; z: number; at: number }[]>([]);
 
   const ctl = useRef<Ctl>({ jx: 0, jy: 0, joy: false, keys: new Set(), jump: false, jumpHeld: false, yaw: 0, pitch: 0.5, dist: 5.4, lastLook: 0, paused, picking });
-  const player = useRef<PlayerState>({ x: 0, z: R - 1.8, y: 0, vy: 0, face: Math.PI, jumps: 0 });
-  const pets = useRef(new Map<string, PetState>());
+  // Evin kapısının önünden başla; kamera önden (güneyden) eve doğru bakar
+  const player = useRef<PlayerState>({ x: 2.5, z: 5.5, y: 0, vy: 0, face: Math.PI, jumps: 0 });
   const nearRef = useRef<Near | null>(null);
-  const ghost = useRef({ x: 0, z: 0 });
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const got = useMemo(() => new Set([...props.starsGot, ...pendingStars]), [props.starsGot, pendingStars]);
 
   useEffect(() => {
-    // Bir pencere ya da panel açıkken karakter durur
-    const stop = paused || picking || panel !== 'none';
+    // Bir pencere açıkken karakter durur
+    const stop = paused || picking;
     ctl.current.paused = stop;
     ctl.current.picking = picking;
     if (stop) {
       ctl.current.keys.clear();
       ctl.current.jx = ctl.current.jy = 0;
     }
-  }, [paused, picking, panel]);
+  }, [paused, picking]);
 
   const flash = useCallback((m: string, ms = 2600) => {
     setMsg(m);
@@ -175,7 +144,6 @@ export default function Explore(props: ExploreProps) {
   }, []);
 
   useEffect(() => {
-    preloadNature();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const id = setInterval(() => setPhase(dayPhase(new Date().getHours())), 60_000);
@@ -189,26 +157,10 @@ export default function Explore(props: ExploreProps) {
 
   const act = useCallback(() => {
     const n = nearRef.current;
-    if (!n || placing) return;
-    if (n.kind === 'tree') {
-      sfx.pop();
-      onTree(n.tree);
-    } else if (n.kind === 'wilt') {
-      if (n.w.revived) sfx.pop();
-      else sfx.sad();
-      onWilt(n.w);
-    } else if (n.kind === 'placed') {
-      if (current) setPanel('edit');
-    } else {
-      const p = pets.current.get(n.id);
-      if (!p) return;
-      p.poke();
-      p.followUntil = Math.max(p.followUntil, performance.now() + FOLLOW_MS);
-      const name = PET_OF[n.id as keyof typeof PET_OF]?.name ?? itemById(n.id)?.name;
-      const icon = BIOMES.find((b) => b.id === n.id)?.icon ?? itemById(n.id)?.icon ?? '';
-      flash(companions.some((c) => c.id === n.id) ? `${icon} ${name} seni çok seviyor!` : `${icon} ${name} peşinden geliyor!`);
-    }
-  }, [onTree, onWilt, flash, placing, current, companions]);
+    if (!n) return;
+    sfx.pop();
+    onTree(n.tree);
+  }, [onTree]);
 
   const onNear = useCallback((n: Near | null) => {
     nearRef.current = n;
@@ -220,8 +172,6 @@ export default function Explore(props: ExploreProps) {
       if (got.has(i)) return;
       setPendingStars((p) => [...p, i]);
       sfx.star();
-      const st = stars[i];
-      setBursts((b) => [...b.slice(-4), { x: st.x, z: st.z, at: performance.now() }]);
       if (got.size + 1 >= stars.length) {
         setTimeout(() => sfx.plant(), 250);
         setParty(true);
@@ -232,24 +182,6 @@ export default function Explore(props: ExploreProps) {
     [got, stars, props],
   );
 
-  const confirmPlace = async () => {
-    if (!placing || !ghostOk || busy) return;
-    setBusy(true);
-    const { x, z } = ghost.current;
-    try {
-      if (placing.moveId) await props.onMovePlaced(placing.moveId, x, z, placing.rot);
-      else await props.onPlace(placing.ownedId, x, z, placing.rot);
-      sfx.plant();
-      setBursts((b) => [...b.slice(-4), { x, z, at: performance.now() }]);
-      flash(`${placing.item.icon} ${placing.item.name} adana yerleşti!`);
-      setPlacing(null);
-    } catch (e) {
-      flash((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   // Klavye
   useEffect(() => {
     const MOVE = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight']);
@@ -258,8 +190,6 @@ export default function Explore(props: ExploreProps) {
       if (paused) return;
       if (e.code === 'Escape') {
         if (c.picking) setPicking(false);
-        else if (panel !== 'none') setPanel('none');
-        else if (placing) setPlacing(null);
         else onClose();
         return;
       }
@@ -270,12 +200,7 @@ export default function Explore(props: ExploreProps) {
         c.jumpHeld = true;
       } else if (e.code === 'KeyE' || e.code === 'Enter') {
         e.preventDefault();
-        if (!e.repeat) {
-          if (placing) void confirmPlace();
-          else act();
-        }
-      } else if (e.code === 'KeyR' && placing) {
-        setPlacing({ ...placing, rot: placing.rot + Math.PI / 4 });
+        if (!e.repeat) act();
       } else if (MOVE.has(e.code)) {
         e.preventDefault();
         c.keys.add(e.code);
@@ -335,22 +260,13 @@ export default function Explore(props: ExploreProps) {
 
   const L = LIGHT[phase];
   const avatarItem = itemById(avatar) ?? characters[0];
-  const bag = useMemo(() => {
-    const m = new Map<string, { item: Item; owned: OwnedItem[] }>();
-    inventory.forEach(({ owned, item }) => {
-      if (!m.has(item.id)) m.set(item.id, { item, owned: [] });
-      m.get(item.id)!.owned.push(owned);
-    });
-    return [...m.values()];
-  }, [inventory]);
-  const editing = near?.kind === 'placed' ? near.t : null;
 
   return (
     <div
       className={`explore phase-${phase}`}
       style={{ background: L.sky }}
       role="dialog"
-      aria-label="Ormanda gezinti"
+      aria-label="Bahçende ve ormanında gezinti"
       onPointerDown={lookDown}
       onPointerMove={lookMove}
       onPointerUp={lookUp}
@@ -359,40 +275,25 @@ export default function Explore(props: ExploreProps) {
         ctl.current.dist = Math.min(8, Math.max(2.8, ctl.current.dist + e.deltaY * 0.004));
       }}
     >
-      <Canvas shadows dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }} camera={{ fov: 55, near: 0.1, far: 120, position: [0, 4, R + 3] }}>
+      <Canvas shadows dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }} camera={{ fov: 55, near: 0.1, far: 160, position: [2.5, 4, 9] }}>
+        <hemisphereLight args={[L.sky2, L.ground, L.hemiI]} />
+        <directionalLight position={[12, 20, 8]} intensity={L.sunI} color={L.sun} castShadow shadow-mapSize={[1024, 1024]} shadow-camera-left={-40} shadow-camera-right={40} shadow-camera-top={40} shadow-camera-bottom={-40} />
+        <fog attach="fog" args={[L.fog, 18, 60]} />
         <Suspense fallback={null}>
-          <World
-            month={month}
-            trees={trees}
-            wilts={wilts}
-            progress={progress}
-            phase={phase}
-            onTree={onTree}
-            onWilt={onWilt}
-            pets={pets}
-            player={player}
-            placed={placed}
-            companions={companions}
-            hidePlacement={placing?.moveId}
-          />
+          <Outdoor map={map} fixed={fixed} growId={null} onGrown={() => {}} onTree={(t) => onTree(t)} onHouse={() => {}} creatures={props.creatures} labels={false} />
+          {garden.items.map((it, i) => {
+            const item = itemById(it.item);
+            return item?.model ? <ItemModel key={i} item={item} x={it.x} y={it.y} rot={it.rot} /> : null;
+          })}
           {stars.map((s, i) => !got.has(i) && <Star key={i} x={s.x} z={s.z} i={i} />)}
         </Suspense>
         <Suspense fallback={null}>
-          {avatarItem && <Player key={avatarItem.id} model={avatarItem.model!} accessory={accessory} player={player} ctl={ctl} obs={obs} radius={R} perks={perks} />}
+          {avatarItem && <Player key={avatarItem.id} model={avatarItem.model!} accessory={accessory} player={player} ctl={ctl} blocked={blocked} size={size} perks={perks} />}
         </Suspense>
-        {placing && (
-          <Suspense fallback={null}>
-            <Ghost placing={placing} player={player} radius={R} taken={taken} out={ghost} onOk={setGhostOk} />
-          </Suspense>
-        )}
         {perks.trail && <Trail player={player} />}
         <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
         <FollowCam player={player} ctl={ctl} />
-        <Brain player={player} trees={trees} spots={spots} pets={pets} placed={placed} stars={stars} got={got} onNear={onNear} onStar={collect} />
-        {near && !picking && !placing && <Bubble near={near} pets={pets} today={today} minutesOf={minutesOf} />}
-        {bursts.map((b) => (
-          <Sparkles key={b.at} x={b.x} z={b.z} at={b.at} y={0.6} />
-        ))}
+        <Brain player={player} trees={trees} stars={stars} got={got} onNear={onNear} onStar={collect} />
       </Canvas>
 
       <div className="explore-top">
@@ -404,15 +305,7 @@ export default function Explore(props: ExploreProps) {
             ⭐ {got.size}/{stars.length}
           </span>
         )}
-        <button className="explore-chip" aria-label={`${props.crystals} Elmas — dükkâna git`} onClick={props.onShop}>
-          💎 {props.crystals}
-        </button>
         <span className="grow" />
-        {current && !picking && (
-          <button className="explore-chip" aria-label="Eşyalarım — adaya yerleştir" onClick={() => setPanel(panel === 'bag' ? 'none' : 'bag')}>
-            🔨
-          </button>
-        )}
         {!picking && characters.length > 1 && (
           <button className="explore-chip" aria-label="Karakterini değiştir" onClick={() => setPicking(true)}>
             👕
@@ -431,6 +324,11 @@ export default function Explore(props: ExploreProps) {
       </div>
 
       {msg && !picking && <div className="explore-msg">{msg}</div>}
+      {near && !picking && !msg && (
+        <div className="explore-msg near" role="status">
+          {near.tree.icon} {near.tree.name} · {formatShort(near.tree.date)} · {near.tree.minutes} dk
+        </div>
+      )}
       {party && (
         <div className="explore-party" role="status">
           <span>⭐</span>
@@ -456,136 +354,66 @@ export default function Explore(props: ExploreProps) {
           <button className="btn primary" onClick={startWalking}>
             Hadi gezelim!
           </button>
-          <button className="link small" onClick={props.onShop}>
-            Dükkânda daha fazla karakter var →
-          </button>
-        </div>
-      ) : panel === 'bag' ? (
-        <div className="explore-panel" role="dialog" aria-label="Eşyalarım">
-          <div className="row">
-            <strong className="grow">🔨 Adana yerleştir</strong>
-            <button className="explore-round sm" aria-label="Kapat" onClick={() => setPanel('none')}>
-              ✕
-            </button>
-          </div>
-          {bag.length === 0 ? (
-            <p className="muted small">
-              Yerleştirecek eşyan yok. Dükkândan 💎 ile yapı, ⭐ ile süs alabilirsin.{' '}
-              <button className="link" onClick={props.onShop}>
-                Dükkâna git
-              </button>
-            </p>
-          ) : (
-            <div className="bag-grid">
-              {bag.map(({ item, owned }) => (
-                <button
-                  key={item.id}
-                  className="bag-item"
-                  onClick={() => {
-                    setPanel('none');
-                    setPlacing({ item, ownedId: owned[0].id, rot: 0 });
-                    flash('Yürü, yerini seç; sonra "Buraya koy"');
-                  }}
-                >
-                  <span className="bag-icon">{item.icon}</span>
-                  <span className="small">{item.name}</span>
-                  {owned.length > 1 && <span className="bag-count">×{owned.length}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : panel === 'edit' && editing ? (
-        <div className="explore-panel" role="dialog" aria-label={editing.item.name}>
-          <div className="row">
-            <strong className="grow">
-              {editing.item.icon} {editing.item.name}
-            </strong>
-            <button className="explore-round sm" aria-label="Kapat" onClick={() => setPanel('none')}>
-              ✕
-            </button>
-          </div>
-          <div className="row gap">
-            <button
-              className="btn grow"
-              onClick={() => {
-                setPanel('none');
-                setPlacing({ item: editing.item, ownedId: editing.p.owned_id, moveId: editing.p.id, rot: editing.p.rot });
-              }}
-            >
-              ↔ Taşı
-            </button>
-            <button
-              className="btn grow"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await props.onRemovePlaced(editing.p.id);
-                  setPanel('none');
-                  flash(`${editing.item.icon} çantana geri döndü`);
-                } catch (e) {
-                  flash((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              🎒 Kaldır
-            </button>
-          </div>
         </div>
       ) : (
         <>
           <Joystick ctl={ctl} />
-          {placing ? (
-            <div className="place-bar">
-              <button className="explore-round" aria-label="Çevir" onClick={() => setPlacing({ ...placing, rot: placing.rot + Math.PI / 4 })}>
-                ↻
-              </button>
-              <button className="explore-act static" disabled={!ghostOk || busy} onClick={confirmPlace}>
-                {ghostOk ? '✔ Buraya koy' : 'Buraya konamaz'}
-              </button>
-              <button className="explore-round" aria-label="Vazgeç" onClick={() => setPlacing(null)}>
-                ✕
-              </button>
-            </div>
-          ) : (
-            <>
-              <button
-                className="explore-round explore-jump"
-                aria-label="Zıpla"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  ctl.current.jump = true;
-                  ctl.current.jumpHeld = true;
-                }}
-                onPointerUp={() => (ctl.current.jumpHeld = false)}
-                onPointerCancel={() => (ctl.current.jumpHeld = false)}
-                onPointerLeave={() => (ctl.current.jumpHeld = false)}
-              >
-                ⤴
-              </button>
-              {near && (near.kind !== 'placed' || current) && (
-                <button className="explore-act" onClick={act}>
-                  {near.kind === 'tree'
-                    ? '👀 Bak'
-                    : near.kind === 'pet'
-                      ? '❤️ Sev'
-                      : near.kind === 'placed'
-                        ? '🔨 Düzenle'
-                        : near.w.revived
-                          ? '🌱 Bak'
-                          : '💧 Bak'}
-                  <span className="explore-key">E</span>
-                </button>
-              )}
-            </>
+          <button
+            className="explore-round explore-jump"
+            aria-label="Zıpla"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              ctl.current.jump = true;
+              ctl.current.jumpHeld = true;
+            }}
+            onPointerUp={() => (ctl.current.jumpHeld = false)}
+            onPointerCancel={() => (ctl.current.jumpHeld = false)}
+            onPointerLeave={() => (ctl.current.jumpHeld = false)}
+          >
+            ⤴
+          </button>
+          {near && (
+            <button className="explore-act" onClick={act}>
+              👀 Bak
+              <span className="explore-key">E</span>
+            </button>
           )}
         </>
       )}
     </div>
   );
+}
+
+/** Her karede: en yakın ağaç ve yıldız toplama. React'e yalnızca değişince haber verir. */
+function Brain({
+  player,
+  trees,
+  stars,
+  got,
+  onNear,
+  onStar,
+}: {
+  player: MutableRefObject<PlayerState>;
+  trees: Near[];
+  stars: { x: number; z: number }[];
+  got: Set<number>;
+  onNear: (n: Near | null) => void;
+  onStar: (i: number) => void;
+}) {
+  const last = useRef('');
+  useFrame(() => {
+    const p = player.current;
+    const n = nearest([p.x, p.z], trees, REACH);
+    const key = n?.key ?? '';
+    if (key !== last.current) {
+      last.current = key;
+      onNear(n);
+    }
+    stars.forEach((s, i) => {
+      if (!got.has(i) && p.y < 1.2 && Math.hypot(s.x - p.x, s.z - p.z) < STAR_REACH) onStar(i);
+    });
+  });
+  return null;
 }
 
 /** Seçilen karakter: kontrollere göre yürür, koşar, zıplar; engellere çarpar, kıyıdan düşmez. */
@@ -594,16 +422,16 @@ function Player({
   accessory,
   player,
   ctl,
-  obs,
-  radius,
+  blocked,
+  size,
   perks,
 }: {
   model: string;
   accessory: Item | null;
   player: MutableRefObject<PlayerState>;
   ctl: MutableRefObject<Ctl>;
-  obs: Circle[];
-  radius: number;
+  blocked: Set<string>;
+  size: { w: number; h: number };
   perks: Perks;
 }) {
   const { scene, animations } = useGLTF(modelUrl(model));
@@ -652,7 +480,7 @@ function Player({
     const mag = Math.hypot(dx, dz);
     if (mag > 0.05) {
       const speed = (run ? RUN * perks.runBoost : WALK) * Math.max(0.35, mag);
-      const [x, z] = resolveMove([p.x, p.z], [p.x + dx * speed * dt, p.z + dz * speed * dt], obs, radius);
+      const [x, z] = resolveMove([p.x, p.z], [p.x + dx * speed * dt, p.z + dz * speed * dt], blocked, size.w, size.h);
       p.x = x;
       p.z = z;
       let diff = Math.atan2(dx, dz) - p.face;
@@ -698,117 +526,6 @@ function Player({
   );
 }
 
-/** Aksesuar karakterin başına (head kemiği) takılır; başla birlikte sallanır. */
-function Accessory({ item, body }: { item: Item; body: Object3D }) {
-  const head = useMemo(() => body.getObjectByName('head') ?? body, [body]);
-  const glasses = item.model ? <GlassesOn head={head} model={item.model} /> : null;
-  return glasses ?? <Crown head={head} />;
-}
-
-// Mini Characters'ta head kemiği başın altında: baş 0.38 yukarı uzanır, yüzün önü z ≈ 0.21
-function GlassesOn({ head, model }: { head: Object3D; model: string }) {
-  const obj = useModel(model);
-  useEffect(() => {
-    obj.position.set(0, 0.13, 0.15);
-    head.add(obj);
-    return () => {
-      head.remove(obj);
-    };
-  }, [head, obj]);
-  return null;
-}
-
-/** Efsane tacı: altın halka ve sivri uçlar */
-function Crown({ head }: { head: Object3D }) {
-  const crown = useMemo(() => {
-    const g = new Object3D();
-    const gold = new MeshBasicMaterial({ color: new Color('#ffcc33') });
-    const ring = new Mesh(new ExtrudeGeometry(ringShape(), { depth: 0.06, bevelEnabled: false }), gold);
-    ring.rotation.x = -Math.PI / 2;
-    g.add(ring);
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      const spike = new Mesh(new ExtrudeGeometry(spikeShape(), { depth: 0.02, bevelEnabled: false }), gold);
-      spike.position.set(Math.cos(a) * 0.145, 0.06, Math.sin(a) * 0.145);
-      spike.rotation.y = -a + Math.PI / 2;
-      g.add(spike);
-    }
-    g.position.y = 0.37;
-    return g;
-  }, []);
-  useEffect(() => {
-    head.add(crown);
-    return () => {
-      head.remove(crown);
-    };
-  }, [head, crown]);
-  return null;
-}
-
-function ringShape() {
-  const s = new Shape();
-  s.absarc(0, 0, 0.16, 0, Math.PI * 2, false);
-  const hole = new Shape();
-  hole.absarc(0, 0, 0.13, 0, Math.PI * 2, true);
-  s.holes.push(hole);
-  return s;
-}
-
-function spikeShape() {
-  const s = new Shape();
-  s.moveTo(-0.04, 0);
-  s.lineTo(0, 0.09);
-  s.lineTo(0.04, 0);
-  s.closePath();
-  return s;
-}
-
-/** Yerleştirilecek eşyanın karakterin önündeki önizlemesi; altındaki halka yeşil (konur) ya da kırmızı */
-function Ghost({
-  placing,
-  player,
-  radius,
-  taken,
-  out,
-  onOk,
-}: {
-  placing: Placing;
-  player: MutableRefObject<PlayerState>;
-  radius: number;
-  taken: Circle[];
-  out: MutableRefObject<{ x: number; z: number }>;
-  onOk: (ok: boolean) => void;
-}) {
-  const group = useRef<Group>(null);
-  const ring = useRef<MeshBasicMaterial>(null);
-  const last = useRef<boolean | null>(null);
-  const r = placing.item.r ?? 0.4;
-  useFrame(({ clock }) => {
-    const p = player.current;
-    const d = 0.8 + r;
-    const x = p.x + Math.sin(p.face) * d;
-    const z = p.z + Math.cos(p.face) * d;
-    out.current = { x, z };
-    const ok = canPlace(x, z, r, radius, taken);
-    if (group.current) {
-      group.current.position.set(x, 0.02 + Math.sin(clock.elapsedTime * 4) * 0.03, z);
-    }
-    ring.current?.color.set(ok ? '#5fd35f' : '#ff5a5a');
-    if (ok !== last.current) {
-      last.current = ok;
-      onOk(ok);
-    }
-  });
-  return (
-    <group ref={group}>
-      <PlacedModel item={placing.item} x={0} z={0} rot={placing.rot} />
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.03, 0]}>
-        <ringGeometry args={[r * 0.9, r * 0.9 + 0.08, 32]} />
-        <meshBasicMaterial ref={ring} color="#5fd35f" transparent opacity={0.9} />
-      </mesh>
-    </group>
-  );
-}
 
 /** Orman Bilgesi: yürürken arkada altın parıltılar */
 function Trail({ player }: { player: MutableRefObject<PlayerState> }) {
@@ -874,85 +591,6 @@ function FollowCam({ player, ctl }: { player: MutableRefObject<PlayerState>; ctl
     first.current = false;
   });
   return null;
-}
-
-/** Her karede: en yakın ağaç/hayvan/fidan/yapı ve yıldız toplama. React'e yalnızca değişince haber verir. */
-function Brain({
-  player,
-  trees,
-  spots,
-  pets,
-  placed,
-  stars,
-  got,
-  onNear,
-  onStar,
-}: {
-  player: MutableRefObject<PlayerState>;
-  trees: ForestTree[];
-  spots: { w: Wilt; x: number; z: number }[];
-  pets: MutableRefObject<Map<string, PetState>>;
-  placed: PlacedThing[];
-  stars: { x: number; z: number }[];
-  got: Set<number>;
-  onNear: (n: Near | null) => void;
-  onStar: (i: number) => void;
-}) {
-  const fixed = useMemo<Near[]>(
-    () => [
-      ...trees.map((tree) => {
-        const [x, z] = cellPosition(tree.cell);
-        return { kind: 'tree' as const, key: tree.id, x, z, tree };
-      }),
-      ...spots.map(({ w, x, z }) => ({ kind: 'wilt' as const, key: w.item.id, x, z, w })),
-      ...placed.map((t) => ({ kind: 'placed' as const, key: t.p.id, x: t.p.x, z: t.p.z, t })),
-    ],
-    [trees, spots, placed],
-  );
-  const last = useRef('');
-  useFrame(() => {
-    const p = player.current;
-    const pos: [number, number] = [p.x, p.z];
-    const all: Near[] = [...fixed];
-    pets.current.forEach((s, id) => all.push({ kind: 'pet', key: id, x: s.x, z: s.z, id }));
-    const n = nearest(pos, all, REACH);
-    const key = n ? `${n.kind}:${n.key}` : '';
-    if (key !== last.current) {
-      last.current = key;
-      onNear(n);
-    }
-    stars.forEach((s, i) => {
-      if (!got.has(i) && p.y < 1.2 && Math.hypot(s.x - p.x, s.z - p.z) < STAR_REACH) onStar(i);
-    });
-  });
-  return null;
-}
-
-/** Yakındaki şeyin üstünde bilgi balonu */
-function Bubble({ near, pets, today, minutesOf }: { near: Near; pets: MutableRefObject<Map<string, PetState>>; today: string; minutesOf: (d: string) => number }) {
-  const ref = useRef<Group>(null);
-  const petInfo = near.kind === 'pet' ? (PET_OF[near.id as keyof typeof PET_OF] ?? itemById(near.id)) : null;
-  const y =
-    near.kind === 'tree' ? treeTop(near.tree.stage) + 0.35 : near.kind === 'wilt' ? 0.95 : near.kind === 'placed' ? 1.4 : petInfo?.fly ? 1.9 : 1.05;
-  useFrame(() => {
-    if (!ref.current) return;
-    const s = near.kind === 'pet' ? pets.current.get(near.id) : null;
-    ref.current.position.set(s ? s.x : near.x, y, s ? s.z : near.z);
-  });
-  let text: string;
-  if (near.kind === 'tree') text = `📅 ${formatShort(near.tree.date)} · ${minutesOf(near.tree.date)} dk`;
-  else if (near.kind === 'pet') text = `${BIOMES.find((b) => b.id === near.id)?.icon ?? itemById(near.id)?.icon ?? ''} ${petInfo?.name ?? ''}`;
-  else if (near.kind === 'placed') text = `${near.t.item.icon} ${near.t.item.name}`;
-  else if (near.w.revived) text = '🌱 Bu fidanı kurtardın!';
-  else if (near.w.item.date === today) text = `💧 ${Math.max(1, REVIVE_MIN - near.w.after)} dk daha çalış, yeşersin`;
-  else text = '🥀 Bu fidan soldu';
-  return (
-    <group ref={ref} position={[near.x, y, near.z]}>
-      <Html center zIndexRange={[6, 0]} style={{ pointerEvents: 'none' }}>
-        <span className="explore-bubble">{text}</span>
-      </Html>
-    </group>
-  );
 }
 
 let starGeo: ExtrudeGeometry | null = null;

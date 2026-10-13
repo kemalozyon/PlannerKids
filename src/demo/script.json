@@ -1,0 +1,87 @@
+{
+  "$comment": "Tanıtım turunun sahneleri. hash: açılacak sayfa · target: öne çıkarılacak öge (data-tour) · text: okunacak metin. Ses ve kelime zamanları `npm run demo:audio` ile public/demo/ altına üretilir; metni değiştirince yeniden üret.",
+  "voice": "Kısa, sıcak, merak uyandıran; 10–14 yaşa hitap eden bir anlatıcı.",
+  "scenes": [
+    {
+      "id": "01-merhaba",
+      "hash": "today",
+      "target": "today",
+      "title": "Merhaba!",
+      "text": "Merhaba! Burası senin çalışma dünyan. Her çalıştığın dakika, kendi ormanını ve evini büyütür. Hadi birlikte gezelim."
+    },
+    {
+      "id": "02-sayac",
+      "hash": "today",
+      "target": "timer",
+      "title": "Sayacı başlat",
+      "text": "Dersini seç ve Başlat'a dokun. Sekmeden çıkarsan ya da uzun süre ekrana dokunmazsan sayaç durur. Bitirince ne çalıştığını kısaca yazarsın."
+    },
+    {
+      "id": "03-elmas",
+      "hash": "today",
+      "target": "elmas",
+      "title": "Elmas",
+      "text": "Sayaçla çalıştıkça Elmas kazanırsın. Planını bitirmek, serini sürdürmek ve gününü değerlendirmek de Elmas getirir. Elmas yalnızca çalışarak kazanılır."
+    },
+    {
+      "id": "04-gorevler",
+      "hash": "today",
+      "target": "quests",
+      "title": "Görevler ve sandık",
+      "text": "Günlük ve haftalık görevlerin burada. Haftada beş gün çalışırsan haftalık sandığın açılır ve içinden sürpriz bir eşya çıkar."
+    },
+    {
+      "id": "05-oda",
+      "hash": "forest",
+      "view": "room",
+      "target": "world",
+      "title": "Senin odan",
+      "text": "Burası senin odan. Bir yere dokun, karakterin oraya yürüsün. Kitaplığa dokunursan bitirdiğin kitapları raflarda görürsün."
+    },
+    {
+      "id": "06-duzenle",
+      "hash": "forest",
+      "view": "room",
+      "target": "edit",
+      "title": "Odanı düzenle",
+      "text": "Düzenle'ye dokun, aldığın eşyaları sürükleyip yerleştir. Yeşil yer uygun, kırmızı yer dolu demek. Döndürebilir ya da envantere geri koyabilirsin."
+    },
+    {
+      "id": "07-orman",
+      "hash": "forest",
+      "view": "outdoor",
+      "target": "world",
+      "title": "Büyüyen orman",
+      "text": "Kapıdan çıkınca bahçen ve ormanın seni bekliyor. Her çalışma seansı bir ağaç diker; uzun çalışırsan daha büyük bir ağaç. Her ay yeni bir bölge açılır."
+    },
+    {
+      "id": "08-arazi",
+      "hash": "forest",
+      "view": "outdoor",
+      "target": "lands",
+      "title": "Dünyan büyüyor",
+      "text": "Toplam çalışman arttıkça bahçen genişler: önce bir dere, sonra bir tepe, bir göl ve bir köprü. Arazi satın alınamaz, yalnızca çalışarak büyür."
+    },
+    {
+      "id": "09-dukkan",
+      "hash": "shop",
+      "target": "shop",
+      "title": "Dükkân",
+      "text": "Kazandığın Elmasla odana mobilya, bahçene süs alabilirsin. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+    },
+    {
+      "id": "10-kitaplik",
+      "hash": "library",
+      "target": "library",
+      "title": "Kitaplık",
+      "text": "Okuduğun kitapları buraya ekle. Adını yazınca kapağı kendiliğinden gelir. Kitabı bitirince en sevdiğin kısmı yaz, kitap rafına dizilsin."
+    },
+    {
+      "id": "11-basla",
+      "hash": "today",
+      "target": "timer",
+      "title": "Hadi başlayalım!",
+      "text": "Hepsi bu kadar! Şimdi ilk seansını başlat ve ormanına ilk ağacını dik. Kolay gelsin!"
+    }
+  ]
+}

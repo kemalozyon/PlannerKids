@@ -16,7 +16,7 @@ export default function Quests({ goShop }: { goShop: () => void }) {
   const waiting = [last, now].filter((c) => c.ready && !c.opened);
 
   return (
-    <section className="card quests">
+    <section className="card quests" data-tour="quests">
       <div className="card-head">
         <h2>🎯 Görevlerim</h2>
         <button className="chip gem" onClick={goShop} aria-label={`${stats.crystals} Elmas — dükkân`}>

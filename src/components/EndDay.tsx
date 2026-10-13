@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { toLocalDate } from '../lib/date';
-import { STAGES } from '../lib/forest';
-import { dayAction, type Wallet } from '../lib/game';
+import type { WorldTree } from '../lib/world';
 import { useGame } from '../lib/GameContext';
 import { useReading } from '../lib/ReadingContext';
 import type { DailyReport, Reflection, ReportSettings } from '../lib/types';
@@ -69,7 +68,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
           date={date}
           ready={ready}
           demo={demo}
-          wallet={stats.today}
+          trees={stats.forest.filter((t) => t.date === date)}
           readToday={!!reading.stats?.readToday}
           onClose={() => setOpen(false)}
           goForest={() => {
@@ -110,7 +109,7 @@ function EndDaySheet({
   date,
   ready,
   demo,
-  wallet,
+  trees,
   readToday,
   onClose,
   goForest,
@@ -120,7 +119,8 @@ function EndDaySheet({
   date: string;
   ready: boolean;
   demo: boolean;
-  wallet: Wallet;
+  /** Bugün dikilen ağaçlar */
+  trees: WorldTree[];
   readToday: boolean;
   onClose: () => void;
   goForest: () => void;
@@ -136,14 +136,10 @@ function EndDaySheet({
   }, [api, date]);
 
   const wrote = !!ref && (ref.rating != null || !!ref.note?.trim());
-  const act = dayAction(wallet);
-  const treeText = act
-    ? act.kind === 'plant'
-      ? `Bugün ${wallet.earned} dk çalıştın, bugünün ağacını henüz dikmedin.`
-      : `Ağacını ${STAGES[act.stage].name.toLowerCase()} yapacak kadar çalıştın.`
-    : wallet.tree
-      ? 'Bugünün ağacı ormanında'
-      : `Bugünün ağacı için ${STAGES[0].min - wallet.earned} dk daha çalışman gerek.`;
+  const grown = trees.filter((t) => !t.dry);
+  const treeText = grown.length
+    ? `Bugün ormanına ${grown.length} ağaç dikildi: ${grown.map((t) => t.icon).join(' ')}`
+    : 'Bugün henüz ağaç yok: sayaçla bir seans bitirince ormanına bir ağaç dikilir.';
 
   return (
     <Sheet title="Günü kapatalım 🌙" onClose={onClose}>
@@ -157,12 +153,12 @@ function EndDaySheet({
             </button>
           )}
         </li>
-        <li className={!act && wallet.tree ? 'ok' : ''}>
-          <span aria-hidden>{act ? '🌱' : wallet.tree ? '✅' : '⏳'}</span>
+        <li className={grown.length ? 'ok' : ''}>
+          <span aria-hidden>{grown.length ? '✅' : '🌱'}</span>
           <span className="grow">{treeText}</span>
-          {act && (
+          {grown.length > 0 && (
             <button className="btn sm" onClick={goForest}>
-              {act.kind === 'plant' ? 'Dik' : 'Büyüt'}
+              Gör
             </button>
           )}
         </li>

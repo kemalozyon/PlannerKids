@@ -1,25 +1,11 @@
-// Okuma: kitaplar, okuma kayıtları ve kitap parseli. Ormandaki ders bitkisinden bağımsız.
+// Okuma: kitaplar ve okuma kayıtları. Bitirilen kitaplar odadaki kitaplığın raflarına dizilir (ShelfView).
 import { monthOf } from './forest';
 import { computeStreak } from './streak';
-import type { Book, BookTree, ReadingGoals, ReadingLog } from './types';
+import type { Book, ReadingGoals, ReadingLog } from './types';
 
 export const GENRES = ['Macera', 'Masal', 'Fantastik', 'Bilim', 'Tarih', 'Gizem', 'Mizah', 'Hayvanlar', 'Şiir', 'Diğer'];
 export const RECOMMENDERS = ['Öğretmenim', 'Annem', 'Babam', 'Arkadaşım', 'Kendim', 'Kütüphane'];
 export const BOOK_COLORS = ['#c0392b', '#2f6fd6', '#16a37f', '#e0803a', '#8b5cf6', '#d1477a', '#0e8aa0', '#b8860b', '#3d4a5c', '#7a9a2e'];
-
-/** Kitap parseli her ay 4 yerle başlar, dolarsa 4'er 4'er büyür. */
-export const PARCEL_COLS = 4;
-
-export function parcelCells(used: number, maxCell = -1): number {
-  return Math.max(PARCEL_COLS, Math.ceil(used / PARCEL_COLS) * PARCEL_COLS, Math.ceil((maxCell + 1) / PARCEL_COLS) * PARCEL_COLS);
-}
-
-/** 0 küçük (<100 sayfa), 1 orta (100–199), 2 büyük (200+). Sayfa bilinmiyorsa orta. */
-export function bookTreeSize(pages: number | null): 0 | 1 | 2 {
-  if (!pages) return 1;
-  return pages >= 200 ? 2 : pages >= 100 ? 1 : 0;
-}
-export const SIZE_NAMES = ['Küçük kitap ağacı', 'Orta kitap ağacı', 'Büyük kitap ağacı'];
 
 export interface ReadingStats {
   goals: ReadingGoals;
@@ -32,8 +18,6 @@ export interface ReadingStats {
   reading: Book[];
   want: Book[];
   done: Book[];
-  /** Bu ay bitip parsele dikilmemiş kitaplar */
-  pendingTrees: Book[];
   totalPages: number;
   totalMinutes: number;
   favoriteGenre: string | null;
@@ -43,7 +27,6 @@ export interface ReadingStats {
 export function computeReading(
   books: Book[],
   logs: ReadingLog[],
-  trees: BookTree[],
   goals: ReadingGoals,
   today: string,
 ): ReadingStats {
@@ -63,7 +46,6 @@ export function computeReading(
   const done = books
     .filter((b) => b.status === 'done')
     .sort((a, b) => (b.finished_on ?? '').localeCompare(a.finished_on ?? ''));
-  const planted = new Set(trees.map((t) => t.book_id));
   const genreCount = new Map<string, number>();
   done.forEach((b) => b.genre && genreCount.set(b.genre, (genreCount.get(b.genre) ?? 0) + 1));
   const favoriteGenre = [...genreCount].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
@@ -79,7 +61,6 @@ export function computeReading(
     reading: books.filter((b) => b.status === 'reading'),
     want: books.filter((b) => b.status === 'want'),
     done,
-    pendingTrees: done.filter((b) => b.finished_on && monthOf(b.finished_on) === month && !planted.has(b.id)),
     totalPages: done.reduce((s, b) => s + (b.pages ?? 0), 0),
     totalMinutes: logs.reduce((s, l) => s + l.minutes, 0),
     favoriteGenre,

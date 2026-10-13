@@ -12,7 +12,7 @@ type Open =
   | { kind: 'flow'; id: string; start: 'log' | 'finish' }
   | { kind: 'goals' };
 
-export default function Library({ onPlantBook }: { onPlantBook: (bookId: string) => void }) {
+export default function Library({ onShelf }: { onShelf: () => void }) {
   const { stats, books } = useReading();
   const [open, setOpen] = useState<Open>({ kind: 'none' });
   const [genre, setGenre] = useState<string | null>(null);
@@ -31,7 +31,7 @@ export default function Library({ onPlantBook }: { onPlantBook: (bookId: string)
 
   return (
     <div className="stack">
-      <header className="day-head">
+      <header className="day-head" data-tour="library">
         <div>
           <h1>Kitaplığım</h1>
           <p className="muted">
@@ -172,7 +172,7 @@ export default function Library({ onPlantBook }: { onPlantBook: (bookId: string)
         />
       )}
       {open.kind === 'flow' && bookById(open.id) && (
-        <ReadingFlow book={bookById(open.id)!} start={open.start} onClose={close} onPlant={onPlantBook} />
+        <ReadingFlow book={bookById(open.id)!} start={open.start} onClose={close} onShelf={onShelf} />
       )}
     </div>
   );

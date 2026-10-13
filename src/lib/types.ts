@@ -1,4 +1,5 @@
 import type { SessionState, StudySession } from './session';
+import type { SpaceId, SpaceLayout } from './world';
 
 export interface Course {
   id: string;
@@ -74,20 +75,12 @@ export interface Api {
 
   countDoneTasks(): Promise<number>;
 
-  listTrees(): Promise<ForestTree[]>;
-  plantTree(t: Omit<ForestTree, 'id'>): Promise<ForestTree>;
-  moveTree(id: string, cell: number): Promise<void>;
-  upgradeTree(id: string, stage: number): Promise<void>;
-
   listBooks(): Promise<Book[]>;
   addBook(b: NewBook): Promise<Book>;
   updateBook(id: string, patch: Partial<Omit<Book, 'id' | 'created_at'>>): Promise<void>;
   deleteBook(id: string): Promise<void>;
   listReadingLogs(): Promise<ReadingLog[]>;
   addReadingLog(l: Omit<ReadingLog, 'id' | 'created_at'>): Promise<ReadingLog>;
-  listBookTrees(): Promise<BookTree[]>;
-  plantBookTree(t: Omit<BookTree, 'id'>): Promise<BookTree>;
-  moveBookTree(id: string, cell: number): Promise<void>;
   getReadingGoals(): Promise<ReadingGoals>;
   setReadingGoals(g: ReadingGoals): Promise<void>;
 
@@ -113,7 +106,7 @@ export interface Api {
   reactNote(id: string, reaction: NoteReaction): Promise<void>;
   deleteNote(id: string): Promise<void>;
 
-  /** Yarıda bırakılan sayaç oturumları (adada solgun fidan) */
+  /** Yarıda bırakılan seanslar (ormanda kuru ağaç) */
   listAbandoned(): Promise<Abandoned[]>;
   addAbandoned(a: Pick<Abandoned, 'date' | 'minutes'>): Promise<Abandoned>;
 
@@ -135,15 +128,16 @@ export interface Api {
   buyItem(itemId: string): Promise<OwnedItem>;
   /** Haftalık sandık: hafta hedefi tuttuysa eşya bir kez verilir */
   openChest(week: string, itemId: string): Promise<OwnedItem>;
-  listPlacements(): Promise<Placement[]>;
-  placeItem(p: Omit<Placement, 'id'>): Promise<Placement>;
-  movePlacement(id: string, x: number, z: number, rot: number): Promise<void>;
-  removePlacement(id: string): Promise<void>;
   getEquipped(): Promise<Equipped | null>;
   saveEquipped(e: Equipped): Promise<void>;
+
+  /** Dünya alanları (oda, kütüphane, bahçe); kaydı olmayan alan listede yok (0012_spaces.sql) */
+  listSpaces(): Promise<{ space: SpaceId; layout: SpaceLayout }[]>;
+  /** Yerleşimi sunucu doğrular (sınır, sabit karo, çakışma, envanter) ve kaydeder */
+  saveSpace(space: SpaceId, layout: SpaceLayout): Promise<void>;
 }
 
-/** Yarıda bırakılan sayaç oturumu: adada solgun bir fidan bırakır, aynı gün çalışılırsa canlanır. */
+/** Yarıda bırakılan seans: ormanda kuru ağaç olarak kalır (session_abandon yazar). */
 export interface Abandoned {
   id: string;
   /** Sayacın başladığı gün */
@@ -240,11 +234,18 @@ export interface Book {
   fav_character: string | null;
   review: string | null;
   created_at: string;
+  // Kitaplık (0013_books_shelf.sql); yoksa renkli sırt
+  isbn?: string | null;
+  ol_key?: string | null;
+  /** Yalnızca Open Library kapağı */
+  cover_url?: string | null;
+  /** "En sevdiğin kısım neydi?" */
+  favorite_part?: string | null;
 }
 
 export type NewBook = Pick<Book, 'title' | 'author' | 'pages' | 'genre' | 'recommended_by' | 'color'> & {
   status?: BookStatus;
-};
+} & Partial<Pick<Book, 'isbn' | 'ol_key' | 'cover_url' | 'favorite_part' | 'finished_on' | 'started_on' | 'current_page'>>;
 
 export interface ReadingLog {
   id: string;
@@ -256,13 +257,6 @@ export interface ReadingLog {
   created_at: string;
 }
 
-/** Kitap parselindeki ağaç. Ay = kitabın bittiği ay. */
-export interface BookTree {
-  id: string;
-  book_id: string;
-  month: string;
-  cell: number;
-}
 
 export interface ReadingGoals {
   monthly_books: number;
@@ -271,15 +265,6 @@ export interface ReadingGoals {
 
 export const DEFAULT_READING_GOALS: ReadingGoals = { monthly_books: 2, daily_pages: 15 };
 
-/** Ormana dikilmiş bir bitki; `date` gününün parasıyla satın alındı. */
-export interface ForestTree {
-  id: string;
-  date: string; // hangi günün parasıyla alındı
-  stage: number; // 0 Tohum … 4 Dev ağaç (fiyatı STAGES'te)
-  species: string;
-  month: string; // YYYY-MM — hangi ayın ormanı
-  cell: number; // 0..CELLS-1
-}
 
 // ---------- Oyun ekonomisi (0008_economy.sql, 0010_economy_v2.sql) ----------
 /** 'crystal' = 💎 Elmas (yalnızca çalışarak kazanılır, tek para) · 'star' = gezintide toplanan ⭐ (sayaç, harcanmaz) */
@@ -311,15 +296,6 @@ export interface OwnedItem {
   created_at: string;
 }
 
-/** Bir eşyanın bir ayın adasındaki yeri */
-export interface Placement {
-  id: string;
-  month: string;
-  owned_id: string;
-  x: number;
-  z: number;
-  rot: number;
-}
 
 /** Görünüş: gezinti karakteri, aksesuar ve yanındaki hayvanlar */
 export interface Equipped {

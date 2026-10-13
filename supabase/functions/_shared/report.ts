@@ -12,8 +12,8 @@ export interface ReportInput {
   tasks: { title: string; done: boolean }[];
   reading: { book: string; pages: number; minutes: number }[];
   finishedBooks: { title: string; rating: number | null; review: string | null }[];
-  /** Bugünün parasıyla alınan bitkiler (0 tohum … 4 dev ağaç) */
-  trees: { stage: number; species: string }[];
+  /** Bugün sayaçla biten seanslar: her biri ormana bir ağaç diker (türü süreye göre) */
+  trees: { minutes: number }[];
 }
 
 /** Türkçe tamlayan eki: Ece → Ece'nin, Zeynep → Zeynep'in, Duru → Duru'nun, Aslı → Aslı'nın. */
@@ -26,7 +26,16 @@ export function genitive(name: string): string {
   return `${name}'${endsWithVowel ? 'n' : ''}${v}n`;
 }
 
-const STAGE_NAMES = ['Tohum', 'Çiçek', 'Küçük ağaç', 'Büyük ağaç', 'Dev ağaç'];
+/** Seans süresine göre ağaç türü (src/config/economy.json → world.trees ile aynı; logic.test.ts denetler) */
+export const TREE_NAMES: { min: number; name: string }[] = [
+  { min: 0, name: 'Fidan' },
+  { min: 15, name: 'Çalı' },
+  { min: 30, name: 'Genç ağaç' },
+  { min: 45, name: 'Çam' },
+  { min: 60, name: 'Meşe' },
+  { min: 90, name: 'Dev ağaç' },
+];
+const treeName = (m: number) => TREE_NAMES.filter((t) => m >= t.min).at(-1)?.name ?? 'Ağaç';
 const MOOD_LABELS = ['', 'Çok zordu', 'Biraz zordu', 'Fena değil', 'İyiydi', 'Süperdi'];
 const MOOD_FACES = ['', '😞', '🙁', '😐', '🙂', '😄'];
 
@@ -100,7 +109,7 @@ export function buildFacts(input: ReportInput): ReportFacts {
     readingMinutes: input.reading.reduce((s, r) => s + r.minutes, 0),
     readingBooks: [...new Set(input.reading.map((r) => r.book))],
     finishedBooks: input.finishedBooks,
-    plants: input.trees.map((t) => STAGE_NAMES[t.stage] ?? 'Bitki'),
+    plants: input.trees.map((t) => treeName(t.minutes)),
   };
 }
 

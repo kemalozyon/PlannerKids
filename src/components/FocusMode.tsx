@@ -1,21 +1,18 @@
 import { useEffect, useState } from 'react';
 import { formatMinutes } from '../lib/date';
-import { nextStage, STAGES, stageIndex } from '../lib/forest';
-import { useGame } from '../lib/GameContext';
+import { CFG } from '../lib/config';
 import type { Course } from '../lib/types';
 import { formatClock } from '../lib/useTimer';
 import type { SessionApi } from '../lib/SessionContext';
 import ConfirmButton from './ConfirmButton';
-import Tree from './Tree';
-import { WILT_MIN } from '../lib/wilt';
+import { treeKind } from '../lib/world';
 
 const GOALS = [25, 40];
 const SOUND_KEY = 'ct-focus-sound-v1';
 
 /**
- * Tam ekran odak modu: halka sayaç, çalıştıkça büyüyen fidan, tur seçimi (25 / 40 / serbest),
- * tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
- * Fidan yalnızca gösterimdir: bugün çalışılan dakika + bu oturum hangi evreye yetiyorsa o (bugünün ağacı).
+ * Tam ekran odak modu: halka sayaç, seans uzadıkça değişen ağaç (her seans ormana bir ağaç diker; türü
+ * süreye göre), tur seçimi (25 / 40 / serbest), tur bitince zil ve mola önerisi, isteğe bağlı yağmur sesi.
  * Açıkken ekranın kararmaması istenir (Wake Lock): kağıttan çalışırken ekran kapanıp sayaç durmasın.
  */
 export default function FocusMode({
@@ -35,7 +32,6 @@ export default function FocusMode({
   onCancel: () => void;
   onClose: () => void;
 }) {
-  const { stats } = useGame();
   const goal = ses.goalMin;
   const elapsedMin = ses.elapsedMs / 60_000;
   const reached = goal != null && elapsedMin >= goal;
@@ -64,9 +60,8 @@ export default function FocusMode({
   const R = 112;
   const C = 2 * Math.PI * R;
 
-  const wallet = (stats?.today.earned ?? 0) + Math.floor(elapsedMin);
-  const stage = stageIndex(wallet);
-  const nx = nextStage(wallet);
+  const kind = treeKind(Math.floor(elapsedMin));
+  const nx = CFG.world.trees.find((k) => k.min > elapsedMin);
   const color = course?.color ?? 'var(--accent)';
   const rounds = Math.min(6, roundsToday + 1);
 
@@ -117,8 +112,8 @@ export default function FocusMode({
             </svg>
             <div className="focus-center">
               <div className="clock">{formatClock(ses.elapsedMs)}</div>
-              <div className={stage < 0 ? 'focus-tree faint' : 'focus-tree'}>
-                <Tree species={stats?.today.tree?.species ?? stats?.favoriteSpecies ?? 'elma'} stage={Math.max(0, stage)} size={64} />
+              <div className="focus-tree" aria-hidden>
+                {kind.icon}
               </div>
             </div>
           </div>
@@ -126,10 +121,10 @@ export default function FocusMode({
             {goal != null && !reached && <>Turun bitmesine {formatMinutes(Math.ceil(goal - elapsedMin))} · </>}
             {nx ? (
               <>
-                Bugünün ağacı büyüyor · <strong className="ink">{nx.stage.name}</strong> olmasına {formatMinutes(nx.remaining)}
+                Bu seans bir <strong className="ink">{kind.name.toLocaleLowerCase('tr-TR')}</strong> dikecek · {nx.icon} {nx.name.toLocaleLowerCase('tr-TR')} olmasına {formatMinutes(Math.ceil(nx.min - elapsedMin))}
               </>
             ) : (
-              <>Bugünün ağacı dev olacak kadar çalıştın! 🌲</>
+              <>Bu seans ormanına bir dev ağaç dikecek! 🌲</>
             )}
           </div>
           <div className="rounds" aria-label={`Bugün ${rounds}. oturumun`}>
@@ -143,7 +138,7 @@ export default function FocusMode({
             <div className="break-note">{Math.floor(elapsedMin)} dakikadır çalışıyorsun. Kısa bir mola iyi gelir. 🧃</div>
           )}
           <div className="actions center focus-actions">
-            <ConfirmButton className="btn ghost" confirmLabel={elapsedMin >= WILT_MIN ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
+            <ConfirmButton className="btn ghost" confirmLabel={elapsedMin >= CFG.session.wiltMinutes ? 'Kuru ağaç kalsın mı?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
               İptal
             </ConfirmButton>
             {ses.paused && (
@@ -178,9 +173,7 @@ export default function FocusMode({
             }}
           />
         </section>
-        <p className="muted small center">
-          {STAGES[0].name} için {STAGES[0].min} dk yeter. Her dakika 🪙 1 dk para; sayaçla çalıştıkça 💎 Elmas da kazanırsın.
-        </p>
+        <p className="muted small center">Seansı bitirince ormanına ağaç dikilir ve 💎 Elmas kazanırsın. Yarıda bırakırsan kuru ağaç kalır.</p>
       </div>
     </div>
   );

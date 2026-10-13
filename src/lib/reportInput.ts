@@ -6,14 +6,13 @@ import type { Api } from './types';
 
 export async function gatherReportInput(api: Api, date: string, childName: string): Promise<ReportInput> {
   const from = addDays(date, -6);
-  const [courses, logs, reflection, tasks, rlogs, books, trees] = await Promise.all([
+  const [courses, logs, reflection, tasks, rlogs, books] = await Promise.all([
     api.listCourses(),
     api.listLogs(from, date),
     api.getReflection(date),
     api.listTasks(date),
     api.listReadingLogs(),
     api.listBooks(),
-    api.listTrees(),
   ]);
   const course = new Map(courses.map((c) => [c.id, c]));
   const book = new Map(books.map((b) => [b.id, b]));
@@ -31,6 +30,6 @@ export async function gatherReportInput(api: Api, date: string, childName: strin
     tasks: tasks.map((t) => ({ title: t.title, done: t.done })),
     reading: rlogs.filter((r) => r.date === date).map((r) => ({ book: book.get(r.book_id)?.title ?? 'Kitap', pages: r.pages, minutes: r.minutes })),
     finishedBooks: books.filter((b) => b.finished_on === date).map((b) => ({ title: b.title, rating: b.rating, review: b.review })),
-    trees: trees.filter((t) => t.date === date).map((t) => ({ stage: t.stage, species: t.species })),
+    trees: logs.filter((l) => l.date === date && l.source !== 'manual').map((l) => ({ minutes: l.duration_minutes })),
   };
 }

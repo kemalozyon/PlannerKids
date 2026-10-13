@@ -1,33 +1,35 @@
 // Koleksiyon defteri: bütün eşyalar türlerine göre; sahip olunmayanlar gölge gibi görünür ve nasıl
-// açılacağı yazar. Altta anı albümü: geçmiş ayların adaları, o ayın ağaçları ve yerleşimiyle.
-import { lazy, Suspense, useMemo, useState } from 'react';
+// açılacağı yazar. Altta ormanın bölgeleri: her ay yeni bir bölge, geçmiş aylar Dünyam'da gezilebilir.
+import { useMemo, useState } from 'react';
 import ItemCard from '../components/ItemCard';
-import { CATEGORIES, itemById, ITEMS, type Item } from '../lib/catalog';
+import { CATEGORIES, ITEMS, type Item } from '../lib/catalog';
 import { owns, unlockHint } from '../lib/economy';
-import { formatMonth, monthOf } from '../lib/forest';
+import { formatMonth } from '../lib/forest';
 import { useGame } from '../lib/GameContext';
-import { toLocalDate } from '../lib/date';
 import { hasWebGL } from '../lib/webgl';
 import { ItemSheet } from './Shop';
 
-const Island3D = lazy(() => import('../components/forest3d/Island3D'));
-
-export default function Collection() {
+export default function Collection({ goWorld }: { goWorld: () => void }) {
   const { stats, equip, buy } = useGame();
   const [open, setOpen] = useState<Item | null>(null);
   const can3D = useMemo(hasWebGL, []);
-  const thisMonth = monthOf(toLocalDate());
-  const months = useMemo(
-    () => [...new Set((stats?.trees ?? []).map((t) => t.month).filter((m) => m < thisMonth))].sort().reverse(),
-    [stats, thisMonth],
-  );
-  const [album, setAlbum] = useState<string | null>(null);
+  const months = useMemo(() => {
+    const m = new Map<string, { trees: number; dry: number; icons: string[] }>();
+    for (const t of stats?.forest ?? []) {
+      const e = m.get(t.month) ?? { trees: 0, dry: 0, icons: [] };
+      if (t.dry) e.dry++;
+      else {
+        e.trees++;
+        e.icons.push(t.icon);
+      }
+      m.set(t.month, e);
+    }
+    return [...m].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [stats]);
   if (!stats) return <div className="splash">Yükleniyor…</div>;
 
   const have = (i: Item) => owns(i, stats.owned, stats.unlock);
   const total = ITEMS.filter(have).length;
-  const shown = album ?? months[0] ?? null;
-  const ownedById = new Map(stats.owned.map((o) => [o.id, o]));
 
   return (
     <div className="stack">
@@ -35,14 +37,14 @@ export default function Collection() {
         <div className="big-num">
           {total}/{ITEMS.length}
         </div>
-        <div className="muted small">eşya topladın</div>
+        <div className="muted small">eşya topladın · ⭐ {stats.stars} yıldız</div>
         <div className="pbar" aria-hidden>
           <span style={{ width: `${(total / ITEMS.length) * 100}%` }} />
         </div>
       </section>
 
       {CATEGORIES.map((c) => {
-        const items = ITEMS.filter((i) => i.category === c.id);
+        const items = ITEMS.filter((i) => c.cats.includes(i.category));
         const got = items.filter(have).length;
         return (
           <section key={c.id} className="card">
@@ -74,42 +76,31 @@ export default function Collection() {
       })}
 
       <section className="card">
-        <h2>📸 Anı albümü</h2>
+        <div className="card-head">
+          <h2>🗺️ Ormanının bölgeleri</h2>
+          <button className="link small" onClick={goWorld}>
+            Dünyamda gez →
+          </button>
+        </div>
         {months.length === 0 ? (
-          <p className="muted small">Ay bitince o ayın adası buraya anı olarak eklenir.</p>
+          <p className="muted small">Sayaçla çalıştığın her seans ormanına bir ağaç diker; her ay yeni bir bölge açılır.</p>
         ) : (
-          <>
-            <div className="album-months">
-              {months.map((m) => (
-                <button key={m} className={`chip${m === shown ? ' on' : ''}`} onClick={() => setAlbum(m)}>
-                  {formatMonth(m)}
-                </button>
-              ))}
-            </div>
-            {shown && can3D ? (
-              <Suspense fallback={<div className="island-wrap island-loading">🏝️</div>}>
-                <Island3D
-                  key={shown}
-                  month={shown}
-                  trees={stats.trees.filter((t) => t.month === shown)}
-                  wilts={stats.wilts.filter((w) => monthOf(w.item.date) === shown)}
-                  totalMinutes={[...stats.dayTotals].reduce((s, [d, m]) => (monthOf(d) <= shown ? s + m : s), 0)}
-                  placing="none"
-                  onCell={() => {}}
-                  onTree={() => {}}
-                  onWilt={() => {}}
-                  placed={stats.placements
-                    .filter((p) => p.month === shown)
-                    .flatMap((p) => {
-                      const item = itemById(ownedById.get(p.owned_id)?.item_id ?? '');
-                      return item?.model ? [{ p, item }] : [];
-                    })}
-                />
-              </Suspense>
-            ) : (
-              shown && <p className="muted small">{stats.trees.filter((t) => t.month === shown).length} ağaç dikmiştin.</p>
-            )}
-          </>
+          <ul className="list region-list">
+            {months.map(([m, e]) => (
+              <li key={m} className="row">
+                <span className="grow">
+                  <strong>{formatMonth(m)}</strong>
+                  <span className="region-icons" aria-hidden>
+                    {e.icons.slice(0, 18).join('')}
+                    {e.icons.length > 18 ? '…' : ''}
+                  </span>
+                </span>
+                <span className="muted small nowrap">
+                  {e.trees} ağaç{e.dry ? ` · ${e.dry} kuru` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

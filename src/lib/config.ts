@@ -50,6 +50,44 @@ export interface EconomyConfig {
   stars: { perDay: number };
   levelHours: number[];
   skillTierMinutes: number[];
+  world: WorldConfig;
+}
+
+/** Bir alandaki sabit karo: kapı (yürünür, eşya konmaz), ev, su, köprü, tepe, koru */
+export interface FixedTile {
+  kind: 'door' | 'house' | 'water' | 'bridge' | 'hill' | 'grove';
+  x: number;
+  y: number;
+  w?: number;
+  h?: number;
+  /** Kapının götürdüğü alan */
+  to?: SpaceId;
+  /** Bu kadar kitap bitince açılır (kütüphane kapısı) */
+  books?: number;
+  /** Bahçede bu arazi açılınca görünür */
+  land?: string;
+}
+
+export type SpaceId = 'room' | 'library' | 'garden';
+
+export interface Land {
+  id: string;
+  name: string;
+  icon: string;
+  hours: number;
+  w: number;
+  h: number;
+  desc: string;
+}
+
+export interface WorldConfig {
+  room: { w: number; h: number; fixed: FixedTile[] };
+  library: { w: number; h: number; books: number; fixed: FixedTile[] };
+  garden: { lands: Land[]; fixed: FixedTile[]; pathRow: number };
+  region: { min: number; max: number; tilesPerTree: number };
+  trees: { id: string; name: string; icon: string; min: number }[];
+  creatures: { id: string; name: string; icon: string; trees: number; model?: string; fly?: boolean }[];
+  shelf: { perShelf: number };
 }
 
 /** items.json'daki ham eşya tanımı */
@@ -77,6 +115,17 @@ export interface ItemDef {
   h?: number;
   rotations?: number[];
   placement?: 'indoor' | 'outdoor' | 'both';
+  /** Malzeme adı → renk (ör. koltuğun kumaşı) */
+  tint?: Record<string, string>;
+  /** Bu malzeme ışık saçar (lamba) */
+  glow?: string;
+  /** Dokununca açılan pencere (kitaplık) */
+  opens?: 'shelf';
+  desc?: string;
+  /** Zemin/duvar kaplamasının rengi */
+  color?: string;
+  color2?: string;
+  stars?: boolean;
 }
 
 export const CFG = economy as EconomyConfig;

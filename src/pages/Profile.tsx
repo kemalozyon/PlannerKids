@@ -1,4 +1,6 @@
 import { IconChevron } from '../components/Icons';
+import { CFG } from '../lib/config';
+import { startTour } from '../lib/tour';
 import { companionSlots, ITEMS, type Item } from '../lib/catalog';
 import { formatMinutes } from '../lib/date';
 import { owns } from '../lib/economy';
@@ -9,7 +11,7 @@ import type { Equipped } from '../lib/types';
 type Target = 'parent' | 'rewards' | 'courses' | 'shop' | 'collection';
 
 const LINKS: { id: Target; icon: string; title: string; desc: string }[] = [
-  { id: 'shop', icon: '🛍️', title: 'Dükkân', desc: 'Elmasla karakter, hayvan, yapı al' },
+  { id: 'shop', icon: '🛍️', title: 'Dükkân', desc: 'Elmasla mobilya, bahçe süsü ve kıyafet al' },
   { id: 'collection', icon: '📒', title: 'Koleksiyon defteri', desc: 'Topladığın eşyalar ve geçmiş ayların adaları' },
   { id: 'rewards', icon: '🎁', title: 'Ödül hedeflerim', desc: 'Ailenle koyduğunuz gerçek ödüller' },
   { id: 'courses', icon: '📚', title: 'Dersler', desc: 'Ders ekle, rengini değiştir, sil' },
@@ -33,6 +35,7 @@ export default function Profile({
       <h1>Profil</h1>
 
       <LevelCard />
+      <BadgesCard />
       <SkillsCard />
       <LookCard />
 
@@ -49,6 +52,16 @@ export default function Profile({
             <IconChevron />
           </button>
         ))}
+        <button className="link-row" onClick={() => startTour('audio')}>
+          <span className="link-icon" aria-hidden>
+            🎬
+          </span>
+          <span className="grow">
+            <strong>Tanıtımı izle</strong>
+            <span className="muted small">Sesli ya da yazılı 2 dakikalık tur</span>
+          </span>
+          <IconChevron />
+        </button>
       </section>
 
       <section className="card">
@@ -199,6 +212,53 @@ function LookCard() {
       ) : (
         <p className="muted small">Dükkândan bir evcil hayvan alınca seninle gezer.</p>
       )}
+    </section>
+  );
+}
+
+const STREAK_TIERS = CFG.elmas.streak.tiers;
+
+/** Rozetler ve kademeli serinin kuralı */
+function BadgesCard() {
+  const { stats } = useGame();
+  if (!stats) return null;
+  const unlocked = stats.badges.filter((b) => b.unlocked).length;
+  const nextBadge = stats.badges.filter((b) => !b.unlocked).sort((a, b) => b.progress - a.progress)[0];
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Rozetlerim</h2>
+        <span className="muted small tabular">
+          {unlocked}/{stats.badges.length}
+        </span>
+      </div>
+      {nextBadge && (
+        <p className="muted small next-badge">
+          Sıradaki: <strong>{nextBadge.title}</strong> — {nextBadge.desc.toLowerCase()} ({nextBadge.hint})
+        </p>
+      )}
+      <ul className="badges">
+        {stats.badges.map((b) => (
+          <li key={b.id} className={b.unlocked ? 'on' : ''} title={b.desc}>
+            <span className="badge-icon" aria-hidden>
+              {b.icon}
+            </span>
+            <span className="badge-title">{b.title}</span>
+            <span className="badge-desc">{b.desc}</span>
+            {!b.unlocked && (
+              <span className="badge-progress">
+                <span style={{ width: `${b.progress * 100}%` }} />
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="rules muted small">
+        <strong>Seri nasıl işler?</strong> Sayaçla çalıştığın her gün serin 1 büyür. Hafta sonu dinlenmek seriyi bozmaz.
+        Hafta içi bir günü kaçırırsan serin sıfırlanmaz, bir kademe düşer ({STREAK_TIERS.map((t) => t.days).join(' → ')} gün).
+        Kademen yükseldikçe her gün fazladan Elmas kazanırsın.{' '}
+        {stats.streakTier > 0 && <span className="pill">Kademe {stats.streakTier}: günde +{STREAK_TIERS[stats.streakTier - 1].bonus} 💎</span>}
+      </div>
     </section>
   );
 }

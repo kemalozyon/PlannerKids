@@ -76,7 +76,17 @@ export const sfx = {
   jump() {
     tone(300, 520, 0.14, 0, 'sine', 0.08);
   },
-  /** Solgun fidan */
+  /** Eşya yerine kondu: tok bir "tak" */
+  place() {
+    tone(180, 120, 0.08, 0, 'square', 0.06);
+    tone(660, 880, 0.1, 0.05, 'sine', 0.1);
+  },
+  /** Kapıdan geçiş */
+  door() {
+    tone(330, 440, 0.12, 0, 'triangle', 0.1);
+    tone(440, 554, 0.16, 0.1, 'triangle', 0.1);
+  },
+  /** Kuru ağaç */
   sad() {
     tone(392, 300, 0.35, 0, 'triangle', 0.1);
   },

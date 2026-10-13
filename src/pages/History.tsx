@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import DaySheet from '../components/DaySheet';
-import Tree from '../components/Tree';
 import { useApi } from '../lib/ApiContext';
 import { useGame } from '../lib/GameContext';
 import { MOODS } from '../lib/mood';
 import { addDays, formatDay, formatMinutes, formatShort, parseLocalDate, toLocalDate, weekStart } from '../lib/date';
 import { formatMonth, monthOf, shiftMonth } from '../lib/forest';
 import { WEEKDAYS, weekDates } from '../lib/plan';
-import type { Course, ForestTree, Reflection, StudyLog } from '../lib/types';
+import type { Course, Reflection, StudyLog } from '../lib/types';
+import type { WorldTree } from '../lib/world';
 
 /** Isı haritası seviyeleri (dakika alt sınırı) */
 const LEVELS = [0, 1, 60, 110, 150];
@@ -88,8 +88,9 @@ export default function History({ courses }: { courses: Course[] }) {
   const isThisWeek = week === weekStart(today);
 
   // Günde tek ağaç; eski verilerde birden çoksa en büyüğü
+  /** O günün en büyük ağacı (takvimde küçük simge) */
   const treeOf = (d: string) =>
-    (stats?.trees ?? []).filter((t) => t.date === d).reduce<ForestTree | null>((b, t) => (!b || t.stage > b.stage ? t : b), null);
+    (stats?.forest ?? []).filter((t) => t.date === d && !t.dry).reduce<WorldTree | null>((b, t) => (!b || t.minutes > b.minutes ? t : b), null);
 
   return (
     <div className="stack">
@@ -150,7 +151,7 @@ export default function History({ courses }: { courses: Course[] }) {
               >
                 <span>{Number(d.slice(-2))}</span>
                 <span className="cal-mood" aria-hidden>
-                  {tree && <Tree species={tree.species} stage={tree.stage} size={14} />}
+                  {tree && <span className="cal-tree">{tree.icon}</span>}
                   {r?.rating ? MOODS[r.rating - 1].face : null}
                 </span>
               </button>
@@ -230,7 +231,7 @@ export default function History({ courses }: { courses: Course[] }) {
       {open && (
         <DaySheet
           date={open}
-          tree={treeOf(open)}
+          trees={stats?.forest.filter((t) => t.date === open) ?? []}
           minutes={stats?.dayTotals.get(open) ?? totals.get(open) ?? 0}
           courses={courses}
           onClose={() => setOpen(null)}

@@ -6,7 +6,7 @@ const strip = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== 
 const q = (v) => (v == null ? 'null' : typeof v === 'number' || typeof v === 'boolean' ? String(v) : `'${String(v).replaceAll("'", "''")}'`);
 
 /** Sandıktan çıkabilen eşyalar (src/lib/economy.ts → inChestPool ile aynı) */
-export const inChest = (d) => !!d.chest || (d.category === 'yapi' && d.price != null);
+export const inChest = (d) => !!d.chest || (d.category === 'dis' && d.price != null);
 
 export function renderConfigSql(economy, items) {
   const cfg = JSON.stringify(strip(economy));

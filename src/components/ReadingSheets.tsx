@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { daysBetween, formatDay, formatMinutes, toLocalDate } from '../lib/date';
+import { CFG } from '../lib/config';
 import { useGame } from '../lib/GameContext';
 import { BOOK_COLORS, GENRES, RECOMMENDERS, inkOn, pickBookColor } from '../lib/reading';
 import { useReading } from '../lib/ReadingContext';
-import type { Book } from '../lib/types';
+import { searchBooks, type FoundBook } from '../lib/openLibrary';
+import type { Book, BookStatus } from '../lib/types';
 import ConfirmButton from './ConfirmButton';
 import Sheet from './Sheet';
 
@@ -52,6 +54,73 @@ export function Stars({ value, onChange, size = 'md' }: { value: number | null; 
 }
 
 // ---------- Kitap ekle ----------
+/** Ad ya da ISBN ile Open Library'de ara; seçilince kapak, yazar ve sayfa dolar. Bulunamazsa elle yaz. */
+function BookSearch({ onPick }: { onPick: (b: FoundBook) => void }) {
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState<FoundBook[] | null>(null);
+  const [state, setState] = useState<'idle' | 'busy' | 'error'>('idle');
+  useEffect(() => {
+    if (q.trim().length < 2) {
+      setFound(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    // Yazarken her harfte değil, 400 ms durunca ara
+    const t = setTimeout(() => {
+      setState('busy');
+      searchBooks(q, ctrl.signal).then(
+        (r) => {
+          setFound(r);
+          setState('idle');
+        },
+        (e) => {
+          if ((e as Error).name !== 'AbortError') setState('error');
+        },
+      );
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [q]);
+  return (
+    <div className="book-search">
+      <label className="field">
+        <span>🔎 Kitabı ara (ad ya da ISBN)</span>
+        <input id="book-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ör. Küçük Prens ya da 9789750719387" autoComplete="off" />
+      </label>
+      {state === 'busy' && <p className="muted small">Aranıyor…</p>}
+      {state === 'error' && <p className="muted small">Şu an aranamıyor (internet yok olabilir). Aşağıya kendin yazabilirsin.</p>}
+      {found && state === 'idle' && (
+        <ul className="search-results">
+          {found.length === 0 && <li className="muted small">Bulunamadı. Aşağıya kendin yazabilirsin; kitabın renkli sırtla rafa dizilir.</li>}
+          {found.map((b, i) => (
+            <li key={`${b.ol_key}-${i}`}>
+              <button
+                type="button"
+                className="search-hit"
+                onClick={() => {
+                  onPick(b);
+                  setQ('');
+                  setFound(null);
+                }}
+              >
+                {b.cover_url ? <img src={b.cover_url.replace('-M.jpg', '-S.jpg')} alt="" loading="lazy" /> : <span className="hit-nocover" aria-hidden>📕</span>}
+                <span className="grow">
+                  <strong>{b.title}</strong>
+                  <span className="muted small">
+                    {[b.author, b.year, b.pages && `${b.pages} sayfa`].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function AddBookSheet({ onClose }: { onClose: () => void }) {
   const { addBook } = useReading();
   const [title, setTitle] = useState('');
@@ -60,32 +129,56 @@ export function AddBookSheet({ onClose }: { onClose: () => void }) {
   const [genre, setGenre] = useState('');
   const [rec, setRec] = useState('');
   const [color, setColor] = useState<string | null>(null);
-  const [startNow, setStartNow] = useState(false);
+  const [status, setStatus] = useState<BookStatus>('want');
+  const [fav, setFav] = useState('');
+  const [found, setFoundBook] = useState<FoundBook | null>(null);
   const [busy, setBusy] = useState(false);
   const shown = color ?? pickBookColor(title || 'kitap');
+  const done = status === 'done';
+  const favMissing = done && fav.trim().length < 3;
 
   return (
     <Sheet title="Kitap ekle" onClose={onClose}>
+      <BookSearch
+        onPick={(b) => {
+          setFoundBook(b);
+          setTitle(b.title);
+          setAuthor(b.author ?? '');
+          setPages(b.pages ? String(b.pages) : '');
+        }}
+      />
       <form
         className="book-form"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (!title.trim()) return;
+          if (!title.trim() || favMissing) return;
           setBusy(true);
+          const same = found && found.title === title.trim();
+          const n = Number(pages) > 0 ? Math.round(Number(pages)) : null;
           await addBook({
             title: title.trim(),
             author: author.trim() || null,
-            pages: Number(pages) > 0 ? Math.round(Number(pages)) : null,
+            pages: n,
             genre: genre || null,
             recommended_by: rec.trim() || null,
             color: shown,
-            status: startNow ? 'reading' : 'want',
+            status,
+            isbn: same ? found.isbn : null,
+            ol_key: same ? found.ol_key : null,
+            cover_url: same ? found.cover_url : null,
+            favorite_part: fav.trim() || null,
+            ...(status !== 'want' ? { started_on: toLocalDate() } : {}),
+            ...(done ? { finished_on: toLocalDate(), current_page: n ?? 0 } : {}),
           });
           onClose();
         }}
       >
         <div className="book-form-top">
-          <Spine book={{ title: title || 'Kitap adı', pages: Number(pages) || 150, color: shown } as Book} />
+          {found?.cover_url && found.title === title ? (
+            <img className="form-cover" src={found.cover_url} alt={`${title} kapağı`} />
+          ) : (
+            <Spine book={{ title: title || 'Kitap adı', pages: Number(pages) || 150, color: shown } as Book} />
+          )}
           <div className="grow">
             <label className="field">
               <span>Kitabın adı</span>
@@ -121,21 +214,39 @@ export function AddBookSheet({ onClose }: { onClose: () => void }) {
             ))}
           </datalist>
         </label>
-        <div className="field">
-          <span>Kitabın rengi</span>
-          <div className="swatches">
-            {BOOK_COLORS.map((c) => (
-              <button type="button" key={c} aria-label={c} className={shown === c ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} />
-            ))}
+        {!(found?.cover_url && found.title === title) && (
+          <div className="field">
+            <span>Kitabın rengi (kapak bulunamazsa sırtı bu renkte olur)</span>
+            <div className="swatches">
+              {BOOK_COLORS.map((c) => (
+                <button type="button" key={c} aria-label={c} className={shown === c ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} />
+              ))}
+            </div>
           </div>
+        )}
+        <div className="tabs book-status" role="radiogroup" aria-label="Bu kitap">
+          {(
+            [
+              ['want', 'Okuyacağım'],
+              ['reading', 'Okuyorum'],
+              ['done', 'Bitirdim'],
+            ] as const
+          ).map(([v, label]) => (
+            <button type="button" key={v} role="radio" aria-checked={status === v} className={status === v ? 'on' : ''} onClick={() => setStatus(v)}>
+              {label}
+            </button>
+          ))}
         </div>
-        <label className="check start-now">
-          <input type="checkbox" checked={startNow} onChange={(e) => setStartNow(e.target.checked)} />
-          <span>Bu kitabı şimdi okumaya başlıyorum</span>
-        </label>
-        <button className="btn primary big full" disabled={busy || !title.trim()}>
-          {startNow ? 'Ekle ve başla' : 'Okunacaklara ekle'}
+        {(done || status === 'reading') && (
+          <label className="field">
+            <span>{done ? 'En sevdiğin kısım neydi?' : 'Şimdiye kadar en sevdiğin kısım? (istersen)'}</span>
+            <textarea id="book-fav" rows={2} maxLength={300} value={fav} onChange={(e) => setFav(e.target.value)} placeholder="ör. Tilkinin evcilleştirilmeyi anlattığı yer" />
+          </label>
+        )}
+        <button className="btn primary big full" disabled={busy || !title.trim() || favMissing}>
+          {done ? 'Rafıma diz' : status === 'reading' ? 'Ekle ve başla' : 'Okunacaklara ekle'}
         </button>
+        {favMissing && <p className="muted small center">Bitirdiğin kitap için en sevdiğin kısmı kısaca yaz.</p>}
       </form>
     </Sheet>
   );
@@ -148,13 +259,13 @@ export function ReadingFlow({
   book: initial,
   start = 'log',
   onClose,
-  onPlant,
+  onShelf,
 }: {
   book: Book;
   start?: Step;
   onClose: () => void;
-  /** "Ağacını dik" → ormana git */
-  onPlant?: (bookId: string) => void;
+  /** "Kitaplığımda gör" → odadaki kitaplık */
+  onShelf?: () => void;
 }) {
   const { books, logReading, finishBook } = useReading();
   const { celebrate } = useGame();
@@ -168,6 +279,7 @@ export function ReadingFlow({
   const [rating, setRating] = useState<number | null>(null);
   const [fav, setFav] = useState('');
   const [review, setReview] = useState('');
+  const [part, setPart] = useState(initial.favorite_part ?? '');
   const [busy, setBusy] = useState(false);
 
   const target = Number(toPage);
@@ -262,6 +374,10 @@ export function ReadingFlow({
           <Stars value={rating} onChange={setRating} />
         </div>
         <label className="field">
+          <span>En sevdiğin kısım neydi?</span>
+          <textarea id="finish-part" rows={2} value={part} maxLength={300} onChange={(e) => setPart(e.target.value)} placeholder="ör. Tilkinin evcilleştirilmeyi anlattığı yer" />
+        </label>
+        <label className="field">
           <span>En sevdiğin karakter kim?</span>
           <input id="finish-fav" value={fav} maxLength={80} onChange={(e) => setFav(e.target.value)} placeholder="istersen yaz" />
         </label>
@@ -271,10 +387,10 @@ export function ReadingFlow({
         </label>
         <button
           className="btn primary big full"
-          disabled={busy}
+          disabled={busy || part.trim().length < 3}
           onClick={async () => {
             setBusy(true);
-            await finishBook(book.id, rating, fav, review);
+            await finishBook(book.id, rating, fav, review, part);
             celebrate({ kind: 'badge', icon: '📚', title: 'Kitaplığına eklendi!', detail: book.title });
             setBusy(false);
             setStep('done');
@@ -289,15 +405,15 @@ export function ReadingFlow({
   return (
     <Sheet title="Kitaplığında yerini aldı 📚" onClose={onClose}>
       <p>
-        <strong>{book.title}</strong> artık rafında. Bu kitap için ormandaki <strong>kitap parseline</strong> özel bir ağaç dikebilirsin.
+        <strong>{book.title}</strong> artık odandaki kitaplığın rafında. Raf dolunca yeni raf eklenir; {CFG.world.library.books} kitapta kütüphane odan açılır.
       </p>
       <div className="actions">
         <button className="btn ghost" onClick={onClose}>
-          Sonra
+          Tamam
         </button>
-        {onPlant && (
-          <button className="btn primary" onClick={() => onPlant(book.id)}>
-            🌳 Ağacını dik
+        {onShelf && (
+          <button className="btn primary" onClick={onShelf}>
+            📚 Kitaplığımda gör
           </button>
         )}
       </div>
@@ -311,14 +427,11 @@ export function BookSheet({
   onClose,
   onRead,
   onFinish,
-  onMove,
 }: {
   book: Book;
   onClose: () => void;
   onRead?: () => void;
   onFinish?: () => void;
-  /** Parseldeki ağacın yerini değiştir */
-  onMove?: () => void;
 }) {
   const { stats, startBook, deleteBook } = useReading();
   const minutes = stats?.minutesByBook.get(book.id) ?? 0;
@@ -328,9 +441,15 @@ export function BookSheet({
   return (
     <Sheet title={book.status === 'done' ? 'Kitaplığımdan' : book.status === 'reading' ? 'Okuyorum' : 'Okunacaklar'} onClose={onClose}>
       <div className="book-card">
-        <div className="cover" style={{ background: book.color, color: inkOn(book.color) }}>
-          <span className="cover-title">{book.title}</span>
-          {book.author && <span className="cover-author">{book.author}</span>}
+        <div className={`cover${book.cover_url ? ' has-img' : ''}`} style={{ background: book.color, color: inkOn(book.color) }}>
+          {book.cover_url ? (
+            <img src={book.cover_url} alt={`${book.title} kapağı`} />
+          ) : (
+            <>
+              <span className="cover-title">{book.title}</span>
+              {book.author && <span className="cover-author">{book.author}</span>}
+            </>
+          )}
         </div>
         <div className="grow book-meta">
           {book.status === 'done' && <Stars value={book.rating} size="sm" />}
@@ -387,8 +506,14 @@ export function BookSheet({
           </div>
         </div>
       )}
-      {(book.fav_character || book.review) && (
+      {(book.favorite_part || book.fav_character || book.review) && (
         <div className="book-notes">
+          {book.favorite_part && (
+            <p>
+              <span className="muted small">En sevdiğim kısım</span>
+              <br />“{book.favorite_part}”
+            </p>
+          )}
           {book.fav_character && (
             <p>
               <span className="muted small">En sevdiğim karakter</span>
@@ -403,11 +528,6 @@ export function BookSheet({
             </p>
           )}
         </div>
-      )}
-      {onMove && (
-        <button className="btn full" onClick={onMove}>
-          Ağacının yerini değiştir
-        </button>
       )}
       <div className="actions wrap">
         <ConfirmButton className="btn ghost sm danger" confirmLabel="Silinsin mi?" onConfirm={async () => { await deleteBook(book.id); onClose(); }}>

@@ -17,9 +17,8 @@ import ReadingStrip from '../components/ReadingStrip';
 import EndDay from '../components/EndDay';
 import { MOODS, dailyPrompt } from '../lib/mood';
 import { CORE_SUBJECTS } from '../lib/presets';
-import Tree from '../components/Tree';
-import { REVIVE_MIN, WILT_MIN } from '../lib/wilt';
 import { CFG } from '../lib/config';
+import { startTour, TOUR_KEY } from '../lib/tour';
 
 interface Props {
   courses: Course[];
@@ -29,14 +28,12 @@ interface Props {
   goPlan: () => void;
   goRewards: () => void;
   goShop: () => void;
-  onPlant: () => void;
   reloadCourses: () => void;
   goLibrary: () => void;
-  onPlantBook: (id: string) => void;
   demo: boolean;
 }
 
-export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, goShop, onPlant, reloadCourses, goLibrary, onPlantBook, demo }: Props) {
+export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, goShop, reloadCourses, goLibrary, demo }: Props) {
   const api = useApi();
   const game = useGame();
   const [date, setDate] = useState(toLocalDate);
@@ -100,7 +97,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       setError((e as Error).message);
     }
   };
-  /** Seansı bırak: uzun sürdüyse adada solgun fidan kalır (aynı gün çalışınca canlanır) */
+  /** Seansı bırak: uzun sürdüyse ormanda kuru ağaç kalır */
   const abandon = async () => {
     setFocusOpen(false);
     setFinishing(false);
@@ -122,9 +119,11 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
   if (courses.length === 0) {
     return (
       <div className="card empty">
-        <Tree species="elma" stage={0} size={90} />
+        <div className="empty-tree" aria-hidden>
+          🌱
+        </div>
         <h2>Hoş geldin! 🌱</h2>
-        <p className="muted">Her gün çalıştıkça bir bitki büyütüp kendi ormanına dikeceksin. Önce derslerini ekleyelim.</p>
+        <p className="muted">Sayaçla çalıştığın her seans ormanına bir ağaç diker; dünyan çalıştıkça büyür. Önce derslerini ekleyelim.</p>
         <div className="empty-actions">
           <button
             className="btn primary big"
@@ -146,18 +145,18 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
 
   return (
     <div className="stack">
-      <header className="day-head">
+      <header className="day-head" data-tour="today">
         <div>
           <h1>Bugün</h1>
           <p className="muted">{formatDay(date)}</p>
         </div>
       </header>
 
+      <TourCard />
+
       <ParentNoteCard />
 
-      <GameStrip goForest={goForest} onPlant={onPlant} />
-
-      <WiltCard date={date} />
+      <GameStrip goForest={goForest} />
 
       {error && <div className="error">{error}</div>}
 
@@ -236,7 +235,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
 
       <Quests goShop={goShop} />
 
-      <ReadingStrip goLibrary={goLibrary} onPlantBook={onPlantBook} />
+      <ReadingStrip goLibrary={goLibrary} />
 
       <RewardStrip goRewards={goRewards} />
 
@@ -244,7 +243,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
 
       <ReflectionCard date={date} />
 
-      <EndDay goForest={onPlant} goSettings={goProfile} demo={demo} />
+      <EndDay goForest={goForest} goSettings={goProfile} demo={demo} />
     </div>
   );
 }
@@ -346,7 +345,7 @@ function TimerCard({
         onSaved();
       });
     return (
-      <section className="card finish-card">
+      <section className="card finish-card" data-tour="timer">
         <h2>Aferin! Kaydedelim mi? 🎉</h2>
         <p className="finish-time">
           <span className="clock sm">{formatClock(elapsedMs)}</span>
@@ -395,7 +394,7 @@ function TimerCard({
   if (session) {
     const paused = ses.paused;
     return (
-      <section className={`card timer running${paused ? ' paused' : ''}`} style={{ borderColor: current?.color }}>
+      <section className={`card timer running${paused ? ' paused' : ''}`} style={{ borderColor: current?.color }} data-tour="timer">
         <div className="muted small">{paused ? pauseText(ses.pausedBy) : 'Çalışıyorsun, harika!'}</div>
         <div className="timer-course">
           <span className="dot" style={{ background: current?.color ?? '#999' }} />
@@ -408,7 +407,7 @@ function TimerCard({
           </div>
         )}
         <div className="actions center">
-          <ConfirmButton className="btn ghost" confirmLabel={elapsedMs >= WILT_MIN * 60_000 ? 'Fidan solsun mu?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
+          <ConfirmButton className="btn ghost" confirmLabel={elapsedMs >= CFG.session.wiltMinutes * 60_000 ? 'Kuru ağaç kalsın mı?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
             İptal
           </ConfirmButton>
           {paused ? (
@@ -437,7 +436,7 @@ function TimerCard({
     const over = brk.leftMs === 0;
     const next = nextFromPlan && courses.find((c) => c.id === nextFromPlan.item.course_id);
     return (
-      <section className="card timer break-card">
+      <section className="card timer break-card" data-tour="timer">
         <div className="muted small">{over ? 'Mola bitti!' : 'Mola zamanı · su iç, biraz esne 🧃'}</div>
         <div className="clock">{formatClock(brk.leftMs)}</div>
         {over && next && (
@@ -466,7 +465,7 @@ function TimerCard({
   }
 
   return (
-    <section className="card">
+    <section className="card" data-tour="timer">
       <div className="tabs">
         <button className={mode === 'timer' ? 'on' : ''} onClick={() => setMode('timer')}>
           ⏱️ Süre tut
@@ -664,23 +663,54 @@ function PlanCard({
   );
 }
 
-/** Bugün yarıda bırakılan sayaçtan kalan solgun fidan: kurtarmak için kaç dakika kaldı */
-function WiltCard({ date }: { date: string }) {
-  const { stats } = useGame();
-  const w = stats?.wilts.find((x) => x.item.date === date && !x.revived);
-  if (!w) return null;
+/** İlk girişte tanıtım turu daveti (bir kez; Profil'den yeniden açılır) */
+function TourCard() {
+  const [seen, setSeen] = useState(() => {
+    try {
+      return !!localStorage.getItem(TOUR_KEY);
+    } catch {
+      return true;
+    }
+  });
+  if (seen) return null;
+  const close = () => {
+    try {
+      localStorage.setItem(TOUR_KEY, 'seen');
+    } catch {
+      /* yok say */
+    }
+    setSeen(true);
+  };
   return (
-    <section className="card wilt-card">
-      <span className="wilt-icon" aria-hidden>
-        🥀
+    <section className="card tour-card">
+      <span className="tour-card-icon" aria-hidden>
+        👋
       </span>
       <div className="grow">
-        <strong>Adanda solgun bir fidan var</strong>
-        <div className="muted small">
-          Sayacı yarıda bıraktın. Bugün <strong>{REVIVE_MIN - w.after} dk</strong> daha çalışırsan yeniden yeşerir!
-        </div>
-        <div className="pbar" aria-hidden>
-          <span style={{ width: `${(w.after / REVIVE_MIN) * 100}%`, background: 'var(--good)' }} />
+        <strong>Hoş geldin! Dünyanı tanıyalım mı?</strong>
+        <p className="muted small">2 dakikalık sesli bir tur: sayaç, Elmas, odan, ormanın ve kitaplığın.</p>
+        <div className="note-actions">
+          <button
+            className="btn primary sm"
+            onClick={() => {
+              close();
+              startTour('audio');
+            }}
+          >
+            Demoyu başlat 🔊
+          </button>
+          <button
+            className="btn sm"
+            onClick={() => {
+              close();
+              startTour('text');
+            }}
+          >
+            Sessiz izle
+          </button>
+          <button className="btn ghost sm" onClick={close}>
+            Sonra
+          </button>
         </div>
       </div>
     </section>

@@ -11,7 +11,8 @@ npm run dev
 ```
 
 `.env` yoksa uygulama **demo modunda** açılır: veriler localStorage'da tutulur, örnek veri yüklenir.
-Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`.
+Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`. İlk açılışta "Demoyu başlat 🔊" ile
+2 dakikalık sesli/yazılı bir tanıtım turu başlar (Profil → Tanıtımı izle ile yeniden açılır).
 
 ## Supabase'e bağlama
 
@@ -33,59 +34,60 @@ src/
   lib/
     types.ts       Veri tipleri + Api arayüzü
     api.ts         supabaseApi (gerçek) ve localApi (demo) — aynı arayüz
-    useTimer.ts    Sayaç: başlangıç timestamp'i localStorage'da, süre farktan hesaplanır
+    SessionContext.tsx  Çalışma seansı (süre sunucuda): buradayım, sekme/hareketsizlikte duraklatma
+    world.ts       Dünya: karo ızgarası, yerleştirme kuralları, A*, araziler, her seansın ağacı, bölgeler
     date.ts        Yerel tarih yardımcıları (YYYY-MM-DD, hafta pazartesi başlar)
+  components/world3d/  3D dünya (react-three-fiber): oda, bahçe+orman, avatar, eşyalar, yerleştirme
+  components/Tour.tsx  Tanıtım turu (driver.js + kelime kelime altyazı)
   pages/
     Today.tsx      Sayaç / elle giriş, bugünkü kayıtlar, görevler, günlük değerlendirme
-    Forest.tsx     Aylık orman + kitap parseli, dikme/taşıma, tür seçici, gün detayı, rozetler
-    Library.tsx    Kitaplığım: raf, şu an okuduklarım, okunacaklar, okuma hedefleri
+    World.tsx      Dünyam: oda, kütüphane odası, bahçe ve aylık orman bölgeleri; düzenleme modu
+    Library.tsx    Kitaplığım: Open Library araması, raf, şu an okuduklarım, okunacaklar, okuma hedefleri
     History.tsx    Aylık takvim (ısı haritası + ruh hali), gün detayı, haftalık çubuk grafik, ders dağılımı
     Courses.tsx    Ders ekle / düzenle / sil
     WeekPlan.tsx   Haftalık plan: güne göre ders/dakika, hazır şablonlar, geçen haftayı kopyala
     Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
     ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, oyun ve Elmas, rapor ayarları
-    Shop.tsx       Dükkân: 💎/⭐ ile karakter, aksesuar, evcil hayvan, yapı, süs
-    Collection.tsx Koleksiyon defteri ve anı albümü
-supabase/migrations/0001_init.sql … 0011_config.sql
+    Shop.tsx       Dükkân: 💎 ile mobilya, zemin, duvar, bitki, ışık, dış mekân süsü, kıyafet
+    Collection.tsx Koleksiyon defteri ve ormanın bölgeleri
+  demo/script.json  Tanıtım turunun sahneleri
+supabase/migrations/0001_init.sql … 0014_config.sql
+public/demo/       Tanıtım sesleri ve kelime zamanları (npm run demo:audio, ElevenLabs)
+ASSETS_LICENSES.md 3D modellerin lisansları (Kenney, CC0)
 src/config/economy.json, items.json   Ekonominin tek kaynağı (npm run config:sql → yeni migration)
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
-## Oyunlaştırma: Orman ve para (≈10 yaş için)
+## Oyunlaştırma: çalıştıkça büyüyen dünya (10–14 yaş)
 
-Çalışılan her dakika 🪙 1 dakikalık **para**dır. **Her güne tek bir ağaç** dikilir: çocuk o günün parasının
-yettiği bitkiyi seçip **o ayın ormanına kendisi diker**. Böylece ormandaki her ağaç bir günü anlatır; ağaca
-(ya da Geçmiş takviminde bir güne) dokununca o günün ağacı, dersleri ve "nasıl geçti" notu açılır.
-Her ay yeni orman başlar, eski ormanlar ay ay gezilebilir.
+Ana döngü: **çalış → ağaç dik → dünya büyür → kazandığın Elmasla evini ve bahçeni süsle.** Dünyanın büyüklüğü
+yalnızca çalışmayla, güzelliği Elmasla artar; arazi satın alınamaz. Tek oyunculu; oda ve orman verisi `user_id`'ye
+bağlı (ileride salt okunur ziyaret eklenebilir).
 
-- **Fiyat listesi** (`src/lib/forest.ts` → `STAGES`, tek yerde değiştirilebilir):
-  Tohum 30 · Çiçek 60 · Küçük ağaç 90 · Büyük ağaç 120 · Dev ağaç 180 dk.
-  3 saat çalışılan gün dev ağaç olur.
-- **Büyütme:** o gün çalışmaya devam edilirse aynı ağaç farkı ödenerek büyütülür (tohum → çiçek = 30 dk).
-- **Bekleyen günler:** ağacı dikilmemiş ya da büyütülebilecek günler ay sonuna kadar "Ağacını bekleyen
-  günler"de durur. Ay bitince o ayın ormanına otomatik dikilir/büyütülür (paranın yettiği en büyük evre) —
-  emek kaybolmaz.
-- **Kurallar sunucuda da korunur:** `forest_trees` tetikleyicisi bir günün harcamasının o günün dakikalarını
-  aşmasına izin vermez; `0006_one_tree_per_day.sql` güne ikinci ağaç dikilmesini engeller.
-- **Türler:** 8 tür, 3'ü baştan açık; diğerleri en uzun seriyle açılır (3, 5, 7, 10, 14 gün).
-- **Yumuşak seri, rozetler, ruh hali (😞…😄), hazır okul dersleri, 20 dk mola hatırlatması.**
+### Dünyam: oda, bahçe ve orman (aynı 3D ızgara)
 
-### 3D ada
+Alt menüdeki **Dünyam** sekmesi, react-three-fiber ile çizilen low-poly bir dünya: izometrik hisli ortografik kamera,
+döndürme ve yakınlaştırma serbest, kaydırma alanla sınırlı. Sahne yalnızca bir şey değişince çizilir
+(`frameloop="demand"`); tekrar eden ağaçlar türe göre tek çizimde (instancing); telefonda gölgeler varsayılan kapalı (🌗).
 
-Orman sekmesi, ayın ormanını **izometrik, low-poly bir ada** olarak gösterir (react-three-fiber). Ada döndürülür ve
-yakınlaştırılır; ağaca dokununca o günün penceresi açılır.
-
-- **Ada büyür:** toplam çalışma saati arttıkça çiçek tarlası (3 sa), kayalar/mantarlar (8), tavşan (15), gölet (25),
-  civciv (35), kamp ateşi (50), tilki (70), arı (100) ve geyik (140) açılır. Hayvanlar adada dolaşır, dokununca dans eder.
-- **Gündüz/gece:** ışık gerçek saate göre değişir; akşam ateşböcekleri uçar, kamp ateşi yanar.
-- **Büyüme animasyonu:** dikilen/büyütülen ağaç zıplayarak çıkar, etrafına parçacıklar saçılır.
-- **Solgun fidan:** sayaç 5 dakikadan sonra iptal edilirse adada solgun bir fidan kalır; aynı gün 10 dk daha çalışılırsa
-  yeniden yeşerir (`0007_abandoned_sessions.sql`).
-- **Ormanda gezinti:** "🚶 Ormanda gez" düğmesiyle çocuk seçtiği karakterle adada üçüncü şahıs kamerayla yürür
-  (dokunmatikte joystick + zıpla, boş yerde sürükleyince kamera döner; klavyede WASD/oklar, Shift koş, boşluk zıpla,
-  E etkileşim, Esc çık). Ağacın yanına gidince o günü açar, hayvanları sever (20 sn peşinden gelirler), solgun fidanın
-  kaç dakikada yeşereceğini görür, her gün adaya saklanan 8 yıldızı toplar ve dükkândan aldığı yapıları 🔨 ile adasına
-  yerleştirir. Seviye atladıkça daha hızlı koşar, çift zıplar, süzülür.
+- **Oda (8×8 karo):** zemin ızgarası yalnızca düzenlerken görünür. Bir karoya dokununca karakter oraya **A\* ile yol
+  bularak** yürür. Kapıdan bahçeye çıkılır (kısa geçiş); 36 kitap bitince odada **kütüphane odasına** açılan yeni bir kapı belirir.
+- **Düzenle (✏️):** alttaki envanterden eşya seç ya da odadaki eşyayı sürükle; karoya oturur, **yeşil** konabilir,
+  **kırmızı** konamaz. Döndür, envantere geri koy, zemin ve duvar kaplamasını değiştir, Kaydet. Yerleşim Postgres'te
+  jsonb olarak durur (`user_spaces`) ve **sunucuda doğrulanır**: alan sınırı, kapı/ev/su gibi sabit karolar, çakışma
+  (halı ile mobilya ayrı katman) ve envanter (`0012_spaces.sql → save_space`).
+- **Bahçe:** evin önü; toplam çalışmayla genişler: Açıklık → **Dere** (5 sa) → **Tepe** (15) → **Göl** (30) →
+  **Köprü** (60) → **Sihirli koru** (100). Dış mekân süsleri buraya yerleştirilir.
+- **Orman:** **her sayaç seansı bir ağaç**; türü süreye göre (🌱 fidan, 🌿 15 dk çalı, 🌳 30 genç ağaç, 🌲 45 çam,
+  🌳 60 meşe, 🌲 90 dev ağaç). Yarıda bırakılan uzun seans **kuru ağaç** olur. Ağacın yeri seans kimliğinden tohumlanır;
+  orman her açılışta aynı görünür. **Her ay yeni bir bölge** açılır; geçmiş aylar kalıcıdır ve gezilebilir
+  (Bölgeler). Yeni ağaç bir kez elastik büyüyerek ve yaprak parçacıklarıyla belirir.
+- **Canlılar:** orman büyüdükçe kendiliğinden gelir (kelebek, kuş, tavşan, civciv, arı, tilki, geyik); satın alınamaz.
+  Kedi, köpek gibi dostlar da ağaç sayısıyla açılır ve yanına alınabilir.
+- **🚶 Yakından gez:** bahçede ve ormanda üçüncü şahıs kamerayla yürü (joystick / WASD), ağaçların yanına gidip seansı
+  gör, her gün saklanan 8 yıldızı topla. Gezintiye geçince çalışma sayacı duraklar.
+- Modeller Kenney Nature Kit, Furniture Kit, Mini Characters ve Cube Pets (CC0); ayrıntı `ASSETS_LICENSES.md`.
+  WebGL yoksa ağaçlar aylara göre düz liste olarak görünür.
 
 ### Güvenilir süre: seanslar sunucuda (`0009_sessions.sql`)
 
@@ -109,13 +111,14 @@ Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığ
   - Ders görevleri +2–5: bugün 30 dk; bu hafta 5 gün, 3 planlı gün, 3 farklı ders, bir kitap.
   - Geçmiş kayıtlar da sayılır.
 - **⭐ Yıldız** gezintide toplanır (günde 8). Para değildir, koleksiyonda birikir.
-- **Dükkân:** karakterler, aksesuarlar, evcil hayvanlar (yanında gezer), ada yapıları (çadır, köprü, kano, heykel…), süsler ve seri dondurma. Nadirlik: yaygın, nadir, efsanevi.
-  - Efsanevi eşyalar yalnızca başarıyla açılır: 30 günlük seri, 10 planlı gün, derslerde altın, Efsane seviyesi. Bir kısmı yalnızca sandıktan çıkar.
+- **Dükkân:** mobilya, zemin, duvar, bitki, ışık, dış mekân dekoru ve kıyafet (karakter, aksesuar); ~35 eşya. Satın alma
+  tek işlemde: bakiye düşer, eşya envantere eklenir (`owned_items` tetikleyicisi). Nadirlik: yaygın, nadir, efsanevi.
+  - Nadir eşyalar ticaretle değil başarıyla açılır: 100 saatte "Bilge'nin yıldız lambası", 30 günlük seri, 10 planlı gün, derslerde altın, Efsane seviyesi. Bir kısmı yalnızca sandıktan çıkar.
 - **Haftalık sandık:** haftada 5 gün ve 150 dk çalışınca açılır, içinden sürpriz bir eşya çıkar. Satın alınamaz.
 - **Seviye ve ders yetenekleri (Profil):**
   - Toplam saate göre Çırak → Kâşif → Orman Bekçisi → Bahçıvan → Orman Ustası → Orman Bilgesi → Efsane.
   - Her ders bronz/gümüş/altın olur; unvanlar Bilge, Hikâyeci, Mucit, Gezgin… En az çalışılan ders "bunu da büyüt" diye vurgulanır.
-- **Koleksiyon defteri:** bütün eşyalar (eksikler gölge gibi) ve geçmiş ayların adalarıyla bir anı albümü.
+- **Koleksiyon defteri:** bütün eşyalar (eksikler gölge gibi) ve ormanın aylık bölgeleri.
 - **Aile paneli → Oyun ve Elmas:** bakiye, son hareketler, hediye Elmas (1–50), kuralların özeti.
 - **Kopya önlemi:** süreyi ve kazancı sunucu hesaplar. Deftere ve sayaç kayıtlarına yalnızca sunucu fonksiyonları yazar; kaydın süresi sonradan değiştirilemez. Bakiyeyi aşan alışveriş, sandık havuzunda olmayan eşya ve defter silme reddedilir.
 - Modeller: [Kenney](https://kenney.nl) Nature Kit, Cube Pets ve Mini Characters (CC0); ayrıntı `src/assets/models/LICENSE.md`. WebGL yoksa düz ızgara görünümü kullanılır.
@@ -128,26 +131,26 @@ Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığ
   kalan dakika kadar bir odak turuyla açar. Planı tamamlanan gün "Planlı Gün" rozetine ve plan ödüllerine sayılır.
 - **Haftalık plan** (Bugün › Haftalık planı aç): gün seç, derslere 5'er dakika ayır, konu yaz; hazır şablonlar
   (Okul haftası, Sınav haftası, Hafif hafta, Tatil) ve "Geçen haftayı kopyala". Geçmiş günler değişmez.
-- **Odak modu:** tam ekran halka sayaç; tur 25 / 40 dk ya da serbest. Çalıştıkça ortadaki fidan büyür (yalnızca gösterim),
+- **Odak modu:** tam ekran halka sayaç; tur 25 / 40 dk ya da serbest. Seans uzadıkça ortadaki ağaç türü değişir (bu seansın ağacı),
   tur bitince zil çalar; kaydedince 5 dakikalık mola sayacı başlar. İsteğe bağlı yağmur sesi.
 - **Ödül hedefleri:** ebeveynin koyduğu gerçek ödüller (toplam dakika, seri, biten kitap, tamamlanan planlı gün).
-  Orman parasını harcamaz. Ebeveyn ödülü verince "Kazandıklarım"a geçer.
+  Elmas harcamaz. Ebeveyn ödülü verince "Kazandıklarım"a geçer.
 - **Aile paneli** (Profil › Aile paneli): 4 haneli PIN ile açılır (çocuk kilidi; aynı hesap). Haftalık özet,
   "zordu" uyarısı, plan onayı, çocuğa not (Bugün ekranında 3 gün görünür, çocuk teşekkür/kalp ile yanıtlar),
   ödül ekleme ve günlük rapor ayarları.
-- **Alt menü:** Bugün · Orman · Kitaplık · Geçmiş · Profil. Dersler, Ödüller ve Aile paneli Profil'in altında.
+- **Alt menü:** Bugün · Dünyam · Kitaplık · Geçmiş · Profil. Dersler, Ödüller, Aile paneli ve Tanıtım Profil'in altında.
 
 ## Okuma ve kitaplık
 
-Okuma **ormandaki günlük bitkiye sayılmaz**; kendi kitaplığını ve kitap parselini oluşturur.
+Okuma ağaç vermez; kendi kitaplığını oluşturur ve kitaplar odadaki **kitaplığın raflarına** dizilir.
 
-- **Kitap ekle:** ad, yazar, sayfa sayısı, tür, kim önerdi, sırt rengi. Okunacaklar listesine ya da doğrudan "okuyorum"a.
+- **Kitap ekle:** ad ya da ISBN ile **Open Library'de ara**; kapak, yazar ve sayfa sayısı gelir. Bulunamazsa ad elle
+  yazılır, kitap renkli sırtla görünür. Okuyacağım / okuyorum / bitirdim; bitirdiğin kitapta **"En sevdiğin kısım neydi?"** zorunlu.
 - **"📖 Okudum":** kaç dakika + kaçıncı sayfaya gelindi → okunan sayfa hesaplanır, ilerleme çubuğu dolar.
   Son sayfaya gelince bitirme akışı açılır (sayfa sayısı bilinmeyen kitaplar kitap kartındaki "Bitirdim" ile).
-- **Bitirince:** 1–5 yıldız, "en sevdiğin karakter", "bir cümleyle anlat" → kutlama, kitap rafa dizilir.
-- **Kitap parseli:** ormanda her ay 4 yerlik ayrı parsel (dolarsa 4'er büyür). Biten her kitap için bir
-  **kitap ağacı** dikilir: gövdesi üst üste kitaplar, tacı altın sarısı, yaprakları açık kitaplar.
-  Boyu sayfa sayısına göre: <100 küçük, 100–199 orta, 200+ büyük. Geçmiş aylarda dikilmeyenler otomatik dikilir.
+- **Bitirince:** en sevdiğin kısım, 1–5 yıldız, en sevdiğin karakter, bir cümleyle anlat → kutlama, kitap rafa dizilir.
+- **Odadaki kitaplık:** dokununca raflar açılır (rafta 12 kitap, dolunca yeni raf); kitaba dokununca kapağı ve en sevdiğin
+  kısım. 36 kitapta kütüphane odası açılır (`0013_books_shelf.sql`).
 - **Hedefler:** aylık kitap hedefi (varsayılan 2), günlük sayfa hedefi (15), ayrı okuma serisi
   (ders serisiyle aynı yumuşak kurallar). Hedefler Kitaplığım → "Hedefler"den değişir.
 - **Raf:** kitap kalınlığı sırtın eni/boyunda görünür; türe göre filtrelenir; dokununca kitap kartı açılır.
@@ -160,7 +163,7 @@ Yeni tablolar: `books`, `reading_logs`, `book_trees`, `reading_goals` → `supab
 günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`daily_reports` unique).
 
 - **İçerik:** ders süreleri ve dağılımı, önceki günlerle kıyas, son 7 günde çalışılan gün,
-  yapılacaklar, ormana dikilenler, okuma (sayfa, kitap, biten kitap), ruh hali ve çocuğun notu,
+  yapılacaklar, ormana dikilen ağaçlar (her seans bir ağaç), okuma (sayfa, kitap, biten kitap), ruh hali ve çocuğun notu,
   ebeveyne bir öneri.
 - **Metni EVREN yazar** ([evren.ssyz.org.tr](https://evren.ssyz.org.tr), Anthropic Messages uyumlu `/v1/messages`; varsayılan model `deepseek-v4-flash`, `REPORT_MODEL` ile değiştirilebilir). Modeller önce düşündüğü için token bütçesi 4000; düşükse JSON yarım kalır ve yedek metne düşülür. Rakamlar ve tablo
   şablondan gelir; LLM yalnızca özet, öne çıkanlar ve öneriyi yazar, verilmeyen bilgiyi uydurmaması,
@@ -188,10 +191,19 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 **Gizlilik:** Raporu hazırlarken o günün kayıtları ve çocuğun "nasıl geçti" notu EVREN'e (Savunma Sanayii Başkanlığı'nın yapay zekâ platformu) gönderilir.
 Uygulamaya ebeveynin hesabıyla girildiği ve ayarlarda bu açıkça yazdığı için onay ebeveyndedir; rapor kapatılabilir.
 
+## Tanıtım turu (sesli ve yazılı)
+
+- İlk girişte Bugün ekranında **"Demoyu başlat 🔊"** / **"Sessiz izle"**. Tur her sahnede ilgili sayfayı açar, ilgili
+  ögeyi öne çıkarır (driver.js) ve altyazıyı **kelime kelime** vurgular. Geri, duraklat, ileri, sessize alma; Esc kapatır.
+- Sesler önceden üretilir, canlı TTS yok: `npm run demo:audio` (`scripts/gen-demo-audio.mjs`) her sahne için
+  ElevenLabs'tan ses ve kelime zamanlarını alıp `public/demo/<sahne>.mp3` ve `.json` yazar. `ELEVENLABS_API_KEY`
+  `.env`'de durur ve ön yüze girmez. Ses dosyası yoksa tur kendiliğinden yazılı moda geçer.
+- Sahneler ve metinler `src/demo/script.json`'da; metni değiştirince `npm run demo:audio -- --force`.
+
 ## Notlar
 
-- Sayaç sayfa yenilense, sekme uyusa veya başka sekmede açılsa da doğru süreyi gösterir.
-  Durdurulduğunda süre düzenlenebilir bir "Oturumu kaydet" kartına düşer.
+- Sayaç sunucuda tutulur: sayfa yenilense de açık seans sunucudan gelir; sekme değişince duraklar.
+  "Bitirdim"de süre durur, ders ve "Ne çalıştın?" notu sorulur; süre elle değiştirilemez.
 - Çalışma kaydı, sayacın **başladığı** günün tarihine yazılır (gece yarısını geçen oturumlar için).
 - Bir ders silinince ona ait çalışma kayıtları da silinir (cascade); görevlerdeki ders etiketi boşalır.
 - `daily_reflections` (user_id, date) üzerinde unique; kayıt upsert ile yapılır.

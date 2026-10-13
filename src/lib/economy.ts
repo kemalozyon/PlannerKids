@@ -3,10 +3,10 @@
 // uygular: demo API ve ekrandaki ilerleme bunları kullanır. Bütün sayılar src/config/economy.json'da.
 //
 // Yalnızca sayaçla ölçülen (timer) ve eski (legacy) kayıtlar sayılır; elle yazılan süre (manual) Elmas vermez.
-import { itemById, ITEMS, type Item } from './catalog';
+import { itemById, ITEMS, type Item, type UnlockKind } from './catalog';
 import { CFG, type QuestConfig } from './config';
 import { addDays, toLocalDate, weekStart } from './date';
-import { rng } from './island';
+import { rng } from './rng';
 import { completedPlanDays } from './plan';
 import { computeStreak } from './streak';
 import type { Book, LedgerEntry, NewLedgerEntry, OwnedItem, PlanItem, Reflection, StudyLog } from './types';
@@ -197,9 +197,9 @@ export function chestsNow(today: string, dayTotals: Map<string, number>, owned: 
 const WEIGHT = { yaygin: 6, nadir: 3, efsanevi: 1 } as const;
 
 /** Sandıktan çıkabilen eşyalar */
-export const inChestPool = (i: Item) => i.acquire.kind === 'chest' || (i.category === 'yapi' && i.acquire.kind === 'buy');
+export const inChestPool = (i: Item) => i.acquire.kind === 'chest' || (i.category === 'dis' && i.acquire.kind === 'buy');
 
-/** Sandıktan çıkacak eşya: haftaya göre sabit (yeniden açınca değişmez). Sandığa özel eşyalar + Elmasla alınan yapılar
+/** Sandıktan çıkacak eşya: haftaya göre sabit (yeniden açınca değişmez). Sandığa özel eşyalar + Elmasla alınan dış mekân süsleri
  * (sunucu item_defs.in_chest ile aynı havuzu denetler). */
 export function chestPrize(week: string, owned: OwnedItem[]): Item {
   const have = new Set(owned.map((o) => o.item_id));
@@ -222,10 +222,14 @@ export interface UnlockProgress {
   gold: number;
   /** Seviye sırası (level.ts) */
   level: number;
+  /** Toplam (güvenilir) çalışma saati */
+  hours: number;
+  /** Dikilen ağaç sayısı (kuru ağaçlar hariç) */
+  trees: number;
 }
 
-export function unlockValue(by: 'streak' | 'plans' | 'gold' | 'level', p: UnlockProgress): number {
-  return by === 'streak' ? p.bestStreak : by === 'plans' ? p.planDays : by === 'gold' ? p.gold : p.level;
+export function unlockValue(by: UnlockKind, p: UnlockProgress): number {
+  return { streak: p.bestStreak, plans: p.planDays, gold: p.gold, level: p.level, hours: p.hours, trees: p.trees }[by];
 }
 
 export function owns(item: Item, owned: OwnedItem[], p: UnlockProgress): boolean {
@@ -233,6 +237,17 @@ export function owns(item: Item, owned: OwnedItem[], p: UnlockProgress): boolean
   if (a.kind === 'free') return true;
   if (a.kind === 'unlock') return unlockValue(a.by, p) >= a.target;
   return owned.some((o) => o.item_id === item.id);
+}
+
+/**
+ * Bir eşyadan kaç tane yerleştirilebilir (sunucuda world_owned): satılan/sandık eşyası sahip olunan adet;
+ * başarıyla açılan açıldıysa 1; ücretsiz başlangıç eşyası 1, ücretsiz kaplama sınırsız.
+ */
+export function ownedCount(item: Item, owned: OwnedItem[], p: UnlockProgress): number {
+  const a = item.acquire;
+  if (a.kind === 'buy' || a.kind === 'chest') return owned.filter((o) => o.item_id === item.id).length;
+  if (a.kind === 'unlock') return ['hours', 'level', 'trees'].includes(a.by) && unlockValue(a.by, p) >= a.target ? 1 : 0;
+  return item.placement ? 1 : Infinity;
 }
 
 /** Kilitli eşyanın nasıl açılacağı */
@@ -243,6 +258,8 @@ export function unlockHint(item: Item): string {
   if (a.by === 'streak') return `🔥 ${a.target} günlük seri yap`;
   if (a.by === 'plans') return `📋 ${a.target} günün planını tamamla`;
   if (a.by === 'gold') return a.target === 1 ? '🥇 Bir derste altına ulaş' : `🥇 ${a.target} derste altına ulaş`;
+  if (a.by === 'hours') return `⏱️ Toplam ${a.target} saat çalış`;
+  if (a.by === 'trees') return `🌳 Ormanında ${a.target} ağaç olunca kendiliğinden gelir`;
   return `⭐ ${['Çırak', 'Kâşif', 'Orman Bekçisi', 'Bahçıvan', 'Orman Ustası', 'Orman Bilgesi', 'Efsane'][a.target]} seviyesine ulaş`;
 }
 

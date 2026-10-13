@@ -1,5 +1,5 @@
 import ConfirmButton from './components/ConfirmButton';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { DEMO_KEY, localApi, supabaseApi } from './lib/api';
 import { ApiContext } from './lib/ApiContext';
@@ -9,7 +9,7 @@ import type { Api, Course } from './lib/types';
 import Courses from './pages/Courses';
 import History from './pages/History';
 import Today from './pages/Today';
-import Forest from './pages/Forest';
+import World from './pages/World';
 import Library from './pages/Library';
 import Profile from './pages/Profile';
 import WeekPlan from './pages/WeekPlan';
@@ -23,6 +23,9 @@ import Login, { NewPassword } from './components/Login';
 import { GameProvider, useGame } from './lib/GameContext';
 import { SessionProvider, useSession } from './lib/SessionContext';
 import { formatClock } from './lib/useTimer';
+import { TOUR_EVENT, type TourMode } from './lib/tour';
+
+const Tour = lazy(() => import('./components/Tour'));
 import { IconBack, IconBook, IconCalendar, IconForest, IconToday, IconUser } from './components/Icons';
 
 /** Alt menüdeki sekmeler */
@@ -33,7 +36,7 @@ type Tab = MainTab | SubPage;
 
 const TABS: { id: MainTab; label: string; icon: () => ReactNode }[] = [
   { id: 'today', label: 'Bugün', icon: IconToday },
-  { id: 'forest', label: 'Orman', icon: IconForest },
+  { id: 'forest', label: 'Dünyam', icon: IconForest },
   { id: 'library', label: 'Kitaplık', icon: IconBook },
   { id: 'history', label: 'Geçmiş', icon: IconCalendar },
   { id: 'profile', label: 'Profil', icon: IconUser },
@@ -92,11 +95,13 @@ function AuthGate() {
 function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; email?: string; onSignOut?: () => void }) {
   const [tab, setTab] = useState<Tab>(readTab);
   const [courses, setCourses] = useState<Course[] | null>(null);
-  const [plantIntent, setPlantIntent] = useState(false);
-  const [plantBookId, setPlantBookId] = useState<string | null>(null);
-  const clearIntent = useCallback(() => {
-    setPlantIntent(false);
-    setPlantBookId(null);
+
+  // Tanıtım turu (Bugün'deki karşılama kartından ya da Profil'den başlar)
+  const [tour, setTour] = useState<TourMode | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => setTour((e as CustomEvent<TourMode>).detail);
+    window.addEventListener(TOUR_EVENT, on);
+    return () => window.removeEventListener(TOUR_EVENT, on);
   }, []);
 
   useEffect(() => {
@@ -110,8 +115,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
     setTab(t);
     window.scrollTo(0, 0);
   }, []);
-  const plantBook = (id: string) => {
-    setPlantBookId(id);
+  /** Odadaki kitaplığı aç (kitap bitirince "Kitaplığımda gör") */
+  const goShelf = () => {
+    try {
+      localStorage.setItem('ct-world-view-v1', 'room');
+      sessionStorage.setItem('ct-open-shelf', '1');
+    } catch {
+      /* yok say */
+    }
     go('forest');
   };
 
@@ -169,19 +180,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               goPlan={() => go('plan')}
               goRewards={() => go('rewards')}
               goShop={() => go('shop')}
-              onPlant={() => {
-                setPlantIntent(true);
-                go('forest');
-              }}
               reloadCourses={reloadCourses}
               goLibrary={() => go('library')}
-              onPlantBook={plantBook}
               demo={!!demo}
             />
           ) : tab === 'forest' ? (
-            <Forest courses={courses} startPlanting={plantIntent} plantBookId={plantBookId} onStarted={clearIntent} />
+            <World courses={courses} goShop={() => go('shop')} />
           ) : tab === 'library' ? (
-            <Library onPlantBook={plantBook} />
+            <Library onShelf={goShelf} />
           ) : tab === 'history' ? (
             <History courses={courses} />
           ) : tab === 'courses' ? (
@@ -193,14 +199,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
           ) : tab === 'shop' ? (
             <Shop goCollection={() => go('collection')} />
           ) : tab === 'collection' ? (
-            <Collection />
+            <Collection goWorld={() => go('forest')} />
           ) : tab === 'parent' ? (
             <ParentPanel courses={courses} goPlan={() => go('plan')} />
           ) : (
             <Profile email={email} demo={!!demo} onSignOut={onSignOut} go={go} />
           )}
         </main>
-        <nav className="bottom-nav" aria-label="Ana menü">
+        <nav className="bottom-nav" aria-label="Ana menü" data-tour="nav">
           {TABS.map((t) => (
             <button key={t.id} className={active === t.id ? 'on' : ''} aria-current={active === t.id ? 'page' : undefined} onClick={() => go(t.id)}>
               <span className="bn-icon">{t.icon()}</span>
@@ -210,6 +216,11 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
         </nav>
         <Celebrations />
         <IdlePrompt />
+        {tour && (
+          <Suspense fallback={null}>
+            <Tour mode={tour} onClose={() => setTour(null)} />
+          </Suspense>
+        )}
       </div>
       </ReadingProvider>
       </SessionProvider>
@@ -277,10 +288,10 @@ function TopBar({
           <span className={`chip streak${stats.streak === 0 ? ' off' : ''}`} title="Seri">
             <span aria-hidden>🔥</span> {stats.streak}
           </span>
-          <button className="chip coin" title="Bugünkü cüzdanım — ormana git" onClick={onForest}>
-            <span aria-hidden>🪙</span> {stats.today.left}
+          <button className="chip coin" title="Ağaçlarım — dünyama git" onClick={onForest}>
+            <span aria-hidden>🌳</span> {stats.treeCount}
           </button>
-          <button className="chip gem" title="Elmaslarım — dükkân" onClick={onShop}>
+          <button className="chip gem" title="Elmaslarım — dükkân" onClick={onShop} data-tour="elmas">
             <span aria-hidden>💎</span> {stats.crystals}
           </button>
         </div>

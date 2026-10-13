@@ -1,4 +1,4 @@
-// 3D model tablosu: Kenney Nature Kit + Cube Pets + Mini Characters (karakter ve aksesuar) (CC0, bkz. src/assets/models/LICENSE.md).
+// 3D model tablosu: Kenney Nature Kit + Furniture Kit + Cube Pets + Mini Characters (CC0, bkz. ASSETS_LICENSES.md).
 // Modeller küçük (.glb); Vite her birine URL verir, tek dosyalık demo derlemesinde içine gömülür.
 import { useGLTF } from '@react-three/drei';
 import { useMemo } from 'react';
@@ -8,45 +8,19 @@ const nature = import.meta.glob('../../assets/models/nature/*.glb', { eager: tru
 const pets = import.meta.glob('../../assets/models/pets/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 const characters = import.meta.glob('../../assets/models/characters/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 const accessories = import.meta.glob('../../assets/models/accessories/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+const furniture = import.meta.glob('../../assets/models/furniture/*.glb', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 const byName = (files: Record<string, string>) =>
   Object.fromEntries(Object.entries(files).map(([path, url]) => [path.split('/').pop()!.replace('.glb', ''), url]));
-export const NATURE = byName(nature);
-export const PETS = byName(pets);
+const NATURE = byName(nature);
+const PETS = byName(pets);
 /** Gezinti karakterleri (Kenney Mini Characters): idle, walk, sprint, jump, fall, emote-yes… animasyonlu */
-export const CHARACTERS = byName(characters);
-export const ACCESSORIES = byName(accessories);
-/** Herhangi bir modelin adresi (doğa, hayvan, karakter, aksesuar) */
-export const modelUrl = (name: string): string => NATURE[name] ?? PETS[name] ?? CHARACTERS[name] ?? ACCESSORIES[name];
-
-/** Bir türün 3D görünüşü. models: küçük / büyük / dev ağaç evrelerindeki model. */
-interface Look {
-  models: [string, string, string];
-  leaf: string;
-  /** Model boyu farklıysa evre ölçeklerine çarpan */
-  k?: number;
-  glow?: boolean;
-}
-
-export const LOOKS: Record<string, Look> = {
-  elma: { models: ['tree_default', 'tree_default', 'tree_detailed'], leaf: '#5fc35a' },
-  cam: { models: ['tree_pineRoundA', 'tree_pineRoundA', 'tree_pineTallA_detailed'], leaf: '#2f9d63' },
-  kiraz: { models: ['tree_fat', 'tree_fat', 'tree_oak'], leaf: '#f6a5c6' },
-  palmiye: { models: ['tree_palmShort', 'tree_palmShort', 'tree_palmDetailedTall'], leaf: '#55c46b' },
-  akcaagac: { models: ['tree_oak', 'tree_oak', 'tree_default'], leaf: '#e8573c' },
-  kaktus: { models: ['cactus_short', 'cactus_tall', 'cactus_tall'], leaf: '#43b05c', k: 1.7 },
-  sogut: { models: ['tree_thin', 'tree_thin', 'tree_tall'], leaf: '#8fd9a8' },
-  sihirli: { models: ['tree_plateau', 'tree_plateau', 'tree_blocks'], leaf: '#b47cff', glow: true },
-};
-
-/** Evreye göre model ve ölçek. 0 tohum (filiz), 1 çiçek, 2–4 ağaç. */
-export function treeModel(species: string, stage: number, bloom: string): { name: string; scale: number; colors: Recolor } {
-  const look = LOOKS[species] ?? LOOKS.elma;
-  if (stage === 0) return { name: 'crops_leafsStageA', scale: 3, colors: { leaf: look.leaf, grass: look.leaf } };
-  if (stage === 1) return { name: 'flower_redA', scale: 5.5, colors: { flower: bloom, grass: '#4fae4c' } };
-  const k = look.k ?? 1;
-  return { name: look.models[stage - 2], scale: [0.95, 1.25, 1.6][stage - 2] * k, colors: { leaf: look.leaf, glow: look.glow } };
-}
+const CHARACTERS = byName(characters);
+const ACCESSORIES = byName(accessories);
+/** Kenney Furniture Kit (meshopt) */
+const FURNITURE = byName(furniture);
+/** Herhangi bir modelin adresi (doğa, hayvan, karakter, aksesuar, mobilya) */
+export const modelUrl = (name: string): string => NATURE[name] ?? PETS[name] ?? CHARACTERS[name] ?? ACCESSORIES[name] ?? FURNITURE[name];
 
 export interface Recolor {
   /** Yaprak (leafs*) */
@@ -112,9 +86,4 @@ export function useModel(name: string, colors: Recolor = {}): Object3D {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene, key]);
   return useMemo(() => template.clone(true), [template]);
-}
-
-/** Sahnede kullanılan doğa modellerini önceden yükle (ilk dikimde takılma olmasın). */
-export function preloadNature() {
-  Object.values(NATURE).forEach((u) => useGLTF.preload(u));
 }

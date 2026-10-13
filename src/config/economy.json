@@ -13,36 +13,368 @@
   "elmas": {
     "study": {
       "tiers": [
-        { "upTo": 60, "minutesPer": 10 },
-        { "upTo": 120, "minutesPer": 20 },
-        { "upTo": 180, "minutesPer": 30 }
+        {
+          "upTo": 60,
+          "minutesPer": 10
+        },
+        {
+          "upTo": 120,
+          "minutesPer": 20
+        },
+        {
+          "upTo": 180,
+          "minutesPer": 30
+        }
       ],
       "dailyCap": 12
     },
     "streak": {
       "minMinutes": 20,
       "tiers": [
-        { "days": 3, "bonus": 1 },
-        { "days": 7, "bonus": 2 },
-        { "days": 14, "bonus": 3 },
-        { "days": 30, "bonus": 4 }
+        {
+          "days": 3,
+          "bonus": 1
+        },
+        {
+          "days": 7,
+          "bonus": 2
+        },
+        {
+          "days": 14,
+          "bonus": 3
+        },
+        {
+          "days": 30,
+          "bonus": 4
+        }
       ]
     },
-    "reflection": { "bonus": 1, "minNote": 10 },
+    "reflection": {
+      "bonus": 1,
+      "minNote": 10
+    },
     "plan": 3,
-    "book": { "bonus": 5, "perWeek": 2 },
+    "book": {
+      "bonus": 5,
+      "perWeek": 2
+    },
     "giftMax": 50,
     "quests": [
-      { "id": "day30", "scope": "day", "title": "Bugün 30 dk çalış", "icon": "⏱️", "target": 30, "reward": 2 },
-      { "id": "week5days", "scope": "week", "title": "Bu hafta 5 gün çalış", "icon": "📅", "target": 5, "reward": 5 },
-      { "id": "week3plans", "scope": "week", "title": "Bu hafta 3 günün planını bitir", "icon": "📋", "target": 3, "reward": 5 },
-      { "id": "week3courses", "scope": "week", "title": "Bu hafta 3 farklı derse çalış", "icon": "🎨", "target": 3, "reward": 3 },
-      { "id": "weekBook", "scope": "week", "title": "Bu hafta bir kitap bitir", "icon": "📚", "target": 1, "reward": 5 }
+      {
+        "id": "day30",
+        "scope": "day",
+        "title": "Bugün 30 dk çalış",
+        "icon": "⏱️",
+        "target": 30,
+        "reward": 2
+      },
+      {
+        "id": "week5days",
+        "scope": "week",
+        "title": "Bu hafta 5 gün çalış",
+        "icon": "📅",
+        "target": 5,
+        "reward": 5
+      },
+      {
+        "id": "week3plans",
+        "scope": "week",
+        "title": "Bu hafta 3 günün planını bitir",
+        "icon": "📋",
+        "target": 3,
+        "reward": 5
+      },
+      {
+        "id": "week3courses",
+        "scope": "week",
+        "title": "Bu hafta 3 farklı derse çalış",
+        "icon": "🎨",
+        "target": 3,
+        "reward": 3
+      },
+      {
+        "id": "weekBook",
+        "scope": "week",
+        "title": "Bu hafta bir kitap bitir",
+        "icon": "📚",
+        "target": 1,
+        "reward": 5
+      }
     ]
   },
-  "chest": { "days": 5, "minutes": 150 },
-  "freeze": { "max": 2, "coverDays": 7 },
-  "stars": { "perDay": 8 },
-  "levelHours": [0, 5, 15, 30, 60, 100, 150],
-  "skillTierMinutes": [120, 360, 900]
+  "chest": {
+    "days": 5,
+    "minutes": 150
+  },
+  "freeze": {
+    "max": 2,
+    "coverDays": 7
+  },
+  "stars": {
+    "perDay": 8
+  },
+  "levelHours": [
+    0,
+    5,
+    15,
+    30,
+    60,
+    100,
+    150
+  ],
+  "skillTierMinutes": [
+    120,
+    360,
+    900
+  ],
+  "world": {
+    "room": {
+      "w": 8,
+      "h": 8,
+      "fixed": [
+        {
+          "kind": "door",
+          "x": 6,
+          "y": 0,
+          "to": "garden"
+        },
+        {
+          "kind": "door",
+          "x": 0,
+          "y": 5,
+          "to": "library",
+          "books": 36
+        }
+      ]
+    },
+    "library": {
+      "w": 6,
+      "h": 6,
+      "books": 36,
+      "fixed": [
+        {
+          "kind": "door",
+          "x": 5,
+          "y": 0,
+          "to": "room"
+        }
+      ]
+    },
+    "garden": {
+      "lands": [
+        {
+          "id": "aciklik",
+          "name": "Açıklık",
+          "icon": "🌱",
+          "hours": 0,
+          "w": 10,
+          "h": 10,
+          "desc": "Evinin önünde küçük bir çimenlik."
+        },
+        {
+          "id": "dere",
+          "name": "Dere",
+          "icon": "💧",
+          "hours": 5,
+          "w": 12,
+          "h": 11,
+          "desc": "Bahçenin yanından bir dere akmaya başladı."
+        },
+        {
+          "id": "tepe",
+          "name": "Tepe",
+          "icon": "⛰️",
+          "hours": 15,
+          "w": 14,
+          "h": 12,
+          "desc": "Derenin ötesinde yeşil bir tepe yükseldi."
+        },
+        {
+          "id": "gol",
+          "name": "Göl",
+          "icon": "🦆",
+          "hours": 30,
+          "w": 16,
+          "h": 14,
+          "desc": "Tepenin dibinde masmavi bir göl oluştu."
+        },
+        {
+          "id": "kopru",
+          "name": "Köprü",
+          "icon": "🌉",
+          "hours": 60,
+          "w": 18,
+          "h": 15,
+          "desc": "Gölün üstüne ahşap bir köprü kuruldu."
+        },
+        {
+          "id": "sihir",
+          "name": "Sihirli koru",
+          "icon": "✨",
+          "hours": 100,
+          "w": 20,
+          "h": 16,
+          "desc": "Bahçenin köşesinde ışıldayan bir koru belirdi."
+        }
+      ],
+      "fixed": [
+        {
+          "kind": "house",
+          "x": 1,
+          "y": 1,
+          "w": 4,
+          "h": 3
+        },
+        {
+          "kind": "door",
+          "x": 2,
+          "y": 4,
+          "to": "room"
+        },
+        {
+          "kind": "water",
+          "x": 10,
+          "y": 0,
+          "w": 1,
+          "h": 99,
+          "land": "dere"
+        },
+        {
+          "kind": "bridge",
+          "x": 10,
+          "y": 2,
+          "land": "dere"
+        },
+        {
+          "kind": "hill",
+          "x": 11,
+          "y": 6,
+          "w": 3,
+          "h": 3,
+          "land": "tepe"
+        },
+        {
+          "kind": "water",
+          "x": 12,
+          "y": 10,
+          "w": 4,
+          "h": 4,
+          "land": "gol"
+        },
+        {
+          "kind": "bridge",
+          "x": 12,
+          "y": 11,
+          "w": 4,
+          "h": 1,
+          "land": "kopru"
+        },
+        {
+          "kind": "grove",
+          "x": 17,
+          "y": 13,
+          "w": 3,
+          "h": 3,
+          "land": "sihir"
+        }
+      ],
+      "pathRow": 2
+    },
+    "region": {
+      "min": 6,
+      "max": 14,
+      "tilesPerTree": 2.2
+    },
+    "trees": [
+      {
+        "id": "fidan",
+        "name": "Fidan",
+        "icon": "🌱",
+        "min": 0
+      },
+      {
+        "id": "cali",
+        "name": "Çalı",
+        "icon": "🌿",
+        "min": 15
+      },
+      {
+        "id": "genc",
+        "name": "Genç ağaç",
+        "icon": "🌳",
+        "min": 30
+      },
+      {
+        "id": "cam",
+        "name": "Çam",
+        "icon": "🌲",
+        "min": 45
+      },
+      {
+        "id": "mese",
+        "name": "Meşe",
+        "icon": "🌳",
+        "min": 60
+      },
+      {
+        "id": "dev",
+        "name": "Dev ağaç",
+        "icon": "🌲",
+        "min": 90
+      }
+    ],
+    "creatures": [
+      {
+        "id": "kelebek",
+        "name": "Kelebek",
+        "icon": "🦋",
+        "trees": 3
+      },
+      {
+        "id": "kus",
+        "name": "Kuş",
+        "icon": "🐦",
+        "trees": 6
+      },
+      {
+        "id": "tavsan",
+        "name": "Tavşan",
+        "icon": "🐰",
+        "trees": 10,
+        "model": "bunny"
+      },
+      {
+        "id": "civciv",
+        "name": "Civciv",
+        "icon": "🐥",
+        "trees": 15,
+        "model": "chick"
+      },
+      {
+        "id": "ari",
+        "name": "Arı",
+        "icon": "🐝",
+        "trees": 20,
+        "model": "bee",
+        "fly": true
+      },
+      {
+        "id": "tilki",
+        "name": "Tilki",
+        "icon": "🦊",
+        "trees": 30,
+        "model": "fox"
+      },
+      {
+        "id": "geyik",
+        "name": "Geyik",
+        "icon": "🦌",
+        "trees": 45,
+        "model": "deer"
+      }
+    ],
+    "shelf": {
+      "perShelf": 12
+    }
+  }
 }

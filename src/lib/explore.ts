@@ -1,83 +1,33 @@
-// Ormanda gezinti: çocuk kendi karakteriyle adada yürür. Buradaki her şey saf mantık (çarpışma,
-// yön, günlük yıldızlar, yerleştirme); 3D sahne components/forest3d/Explore.tsx içinde. Toplanan yıldızlar
-// deftere yazılır (economy.ts) ve yalnızca küçük süsleri alır.
-import { CELLS } from './forest';
-import { cellPosition, GRID_HALF, ringPoint, rng, type IslandLayout } from './island';
-import type { ForestTree } from './types';
+// "Yakından gez" (üçüncü şahıs gezinti) için saf mantık. Dış mekân karo ızgarasıdır (world.ts): karakter
+// yürünemeyen karolara (ağaç, ev, su, tepe, mobilya) giremez, kenarlarından kayarak geçer.
+import { STARS_PER_DAY } from './economy';
+import { rng } from './rng';
+import { key, type OutdoorMap } from './world';
 
-export interface Circle {
-  x: number;
-  z: number;
-  r: number;
-}
-
-/** Karakterin çarpışma yarıçapı */
+/** Karakterin yarıçapı (karo = 1) */
 export const PLAYER_R = 0.25;
-/** Adanın kıyısında görünmez duvar: kenardan bu kadar içeride */
-export const EDGE = 0.45;
 
-/** Adaya yerleştirilmiş eşya: konum, kapladığı yer, üzerinden yürünür mü */
-export interface PlacedSpot {
-  x: number;
-  z: number;
-  r: number;
-  walk?: boolean;
+/** (x, z) noktası, çevresindeki PLAYER_R'lik kutuyla birlikte boş karolarda mı */
+export function standable(x: number, z: number, blocked: Set<string>, w: number, h: number): boolean {
+  for (const [dx, dz] of [
+    [-PLAYER_R, -PLAYER_R],
+    [PLAYER_R, -PLAYER_R],
+    [-PLAYER_R, PLAYER_R],
+    [PLAYER_R, PLAYER_R],
+  ]) {
+    const tx = Math.floor(x + dx);
+    const tz = Math.floor(z + dz);
+    if (tx < 0 || tz < 0 || tx >= w || tz >= h || blocked.has(key(tx, tz))) return false;
+  }
+  return true;
 }
 
-/** Üzerinden geçilemeyen şeyler. Çimen, çiçek, mantar, çalı, fidan, solgun fidan ve yolların içinden geçilir. */
-export function obstacles(trees: ForestTree[], layout: IslandLayout, placed: PlacedSpot[] = []): Circle[] {
-  const out: Circle[] = [];
-  for (const t of trees) {
-    if (t.stage < 2) continue;
-    const [x, z] = cellPosition(t.cell);
-    out.push({ x, z, r: [0.2, 0.25, 0.3][t.stage - 2] ?? 0.3 });
-  }
-  for (const d of layout.decor) {
-    const r = d.kind === 'rock' ? 0.4 : d.kind === 'stone' ? 0.22 : d.kind === 'log' ? 0.3 : d.kind === 'stump' ? 0.18 : 0;
-    if (r) out.push({ x: d.x, z: d.z, r: r * d.scale });
-  }
-  if (layout.pond) out.push({ ...layout.pond, r: layout.pond.r + 0.05 });
-  if (layout.campfire) out.push({ ...layout.campfire, r: 0.35 });
-  for (const p of placed) if (!p.walk) out.push({ x: p.x, z: p.z, r: p.r * 0.8 });
-  return out;
-}
-
-/** Eşya buraya konabilir mi: ızgaraya girmez, kıyıdan taşmaz, başka bir şeyin üstüne binmez. */
-export function canPlace(x: number, z: number, r: number, radius: number, taken: Circle[]): boolean {
-  if (Math.hypot(x, z) > radius - EDGE - r * 0.6) return false;
-  const pad = GRID_HALF + r * 0.6;
-  if (Math.abs(x) < pad && Math.abs(z) < pad) return false;
-  return !taken.some((o) => Math.hypot(o.x - x, o.z - z) < o.r + r * 0.8);
-}
-
-/** İstenen yere gitmeyi dener; engellere girerse dışına itilir (kenarı boyunca kayar), kıyıdan düşmez. */
-export function resolveMove(from: [number, number], to: [number, number], obs: Circle[], radius: number): [number, number] {
-  let [x, z] = to;
-  for (let pass = 0; pass < 3; pass++) {
-    for (const c of obs) {
-      const min = c.r + PLAYER_R;
-      let dx = x - c.x;
-      let dz = z - c.z;
-      let d = Math.hypot(dx, dz);
-      if (d >= min) continue;
-      if (d < 1e-6) {
-        // Tam merkezdeyse geldiği yöne doğru it
-        dx = from[0] - c.x;
-        dz = from[1] - c.z;
-        d = Math.hypot(dx, dz) || 1;
-        if (!dx && !dz) dx = 1;
-      }
-      x = c.x + (dx / d) * min;
-      z = c.z + (dz / d) * min;
-    }
-  }
-  const max = radius - EDGE;
-  const r = Math.hypot(x, z);
-  if (r > max) {
-    x *= max / r;
-    z *= max / r;
-  }
-  return [x, z];
+/** Hareket: önce tamamı, olmazsa yalnızca x ya da yalnızca z (duvara sürtünerek kayma) */
+export function resolveMove(from: [number, number], to: [number, number], blocked: Set<string>, w: number, h: number): [number, number] {
+  if (standable(to[0], to[1], blocked, w, h)) return to;
+  if (standable(to[0], from[1], blocked, w, h)) return [to[0], from[1]];
+  if (standable(from[0], to[1], blocked, w, h)) return [from[0], to[1]];
+  return from;
 }
 
 /** Kameranın baktığı yöne göre hareket: ix sağa, iy ileri (-1…1). Kamera karakterin yaw yönünde arkada durur. */
@@ -110,26 +60,21 @@ export function nearest<T extends { x: number; z: number }>(pos: [number, number
   return best;
 }
 
-export const STAR_COUNT = 8;
+export const STAR_COUNT = STARS_PER_DAY;
 /** Bu kadar yakına gelince yıldız toplanır */
 export const STAR_REACH = 0.6;
 
-/** Günün yıldızları: tarihe göre sabit konumlar; yarısı ızgaranın boş hücrelerinde, yarısı kıyıda. */
-export function dailyStars(date: string, trees: ForestTree[], layout: IslandLayout, radius: number): { x: number; z: number }[] {
+/** Günün yıldızları: tarihe göre sabit, bahçenin ve bu ayın bölgesinin boş karolarında */
+export function dailyStars(date: string, map: OutdoorMap, blocked: Set<string>): { x: number; z: number }[] {
   const rand = rng(`yildiz:${date}`);
-  const avoid: Circle[] = obstacles(trees, layout).map((c) => ({ ...c, r: c.r + 0.35 }));
-  const used = new Set(trees.map((t) => t.cell));
+  const r = map.regions[0];
+  const free: [number, number][] = [];
+  const maxX = r ? r.ox + r.size : map.garden.w;
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < maxX; x++) if (!blocked.has(key(x, y))) free.push([x, y]);
   const out: { x: number; z: number }[] = [];
-  const free = Array.from({ length: CELLS }, (_, c) => c).filter((c) => !used.has(c));
-  for (let i = 0; i < STAR_COUNT / 2 && free.length; i++) {
-    const cell = free.splice(Math.floor(rand() * free.length), 1)[0];
-    const [x, z] = cellPosition(cell);
-    out.push({ x, z });
-  }
-  while (out.length < STAR_COUNT) {
-    const pt = ringPoint(rand, radius - EDGE, [...avoid, ...out.map((s) => ({ ...s, r: 1 }))]);
-    if (!pt) break;
-    out.push({ x: pt[0], z: pt[1] });
+  while (out.length < STAR_COUNT && free.length) {
+    const [x, y] = free.splice(Math.floor(rand() * free.length), 1)[0];
+    out.push({ x: x + 0.5, z: y + 0.5 });
   }
   return out;
 }

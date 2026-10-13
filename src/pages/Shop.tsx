@@ -12,24 +12,29 @@ import { hasWebGL } from '../lib/webgl';
 const ItemPreview = lazy(() => import('../components/forest3d/ItemPreview'));
 
 const WHAT: Record<Category, string> = {
-  karakter: 'Ormanda gezerken bu karakterle yürürsün.',
+  mobilya: 'Odana yerleştirirsin: Dünyam → ✏️ Düzenle.',
+  zemin: 'Odanın zemini olur: Dünyam → ✏️ Düzenle.',
+  duvar: 'Odanın duvarlarını boyar: Dünyam → ✏️ Düzenle.',
+  bitki: 'Odana ya da bahçene koyabilirsin.',
+  isik: 'Akşamları etrafını aydınlatır.',
+  dis: 'Bahçene yerleştirirsin: Dünyam → Bahçe → ✏️ Düzenle.',
+  karakter: 'Dünyanda bu karakterle yürürsün.',
   aksesuar: 'Karakterinin başına takılır.',
-  evcil: 'Gezintide peşinden gelir, adanda dolaşır.',
-  yapi: 'Gezintide 🔨 ile adana yerleştirirsin.',
-  sus: 'Gezintide 🔨 ile adana yerleştirirsin.',
-  diger: 'Bir gün çalışamazsan serin bozulmaz (en çok 7 gün öncesini kapatır).',
+  evcil: 'Satın alınamaz: ormanın büyüdükçe kendiliğinden gelir. Gelince yanına alabilirsin.',
+  diger: 'Hafta içi bir gün çalışamazsan serin bir kademe düşmez (en çok 7 gün öncesini kapatır).',
 };
 
 export default function Shop({ goCollection }: { goCollection: () => void }) {
   const { stats, buy, equip, celebrate } = useGame();
-  const [cat, setCat] = useState<Category>('evcil');
+  const [tab, setTab] = useState('mobilya');
   const [open, setOpen] = useState<Item | null>(null);
   const can3D = useMemo(hasWebGL, []);
   if (!stats) return <div className="splash">Yükleniyor…</div>;
 
   const count = (id: string) => stats.owned.filter((o) => o.item_id === id).length;
   const have = (i: Item) => owns(i, stats.owned, stats.unlock);
-  const list = ITEMS.filter((i) => i.category === cat).sort((a, b) => Number(have(b) && !b.repeat) - Number(have(a) && !a.repeat) || 0);
+  const cats = CATEGORIES.find((c) => c.id === tab)?.cats ?? [];
+  const list = ITEMS.filter((i) => cats.includes(i.category)).sort((a, b) => Number(have(b) && !b.repeat) - Number(have(a) && !a.repeat) || 0);
 
   return (
     <div className="stack">
@@ -43,9 +48,9 @@ export default function Shop({ goCollection }: { goCollection: () => void }) {
         </button>
       </section>
 
-      <div className="tabs shop-tabs" role="tablist" aria-label="Eşya türü">
+      <div className="tabs shop-tabs" role="tablist" aria-label="Eşya türü" data-tour="shop">
         {CATEGORIES.map((c) => (
-          <button key={c.id} role="tab" aria-selected={cat === c.id} className={cat === c.id ? 'on' : ''} onClick={() => setCat(c.id)}>
+          <button key={c.id} role="tab" aria-selected={tab === c.id} className={tab === c.id ? 'on' : ''} onClick={() => setTab(c.id)}>
             <span aria-hidden>{c.icon}</span> {c.name}
           </button>
         ))}
@@ -81,7 +86,7 @@ const isEquipped = (e: Equipped, i: Item) => e.character === i.id || e.accessory
 function unlockShort(i: Item, p: Parameters<typeof unlockValue>[1]): string {
   const a = i.acquire;
   if (a.kind !== 'unlock') return '';
-  return `🔒 ${Math.min(unlockValue(a.by, p), a.target)}/${a.target}`;
+  return `🔒 ${Math.floor(Math.min(unlockValue(a.by, p), a.target))}/${a.target}`;
 }
 
 /** Eşya ayrıntısı: önizleme, nasıl alınır, satın al / giy / yanına al */
@@ -165,7 +170,8 @@ export function ItemSheet({
           {use.label}
         </button>
       )}
-      {mine && placeable(item) && <p className="small center muted">Sende {stats.owned.filter((o) => o.item_id === item.id).length} tane var.</p>}
+      {mine && placeable(item) && item.acquire.kind !== 'free' && <p className="small center muted">Sende {stats.owned.filter((o) => o.item_id === item.id).length || 1} tane var.</p>}
+      {item.desc && <p className="small center">{item.desc}</p>}
       {error && <p className="error-ink small center">{error}</p>}
     </Sheet>
   );

@@ -15,15 +15,34 @@ import { renderConfigSql } from '../../scripts/config-sql.mjs';
 import economyJson from '../config/economy.json' with { type: 'json' };
 import itemsJson from '../config/items.json' with { type: 'json' };
 import { levelOf, perksOf, skillsOf, skillTitle } from './level';
-import { canPlace, dailyStars, EDGE, moveDir, nearest, obstacles, PLAYER_R, resolveMove, STAR_COUNT } from './explore';
-import { pickFreeCell, stageIndex, CELLS } from './forest';
-import { autoPlantPlan, computeStats, dayAction, diffStats, walletOf, walletsFor } from './game';
-import { cellPosition, islandLayout, islandProgress, wiltSpots } from './island';
+import { dailyStars, moveDir, nearest, resolveMove, standable, STAR_COUNT } from './explore';
+import { computeStats, diffStats } from './game';
+import {
+  blockedTiles,
+  canPlaceAt,
+  creaturesOf,
+  DEFAULT_ROOM,
+  findPath,
+  fixedTiles,
+  footprint,
+  forestOf,
+  landsOf,
+  layoutProblem,
+  outdoorBlocked,
+  outdoorMap,
+  regionLayout,
+  regionSize,
+  spaceSize,
+  treeKind,
+  type SpaceLayout,
+} from './world';
+import { TREE_NAMES } from '../../supabase/functions/_shared/report';
+import { estimateWords, SCENES, sceneEnd, wordAt } from './tour';
+import { wordsFromAlignment } from '../../scripts/demo-words.mjs';
 import { applyTemplate, dayPlan, TEMPLATES } from './plan';
-import { computeReading, parcelCells } from './reading';
+import { computeReading } from './reading';
 import { openRewards, rewardProgress } from './rewards';
-import { REVIVE_MIN, wiltsOf } from './wilt';
-import { DEFAULT_READING_GOALS, type Book, type ForestTree, type LedgerEntry, type OwnedItem, type PlanItem, type Reflection, type Reward, type StudyLog } from './types';
+import { DEFAULT_READING_GOALS, type Abandoned, type Book, type LedgerEntry, type OwnedItem, type PlanItem, type Reflection, type Reward, type StudyLog } from './types';
 
 // 2026-10-12 pazartesi
 const MON = '2026-10-12';
@@ -73,70 +92,27 @@ test('seri: kaçırılan hafta içi günü sıfırlamaz, bir kademe düşürür;
   assert.equal(computeStreak(set('2026-10-05', '2026-10-06', '2026-10-08'), '2026-10-05', '2026-10-08').streak, 1);
 });
 
-test('orman: fiyat evresi, boş hücre', () => {
-  assert.equal(stageIndex(29), -1);
-  assert.equal(stageIndex(30), 0);
-  assert.equal(stageIndex(180), 4);
-  const taken = new Set<number>();
-  for (let i = 0; i < CELLS; i++) taken.add(pickFreeCell(taken, `s${i}`)!);
-  assert.equal(taken.size, CELLS); // hepsi dolabildi, çakışma yok
-  assert.equal(pickFreeCell(taken, 'x'), null);
-});
-
-const tree = (date: string, stage: number, id = `t-${date}`): ForestTree => ({ id, date, stage, species: 'elma', month: date.slice(0, 7), cell: 0 });
-
-test('günde tek ağaç: dikilmemiş gün dikilir, parası yeten gün büyütülür', () => {
-  const totals = new Map([
-    ['2026-10-01', 40], // ağaç yok → tohum dik
-    ['2026-10-02', 25], // tohuma yetmez
-    ['2026-10-05', 95], // tohum dikili, küçük ağaca yetiyor → büyüt
-    ['2026-10-06', 70], // çiçek dikili, 90'a yetmez → bekleyen yok
-    [MON, 30],
-  ]);
-  const trees = [tree('2026-10-05', 0), tree('2026-10-06', 1)];
-  const w = walletsFor('2026-10', totals, trees, MON);
-  assert.deepEqual(
-    w.map((x) => [x.date, dayAction(x)]),
-    [
-      [MON, { kind: 'plant', stage: 0 }],
-      ['2026-10-05', { kind: 'grow', stage: 2 }],
-      ['2026-10-01', { kind: 'plant', stage: 0 }],
-    ],
-  );
-  assert.equal(walletOf('2026-10-06', totals, trees).left, 10);
-});
-
-test('geçmiş ay: her güne bir ağaç dikilir ya da paranın yettiği evreye büyütülür', () => {
-  const totals = new Map([
-    ['2026-09-10', 130], // ağaç yok → büyük ağaç
-    ['2026-09-11', 200], // tohum dikili → dev ağaca büyüt
-    ['2026-09-12', 20], // yetmez
-    ['2026-10-01', 100], // bu ay: dokunulmaz
-  ]);
-  const steps = autoPlantPlan(totals, [tree('2026-09-11', 0, 'eski')], MON);
-  assert.equal(steps.length, 2);
-  assert.deepEqual(steps[1], { kind: 'grow', id: 'eski', stage: 4 });
-  assert.equal(steps[0].kind, 'plant');
-  if (steps[0].kind === 'plant') {
-    assert.equal(steps[0].tree.stage, 3);
-    assert.equal(steps[0].tree.month, '2026-09');
-    assert.notEqual(steps[0].tree.cell, 0); // eski ağacın hücresi dolu
-  }
-});
-
-test('istatistik + kutlama: yeni dakika yeni evre ve rozet getirir', () => {
-  const base = { reflections: [], trees: [], doneTasks: 0, today: MON };
-  const before = computeStats({ ...base, logs: [log(MON, 20)] });
-  const after = computeStats({ ...base, logs: [log(MON, 20), log(MON, 15)] });
-  assert.equal(after.today.left, 35);
-  const kinds = diffStats(before, after).map((c) => c.kind);
-  assert.ok(kinds.includes('stage'));
-  // Ağaç zaten dikiliyse ve yeni evreye ulaşılmadıysa "dik" kutlaması tekrar çıkmaz
-  const planted = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15)] });
-  const more = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15), log(MON, 10)] });
-  assert.deepEqual(diffStats(planted, more).filter((c) => c.kind === 'stage'), []);
-  const grow = computeStats({ ...base, trees: [tree(MON, 0)], logs: [log(MON, 20), log(MON, 15), log(MON, 30)] });
-  assert.match(diffStats(planted, grow).find((c) => c.kind === 'stage')!.title, /çiçek olabilir/);
+test('istatistik + kutlama: her seans bir ağaç, elle yazılan ağaç vermez; yeni arazi kutlanır', () => {
+  const base = { reflections: [], doneTasks: 0, today: MON };
+  const l = (id: string, min: number, extra: Partial<StudyLog> = {}): StudyLog => ({ ...log(MON, min), id, created_at: `${MON}T1${id.length}:00:00Z`, ...extra });
+  const before = computeStats({ ...base, logs: [l('a', 20)] });
+  const after = computeStats({ ...base, logs: [l('a', 20), l('bb', 50)] });
+  assert.deepEqual(after.forest.map((t) => t.kind), ['cali', 'cam']);
+  assert.equal(after.treeCount, 2);
+  const c = diffStats(before, after).find((x) => x.kind === 'tree')!;
+  assert.match(c.title, /Yeni ağaç: Çam/);
+  const manual = computeStats({ ...base, logs: [l('a', 20), l('m', 90, { source: 'manual' })] });
+  assert.equal(manual.treeCount, 1);
+  assert.equal(manual.todayMinutes, 110);
+  assert.equal(manual.trustedMinutes, 20);
+  assert.deepEqual(diffStats(before, manual).filter((x) => x.kind === 'tree'), []);
+  // 5 saatte dere açılır
+  const big = computeStats({ ...base, logs: Array.from({ length: 5 }, (_, i) => l(`x${i}`, 60)) });
+  assert.ok(diffStats(before, big).some((x) => x.kind === 'land' && /Dere/.test(x.title)));
+  // Yarım seans kuru ağaç
+  const dry = computeStats({ ...base, logs: [l('a', 20)], abandoned: [{ id: 'y', date: MON, minutes: 12, created_at: `${MON}T09:00:00Z` }] });
+  assert.deepEqual(dry.forest.map((t) => [t.kind, t.dry]), [['kuru', true], ['cali', false]]);
+  assert.equal(dry.treeCount, 1);
 });
 
 test('plan: her ders kendi planıyla sınırlı sayılır, onay bekleyen işaretlenir', () => {
@@ -181,7 +157,7 @@ test('ödül: başlangıç gününden itibaren sayar, verilenler listede yok', (
   assert.equal(openRewards([r({ claimed_on: MON })], x).length, 0);
 });
 
-test('okuma: bu ay biten ve dikilmeyen kitap parsel bekler; parsel 4’er büyür', () => {
+test('okuma: bugünün sayfaları ve bu ay biten kitaplar', () => {
   const book: Book = {
     id: 'b',
     title: 'K',
@@ -200,26 +176,19 @@ test('okuma: bu ay biten ve dikilmeyen kitap parsel bekler; parsel 4’er büyü
     created_at: '',
   };
   const logs = [{ id: 'l', book_id: 'b', date: MON, minutes: 15, pages: 20, to_page: 120, created_at: '' }];
-  const s = computeReading([book], logs, [], DEFAULT_READING_GOALS, MON);
-  assert.equal(s.pendingTrees.length, 1);
+  const s = computeReading([book], logs, DEFAULT_READING_GOALS, MON);
   assert.equal(s.todayPages, 20);
   assert.equal(s.monthDone, 1);
-  assert.equal(computeReading([book], logs, [{ id: 't', book_id: 'b', month: '2026-10', cell: 0 }], DEFAULT_READING_GOALS, MON).pendingTrees.length, 0);
-  assert.equal(parcelCells(0), 4);
-  assert.equal(parcelCells(5), 8);
-  assert.equal(parcelCells(1, 9), 12);
+  assert.equal(s.done.length, 1);
 });
 
-test('demo API: ders silinince kayıt ve planları da silinir; aynı hücreye ya da aynı güne iki ağaç olmaz', async () => {
+test('demo API: ders silinince kayıt ve planları da silinir', async () => {
   const empty = (): DemoDb => ({ courses: [], logs: [], tasks: [], reflections: [] });
   const api = localApi(empty);
   const c = await api.addCourse('Mat', '#000');
   await api.addLog({ course_id: c.id, date: MON, duration_minutes: 30, note: null });
   await api.savePlans(MON, MON, [{ date: MON, course_id: c.id, minutes: 30, note: null }], true);
   const task = await api.addTask({ title: 'iş', date: MON, course_id: c.id });
-  await api.plantTree({ date: MON, stage: 0, species: 'elma', month: '2026-10', cell: 3 });
-  await assert.rejects(api.plantTree({ date: '2026-10-11', stage: 0, species: 'elma', month: '2026-10', cell: 3 }), /dolu/);
-  await assert.rejects(api.plantTree({ date: MON, stage: 0, species: 'elma', month: '2026-10', cell: 4 }), /zaten bir ağaç/);
   await api.deleteCourse(c.id);
   assert.equal((await api.listLogs(MON, MON)).length, 0);
   assert.equal((await api.listPlans(MON, MON)).length, 0);
@@ -256,47 +225,6 @@ test('Supabase API: 1000 satırdan uzun geçmişi sayfa sayfa okur', async () =>
     [1000, 1999],
     [2000, 2999],
   ]);
-});
-
-test('solgun fidan: iptalden sonra aynı gün 10 dk çalışılınca canlanır', () => {
-  const ab = (id: string, date: string, created_at: string) => ({ id, date, minutes: 12, created_at });
-  const at = (date: string, min: number, created_at: string): StudyLog => ({ ...log(date, min), id: `${date}-${created_at}`, created_at });
-  const logs = [
-    at(MON, 30, `${MON}T08:00:00.000Z`), // iptalden önce: sayılmaz
-    at(MON, 6, `${MON}T10:00:00.000Z`),
-    at(MON, 5, `${MON}T11:00:00.000Z`),
-    at('2026-10-11', 20, '2026-10-11T12:00:00.000Z'), // başka gün: sayılmaz
-  ];
-  const [a, b] = wiltsOf([ab('a', MON, `${MON}T09:00:00.000Z`), ab('b', MON, `${MON}T10:30:00.000Z`)], logs);
-  assert.deepEqual([a.after, a.revived], [11, true]);
-  assert.deepEqual([b.after, b.revived], [5, false]);
-  assert.equal(REVIVE_MIN, 10);
-});
-
-test('ada: saat arttıkça biyomlar açılır ve ada büyür', () => {
-  const start = islandProgress(0);
-  assert.equal(start.level, 1);
-  assert.deepEqual(start.next && [start.next.biome.id, start.next.minutesLeft], ['cicek', 180]);
-  const mid = islandProgress(26 * 60);
-  assert.ok(mid.unlocked.has('gol') && mid.unlocked.has('tavsan') && !mid.unlocked.has('civciv'));
-  assert.ok(mid.radius > start.radius);
-  assert.equal(islandProgress(1e6).next, null);
-});
-
-test('ada: süsler aynı ay için hep aynı, ızgaraya ve göle girmez, kıyıdan taşmaz', () => {
-  const p = islandProgress(60 * 60);
-  const a = islandLayout('2026-10', p);
-  assert.deepEqual(a, islandLayout('2026-10', p));
-  assert.notDeepEqual(a.decor, islandLayout('2026-09', p).decor);
-  assert.ok(a.pond && a.campfire);
-  for (const d of a.decor) {
-    assert.ok(!(Math.abs(d.x) < 4.35 && Math.abs(d.z) < 4.35), 'süs ızgarada');
-    assert.ok(Math.hypot(d.x, d.z) <= p.radius, 'süs adanın dışında');
-    assert.ok(Math.hypot(d.x - a.pond!.x, d.z - a.pond!.z) > a.pond!.r, 'süs gölette');
-  }
-  // Izgara hücreleri ortada: 0 sol üst, 63 sağ alt
-  assert.deepEqual(cellPosition(0), [-3.5, -3.5]);
-  assert.deepEqual(cellPosition(63), [3.5, 3.5]);
 });
 
 test('seans: süre sunucu kurallarıyla; haber gelmezse son beat + tolerans; hareketsizlik geri alınır', () => {
@@ -362,74 +290,152 @@ test('demo API: seans — not zorunlu, kayıt timer olur ve Elmas yazılır; ell
   assert.equal(balances(await api.listLedger()).star, 1);
 });
 
-const tree3d = (cell: number, stage: number): ForestTree => ({ id: `t${cell}`, date: MON, month: '2026-10', cell, stage, species: 'elma' });
+// ---------- Dünya: karo ızgarası, yerleştirme, yol bulma, orman ----------
+const ctx0 = { totalMinutes: 0, booksDone: 0 };
+const owned1 = () => 1;
 
-test('gezinti: karakter engellerin içine girmez, kayarak geçer, kıyıdan düşmez', () => {
-  const obs = [{ x: 0, z: 0, r: 0.3 }];
-  const min = 0.3 + PLAYER_R;
-  // Dümdüz ağaca yürüyünce kenarında durur
-  const hit = resolveMove([-1, 0], [0, 0.0], obs, 8);
-  assert.ok(Math.hypot(...hit) >= min - 1e-9);
-  // Çapraz gelince ağacın etrafından kayar (z yönünde ilerler)
-  const slide = resolveMove([-0.6, -0.1], [-0.4, 0.05], obs, 8);
-  assert.ok(Math.hypot(...slide) >= min - 1e-9);
-  assert.ok(slide[1] > -0.1);
-  // Engel yoksa olduğu gibi
-  assert.deepEqual(resolveMove([2, 2], [2.1, 2], obs, 8), [2.1, 2]);
-  // Kıyı: yarıçap - EDGE'den öteye gidemez
-  const edge = resolveMove([6, 0], [9, 0], [], 8);
-  assert.ok(Math.abs(Math.hypot(...edge) - (8 - EDGE)) < 1e-9);
+test('dünya: ayak izi dönüşle değişir; yerleşim sınır, sabit karo, çakışma ve envanteri denetler', () => {
+  assert.deepEqual(footprint({ w: 2, h: 1 }, 3, 2, 0).map((t) => `${t.x},${t.y}`), ['3,2', '4,2']);
+  assert.deepEqual(footprint({ w: 2, h: 1 }, 3, 2, 90).map((t) => `${t.x},${t.y}`), ['3,2', '3,3']);
+  assert.equal(layoutProblem('room', DEFAULT_ROOM, ctx0, owned1), null);
+  const room = (items: SpaceLayout['items'], extra: Partial<SpaceLayout> = {}): SpaceLayout => ({ items, ...extra });
+  const msg = (l: SpaceLayout, own = owned1, space: 'room' | 'garden' = 'room', ctx = ctx0) => layoutProblem(space, l, ctx, own)?.message ?? null;
+  assert.match(msg(room([{ item: 'mob:masa', x: 7, y: 3, rot: 0 }]))!, /dışına/);
+  assert.equal(msg(room([{ item: 'mob:masa', x: 7, y: 3, rot: 90 }])), null);
+  assert.match(msg(room([{ item: 'mob:masa', x: 6, y: 0, rot: 0 }]))!, /boş değil/); // kapı
+  assert.match(msg(room([{ item: 'mob:masa', x: 1, y: 1, rot: 0 }, { item: 'mob:sandalye', x: 2, y: 1, rot: 0 }]))!, /dolu/);
+  assert.match(msg(room([{ item: 'mob:sehpa', x: 1, y: 1, rot: 180 }]))!, /döndürülemez/);
+  assert.match(msg(room([{ item: 'dis:cit', x: 1, y: 1, rot: 0 }]))!, /dışarıda/);
+  assert.match(msg(room([], { floor: 'zemin:dama' }), (i) => (i.id === 'zemin:dama' ? 0 : 1))!, /kaplama/);
+  // Halı (zemin katmanı) üstüne koltuk konur; iki halı üst üste konmaz
+  const own2 = () => 2;
+  assert.equal(msg(room([{ item: 'mob:hali', x: 2, y: 3, rot: 0 }, { item: 'mob:koltuk-mavi', x: 2, y: 3, rot: 0 }]), own2), null);
+  assert.match(msg(room([{ item: 'mob:hali', x: 2, y: 3, rot: 0 }, { item: 'mob:hali-yuvarlak', x: 3, y: 3, rot: 0 }]), own2)!, /dolu/);
+  // Envanter: iki koltuk için iki tane gerekir; diğer alanlarda kullanılanlar da sayılır
+  const two = room([{ item: 'mob:koltuk-mavi', x: 2, y: 3, rot: 0 }, { item: 'mob:koltuk-mavi', x: 2, y: 5, rot: 0 }]);
+  assert.match(msg(two)!, /envanterinde yok/);
+  assert.equal(layoutProblem('room', two, ctx0, own2), null);
+  assert.match(layoutProblem('room', two, ctx0, own2, () => 1)!.message, /envanterinde yok/);
+  // Önizleme: konabilir/konamaz
+  assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:yatak', x: 6, y: 5, rot: 0 }), true);
+  assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:yatak', x: 2, y: 0, rot: 0 }), false);
+  assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:masa', x: 2, y: 0, rot: 0 }, 1), true, 'kendi yerine geri konur');
+  // Kütüphane odası 36 kitapta açılır; kapısı da o zaman
+  assert.match(layoutProblem('library', { items: [] }, ctx0, owned1)!.message, /açılmadı/);
+  assert.equal(fixedTiles('room', ctx0).has('0,5'), false);
+  assert.equal(fixedTiles('room', { ...ctx0, booksDone: CFG.world.library.books }).get('0,5')?.to, 'library');
 });
 
-test('gezinti: engeller — büyük ağaç, kaya, gölet; fidan ve çiçek değil', () => {
-  const p = islandProgress(60 * 60);
-  const layout = islandLayout('2026-10', p);
-  const obs = obstacles([tree3d(0, 0), tree3d(1, 1), tree3d(2, 4)], layout);
-  const [x, z] = cellPosition(2);
-  assert.ok(obs.some((o) => o.x === x && o.z === z));
-  assert.ok(!obs.some((o) => o.x === cellPosition(0)[0] && o.z === cellPosition(0)[1]));
-  assert.ok(obs.some((o) => layout.pond && o.x === layout.pond.x && o.r > layout.pond.r));
-  const rocks = layout.decor.filter((d) => d.kind === 'rock' || d.kind === 'stone' || d.kind === 'log' || d.kind === 'stump').length;
-  assert.equal(obs.length, 1 + rocks + (layout.pond ? 1 : 0) + (layout.campfire ? 1 : 0));
+test('dünya: bahçe yalnızca çalıştıkça büyür; dere, tepe, göl, köprü açılır', () => {
+  assert.deepEqual(spaceSize('garden', ctx0), { w: 10, h: 10 });
+  assert.equal(landsOf(0).next?.id, 'dere');
+  const five = { totalMinutes: 5 * 60, booksDone: 0 };
+  assert.deepEqual(spaceSize('garden', five), { w: 12, h: 11 });
+  const f = fixedTiles('garden', five);
+  assert.equal(f.get('10,0')?.kind, 'water');
+  assert.equal(f.get('10,2')?.kind, 'bridge', 'köprü suyun üstünde');
+  assert.equal(fixedTiles('garden', ctx0).has('10,0'), false);
+  assert.equal(f.get('2,4')?.kind, 'door');
+  const sixty = fixedTiles('garden', { totalMinutes: 60 * 60, booksDone: 0 });
+  assert.equal(sixty.get('12,11')?.kind, 'bridge');
+  assert.equal(sixty.get('12,10')?.kind, 'water');
+  assert.deepEqual(landsOf(1e6).unlocked.map((l) => l.id), ['aciklik', 'dere', 'tepe', 'gol', 'kopru', 'sihir']);
+  // Yürüme: ev ve su yürünmez, kapı ve köprü yürünür
+  const b = blockedTiles('garden', { items: [] }, five);
+  assert.ok(b.has('1,1') && b.has('10,0') && !b.has('10,2') && !b.has('2,4'));
 });
 
-test('gezinti: joystick yönü kameraya göre', () => {
-  const close = (a: [number, number], b: [number, number]) => assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9, `${a} ≠ ${b}`);
-  // Kamera +z'de (yaw 0): ileri = -z, sağ = +x
+test('dünya: A* tıklanan karoya engellerin etrafından yürür; dolu karoya tıklanınca yanına gider', () => {
+  const blocked = new Set(['1,0', '1,1', '1,2']);
+  const p = findPath({ x: 0, y: 0 }, { x: 2, y: 0 }, 4, 4, blocked)!;
+  assert.equal(p.length, 8); // aşağıdan dolaşır
+  assert.deepEqual(p.at(-1), { x: 2, y: 0 });
+  assert.ok(p.every((t) => !blocked.has(`${t.x},${t.y}`)));
+  const adj = findPath({ x: 0, y: 3 }, { x: 1, y: 1 }, 4, 4, blocked)!;
+  assert.ok(!blocked.has(`${adj.at(-1)!.x},${adj.at(-1)!.y}`));
+  assert.equal(Math.abs(adj.at(-1)!.x - 1) + Math.abs(adj.at(-1)!.y - 1), 1);
+  assert.equal(findPath({ x: 0, y: 0 }, { x: 3, y: 3 }, 4, 4, new Set(['1,0', '0,1'])), null);
+  // Odada masa ve sandalyenin çevresinden kapıya
+  const room = blockedTiles('room', DEFAULT_ROOM, ctx0);
+  assert.ok(findPath({ x: 4, y: 4 }, { x: 6, y: 0 }, 8, 8, room));
+});
+
+test('orman: her seans bir ağaç (türü süreye göre), yerleri seans kimliğinden ve her açılışta aynı', () => {
+  assert.deepEqual([0, 14, 15, 30, 44, 45, 60, 89, 90, 300].map((m) => treeKind(m).id), ['fidan', 'fidan', 'cali', 'genc', 'genc', 'cam', 'mese', 'mese', 'dev', 'dev']);
+  const logs = Array.from({ length: 30 }, (_, i) => ({ ...log(addDays(MON, -(i % 20)), 10 + i * 3), id: `s${i}`, created_at: `2026-10-${String(1 + (i % 20)).padStart(2, '0')}T10:00:00Z` }));
+  const abandoned: Abandoned[] = [
+    { id: 'k1', date: MON, minutes: 12, created_at: `${MON}T08:00:00Z` },
+    { id: 'k2', date: MON, minutes: 3, created_at: `${MON}T08:30:00Z` },
+  ];
+  const trees = forestOf([...logs, { ...log(MON, 50, 'tr'), id: 'manual', source: 'manual' }], abandoned);
+  assert.equal(trees.length, 31, 'elle yazılan ve 5 dk altı yarım seans ağaç vermez');
+  assert.equal(trees.filter((t) => t.dry).length, 1);
+  const oct = trees.filter((t) => t.month === '2026-10');
+  const a = regionLayout(oct);
+  const b = regionLayout([...oct].reverse().sort((x, y) => x.at.localeCompare(y.at) || x.id.localeCompare(y.id)));
+  assert.deepEqual([...a.spots], [...b.spots], 'aynı ağaçlar hep aynı yerde');
+  assert.equal(a.spots.size, oct.length);
+  const keys = [...a.spots.values()].map((t) => `${t.x},${t.y}`);
+  assert.equal(new Set(keys).size, keys.length, 'iki ağaç aynı karoda değil');
+  assert.ok([...a.spots.values()].every((t) => t.y !== CFG.world.garden.pathRow && t.x < a.size && t.y < a.size), 'patika boş kalır');
+  // Yeni ağaç eskilerin yerini değiştirmez
+  const more = regionLayout([...oct, { ...oct[0], id: 'yeni', at: '2026-10-30T10:00:00Z' }]);
+  if (more.size === a.size) for (const [id, t] of a.spots) assert.deepEqual(more.spots.get(id), t);
+  assert.equal(regionSize(0), CFG.world.region.min);
+  assert.equal(regionSize(1000), CFG.world.region.max);
+  assert.deepEqual(creaturesOf(0), []);
+  assert.deepEqual(creaturesOf(10).map((c) => c.id), ['kelebek', 'kus', 'tavsan']);
+});
+
+test('dış mekân: bahçe solda, en yeni ay yanında; patika yürünür, ağaçlar yürünmez; yıldızlar boş karoda', () => {
+  const trees = forestOf(
+    [
+      { ...log('2026-09-10', 40), id: 'e1', created_at: '2026-09-10T10:00:00Z' },
+      { ...log(MON, 20), id: 'k1', created_at: `${MON}T10:00:00Z` },
+    ],
+    [],
+  );
+  const map = outdoorMap(ctx0, trees, '2026-10');
+  assert.deepEqual(map.regions.map((r) => [r.month, r.ox]), [
+    ['2026-10', 11],
+    ['2026-09', 11 + CFG.world.region.min + 1],
+  ]);
+  const blocked = outdoorBlocked(map, { items: [] }, ctx0);
+  assert.ok(!blocked.has(`10,${CFG.world.garden.pathRow}`), 'bahçeden bölgeye patika');
+  assert.ok(blocked.has('10,0'), 'bölgeler arası boşluk');
+  const spot = map.regions[0].spots.get('k1')!;
+  assert.ok(blocked.has(`${11 + spot.x},${spot.y}`));
+  assert.ok(findPath({ x: 2, y: 5 }, { x: map.regions[1].ox + 1, y: CFG.world.garden.pathRow }, map.width, map.height, blocked), 'eski aya yürünebilir');
+  const stars = dailyStars(MON, map, blocked);
+  assert.equal(stars.length, STAR_COUNT);
+  assert.deepEqual(stars, dailyStars(MON, map, blocked));
+  assert.notDeepEqual(stars, dailyStars(addDays(MON, 1), map, blocked));
+  assert.ok(stars.every((s) => !blocked.has(`${Math.floor(s.x)},${Math.floor(s.z)}`)));
+});
+
+test('gezinti: karakter dolu karolara girmez, kenarından kayar; joystick kameraya göre', () => {
+  const blocked = new Set(['2,0', '2,1']);
+  assert.equal(standable(1.5, 0.5, blocked, 4, 4), true);
+  assert.equal(standable(1.9, 0.5, blocked, 4, 4), false);
+  // Sağa ve aşağı giderken duvara sürtünüp aşağı kayar
+  const [x, z] = resolveMove([1.5, 0.5], [1.9, 0.9], blocked, 4, 4);
+  assert.equal(x, 1.5);
+  assert.ok(z > 0.5);
+  assert.deepEqual(resolveMove([0.5, 0.5], [-0.5, 0.5], blocked, 4, 4), [0.5, 0.5], 'alanın dışına çıkmaz');
+  const close = (a: [number, number], b: [number, number]) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-9, `${a} ≈ ${b}`));
   close(moveDir(0, 1, 0), [0, -1]);
   close(moveDir(1, 0, 0), [1, 0]);
-  // Kamera +x'te (yaw 90°): ileri = -x
   close(moveDir(0, 1, Math.PI / 2), [-1, 0]);
-  // Çapraz basınca hız 1'i geçmez
   assert.ok(Math.hypot(...moveDir(1, 1, 0.3)) <= 1 + 1e-9);
   assert.equal(nearest([0, 0], [{ x: 1, z: 0 }, { x: 0.5, z: 0 }], 2)?.x, 0.5);
   assert.equal(nearest([0, 0], [{ x: 3, z: 0 }], 2), null);
 });
 
-test('gezinti: günün yıldızları sabit ve boş yerlerde; eşya yerleştirme kuralları', () => {
-  const p = islandProgress(60 * 60);
-  const layout = islandLayout('2026-10', p);
-  const trees = [tree3d(0, 3), tree3d(9, 4), tree3d(27, 2)];
-  const a = dailyStars(MON, trees, layout, p.radius);
-  assert.equal(a.length, STAR_COUNT);
-  assert.deepEqual(a, dailyStars(MON, trees, layout, p.radius));
-  assert.notDeepEqual(a, dailyStars(addDays(MON, 1), trees, layout, p.radius));
-  const obs = obstacles(trees, layout);
-  for (const s of a) {
-    assert.ok(Math.hypot(s.x, s.z) <= p.radius - EDGE, 'kıyıdan taşmaz');
-    assert.ok(!obs.some((o) => Math.hypot(o.x - s.x, o.z - s.z) < o.r + 0.2), 'engelin üstünde değil');
-  }
-  // Yerleştirme: ızgaraya, kıyı dışına ve başka eşyanın üstüne konamaz
-  assert.equal(canPlace(0, 0, 0.5, p.radius, []), false);
-  assert.equal(canPlace(p.radius, 0, 0.5, p.radius, []), false);
-  assert.equal(canPlace(0, p.radius - 1.4, 0.4, p.radius, []), true);
-  assert.equal(canPlace(0, p.radius - 1.4, 0.4, p.radius, [{ x: 0.3, z: p.radius - 1.4, r: 0.3 }]), false);
-  // Üzerinden yürünen yol çarpışmaya girmez, çadır girer
-  const withPlaced = obstacles([], layout, [{ x: 0, z: 6, r: 0.75 }, { x: 2, z: 6, r: 0.5, walk: true }]);
-  assert.equal(withPlaced.length, obstacles([], layout).length + 1);
-  // Solgun fidan yerleri de aynı yardımcıdan, her seferinde aynı
-  const w = [{ item: { id: 'a-1' } }, { item: { id: 'a-2' } }];
-  assert.deepEqual(wiltSpots(w, layout, p.radius), wiltSpots(w, layout, p.radius));
+test('rapor: ağaç adları config ile aynı', () => {
+  assert.deepEqual(
+    TREE_NAMES.map((t) => [t.min, t.name]),
+    CFG.world.trees.map((t) => [t.min, t.name]),
+  );
 });
 
 // ---------- Oyun ekonomisi ----------
@@ -504,19 +510,26 @@ test('sandık: 5 gün + 150 dk; ödül haftaya göre sabit, satın alınamaz', (
   assert.equal(buyCheck('pet:tiger', 999, [], 0), 'Bu eşya satılmıyor.');
 });
 
-test('sahiplik: ücretsiz, satın alınan, başarıyla açılan; satın alma kontrolü', () => {
-  const p = { bestStreak: 12, planDays: 10, gold: 0, level: 1 };
+test('sahiplik: ücretsiz, satın alınan, başarıyla açılan; canlılar satın alınamaz', () => {
+  const p = { bestStreak: 12, planDays: 10, gold: 0, level: 1, hours: 20, trees: 15 };
+  const o = (item_id: string) => ({ id: 'x', item_id, via: 'buy' as const, ref: null, created_at: '' });
   assert.ok(owns(itemById('char:female-b')!, [], p));
-  assert.ok(!owns(itemById('pet:cat')!, [], p));
-  assert.ok(owns(itemById('pet:cat')!, [{ id: 'x', item_id: 'pet:cat', via: 'buy', ref: null, created_at: '' }], p));
+  assert.ok(owns(itemById('pet:cat')!, [], p), '12 ağaçta kedi gelir');
+  assert.ok(!owns(itemById('pet:dog')!, [], p), '18 ağaçta köpek');
   assert.ok(owns(itemById('pet:giraffe')!, [], p)); // 10 planlı gün
   assert.ok(!owns(itemById('pet:lion')!, [], p)); // 30 günlük seri
-  assert.match(buyCheck('pet:cat', 10, [], 0)!, /50 💎 daha/);
-  assert.equal(buyCheck('pet:cat', 60, [], 0), null);
-  assert.match(buyCheck('pet:cat', 99, [{ id: 'x', item_id: 'pet:cat', via: 'buy', ref: null, created_at: '' }], 0)!, /zaten/);
-  assert.equal(buyCheck('yapi:tent', 99, [{ id: 'x', item_id: 'yapi:tent', via: 'buy', ref: null, created_at: '' }], 0), null);
-  assert.match(buyCheck('sus:fence', 2, [], 0)!, /8 💎 daha/);
+  assert.ok(!owns(itemById('isik:yildiz')!, [], p), '100 saatte yıldız lambası');
+  assert.ok(owns(itemById('isik:yildiz')!, [], { ...p, hours: 100 }));
+  assert.equal(buyCheck('pet:cat', 999, [], 0), 'Bu eşya satılmıyor.');
+  assert.match(buyCheck('mob:koltuk-mavi', 10, [], 0)!, /30 💎 daha/);
+  assert.equal(buyCheck('mob:koltuk-mavi', 40, [o('mob:koltuk-mavi')], 0), null, 'mobilyadan birden fazla alınır');
+  assert.match(buyCheck('zemin:dama', 99, [o('zemin:dama')], 0)!, /zaten/);
   assert.match(buyCheck('freeze', 99, [], 2)!, /En fazla 2/);
+  // 15–20 başlangıç eşyası ve gereken kategoriler
+  const shop = ITEMS.filter((i) => i.acquire.kind === 'buy' && !['karakter', 'aksesuar', 'diger'].includes(i.category));
+  assert.ok(shop.length >= 15, `${shop.length} eşya`);
+  for (const c of ['mobilya', 'zemin', 'duvar', 'bitki', 'isik', 'dis']) assert.ok(shop.some((i) => i.category === c), c);
+  for (const i of ITEMS.filter((x) => x.placement)) assert.ok(i.model && i.w && i.h && i.rotations?.length, i.id);
 });
 
 test('seri dondurma: bir kademe düşüşünü engeller, satın alındıktan en çok 7 gün öncesine kadar', () => {
@@ -561,20 +574,30 @@ test('demo API: Elmas kayıtlardan yazılır, bakiye yetmezse satın alınamaz, 
   const bal = balances(await api.listLedger()).crystal;
   // çalışma 4+6+4+4+4, seri 1+1+1, görevler: 5 gün, 3 ders, 5 × day30
   assert.equal(bal, 22 + 3 + 5 + 3 + 5 * 2);
-  await assert.rejects(api.buyItem('pet:panda'), /Bakiye yetmiyor/);
+  await assert.rejects(api.buyItem('mob:yatak'), /Bakiye yetmiyor/);
   await assert.rejects(api.giftCrystals(CFG.elmas.giftMax + 1, 'x'), /Hediye/);
   await api.giftCrystals(30, 'test');
-  await api.buyItem('pet:cat');
-  await assert.rejects(api.buyItem('pet:cat'), /zaten sende/);
-  assert.equal(balances(await api.listLedger()).crystal, bal + 30 - 60);
-  await assert.rejects(api.buyItem('pet:lion'), /satılmıyor/);
-  await assert.rejects(api.openChest(PREV, 'pet:cat'), /sandıktan çıkmaz/);
-  await api.openChest(PREV, 'pet:tiger');
-  await assert.rejects(api.openChest(PREV, 'pet:tiger'), /zaten açıldı/);
-  await assert.rejects(api.openChest(MON, 'pet:tiger'), /henüz açılmadı/);
-  const cat = (await api.listOwned()).find((o) => o.item_id === 'pet:cat')!;
-  await api.placeItem({ month: '2026-10', owned_id: cat.id, x: 5, z: 1, rot: 0 });
-  await assert.rejects(api.placeItem({ month: '2026-10', owned_id: cat.id, x: 6, z: 1, rot: 0 }), /zaten adada/);
+  await api.buyItem('zemin:dama');
+  await assert.rejects(api.buyItem('zemin:dama'), /zaten sende/);
+  assert.equal(balances(await api.listLedger()).crystal, bal + 30 - 35);
+  await assert.rejects(api.buyItem('pet:cat'), /satılmıyor/);
+  await assert.rejects(api.openChest(PREV, 'mob:masa'), /sandıktan çıkmaz/);
+  await api.openChest(PREV, 'dis:halka');
+  await assert.rejects(api.openChest(PREV, 'dis:halka'), /zaten açıldı/);
+  await assert.rejects(api.openChest(MON, 'dis:halka'), /henüz açılmadı/);
+});
+
+test('demo API: yerleşim sunucu kurallarıyla kaydedilir', async () => {
+  const api = localApi(() => ({ courses: [], logs: weekLogs, tasks: [], reflections: [] }));
+  await api.saveSpace('room', { ...DEFAULT_ROOM, floor: 'zemin:ahsap' });
+  await assert.rejects(api.saveSpace('room', { items: [{ item: 'mob:koltuk-mavi', x: 3, y: 3, rot: 0 }] }), /envanterinde yok/);
+  await api.syncEconomy();
+  await api.buyItem('mob:koltuk-mavi');
+  await api.saveSpace('room', { items: [{ item: 'mob:koltuk-mavi', x: 3, y: 3, rot: 0 }] });
+  await assert.rejects(api.saveSpace('garden', { items: [{ item: 'mob:koltuk-mavi', x: 3, y: 3, rot: 0 }] }), /içeride/);
+  await assert.rejects(api.saveSpace('library', { items: [] }), /açılmadı/);
+  const spaces = await api.listSpaces();
+  assert.deepEqual(spaces.map((x) => [x.space, x.layout.items.length]), [['room', 1]]);
 });
 
 test('ekonomi: son config migration\'ı src/config ile aynı (npm run config:sql)', () => {
@@ -586,4 +609,23 @@ test('ekonomi: son config migration\'ı src/config ile aynı (npm run config:sql
   // Eşya listesi uygulamanın kataloğuyla aynı; sandık havuzu iki tarafta aynı
   assert.deepEqual(ITEM_DEFS.map((d) => d.id), ITEMS.map((i) => i.id));
   assert.deepEqual(ITEMS.filter(inChestPool).map((i) => i.id), [...sql.matchAll(/\('([\w:-]+)', '\w+', (?:\d+|null), (?:true|false), true,/g)].map((m) => m[1]));
+});
+
+test('tanıtım: sahneler hedefli ve sırayla; kelime zamanları (tahmin ve ElevenLabs hizalaması)', () => {
+  assert.ok(SCENES.length >= 8);
+  assert.equal(new Set(SCENES.map((x) => x.id)).size, SCENES.length);
+  for (const sc of SCENES) assert.ok(sc.hash && sc.target && sc.text.split(' ').length > 5, sc.id);
+  const w = estimateWords('Merhaba! Burası senin dünyan.');
+  assert.deepEqual(w.map((x) => x.w), ['Merhaba!', 'Burası', 'senin', 'dünyan.']);
+  assert.ok(w.every((x, i) => x.e > x.s && (i === 0 || x.s >= w[i - 1].e)));
+  assert.ok(w[1].s - w[0].e > 0.3, 'ünlemden sonra duraklama');
+  assert.equal(wordAt(w, 0), -1);
+  assert.equal(wordAt(w, w[2].s + 0.01), 2);
+  assert.ok(sceneEnd(w) > w[3].e);
+  const chars = [...'Hadi gel!'];
+  const al = { characters: chars, character_start_times_seconds: chars.map((_, i) => i * 0.1), character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.08) };
+  assert.deepEqual(wordsFromAlignment(al), [
+    { w: 'Hadi', s: 0, e: 0.38 },
+    { w: 'gel!', s: 0.5, e: 0.88 },
+  ]);
 });

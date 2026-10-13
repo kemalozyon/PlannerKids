@@ -3,7 +3,7 @@ import { useReading } from '../lib/ReadingContext';
 import { ReadingFlow, Spine } from './ReadingSheets';
 
 /** Bugün ekranında okuma özeti: günlük sayfa hedefi + "Okudum". Okuma ormana sayılmaz. */
-export default function ReadingStrip({ goLibrary, onPlantBook }: { goLibrary: () => void; onPlantBook: (id: string) => void }) {
+export default function ReadingStrip({ goLibrary }: { goLibrary: () => void }) {
   const { stats } = useReading();
   const [flow, setFlow] = useState(false);
   if (!stats) return null;
@@ -51,7 +51,7 @@ export default function ReadingStrip({ goLibrary, onPlantBook }: { goLibrary: ()
           </button>
         </div>
       )}
-      {flow && book && <ReadingFlow book={book} onClose={() => setFlow(false)} onPlant={onPlantBook} />}
+      {flow && book && <ReadingFlow book={book} onClose={() => setFlow(false)} />}
     </section>
   );
 }

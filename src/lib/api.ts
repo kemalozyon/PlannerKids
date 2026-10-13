@@ -4,7 +4,9 @@ import { gatherReportInput } from './reportInput';
 import { itemById } from './catalog';
 import { CFG } from './config';
 import { toLocalDate } from './date';
-import { balances, chestOf, dayTotalsOf, earnedEntries, inChestPool, pendingEarnings } from './economy';
+import { balances, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
+import { levelOf } from './level';
+import { layoutProblem, type SpaceId, type SpaceLayout } from './world';
 import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
@@ -16,9 +18,7 @@ import {
   type Abandoned,
   type Api,
   type Book,
-  type BookTree,
   type Course,
-  type ForestTree,
   type DailyReport,
   type ReadingGoals,
   type ReportSettings,
@@ -30,10 +30,7 @@ import {
   type Equipped,
   type LedgerEntry,
   type OwnedItem,
-  type Placement,
 } from './types';
-
-const ONE_PER_DAY = 'Bu güne zaten bir ağaç dikildi. Onu büyütebilirsin.';
 
 // ---------- Supabase ----------
 function check<T>(res: { data: T; error: { message: string } | null }): T {
@@ -138,21 +135,6 @@ export function supabaseApi(sb: SupabaseClient): Api {
       if (res.error) throw new Error(res.error.message);
       return res.count ?? 0;
     },
-    async listTrees() {
-      return all<ForestTree>((a, b) => sb.from('forest_trees').select('id,date,stage,species,month,cell').order('id').range(a, b));
-    },
-    async plantTree(t) {
-      const res = await sb.from('forest_trees').insert(t).select('id,date,stage,species,month,cell').single();
-      // 0006: günde tek ağaç (forest_trees_user_date_key)
-      if (res.error?.message.includes('forest_trees_user_date_key')) throw new Error(ONE_PER_DAY);
-      return check(res) as ForestTree;
-    },
-    async moveTree(id, cell) {
-      check(await sb.from('forest_trees').update({ cell }).eq('id', id));
-    },
-    async upgradeTree(id, stage) {
-      check(await sb.from('forest_trees').update({ stage }).eq('id', id));
-    },
     async listBooks() {
       return check(await sb.from('books').select('*').order('created_at')) as Book[];
     },
@@ -170,15 +152,6 @@ export function supabaseApi(sb: SupabaseClient): Api {
     },
     async addReadingLog(l) {
       return check(await sb.from('reading_logs').insert(l).select().single()) as ReadingLog;
-    },
-    async listBookTrees() {
-      return all<BookTree>((a, b) => sb.from('book_trees').select('id,book_id,month,cell').order('id').range(a, b));
-    },
-    async plantBookTree(t) {
-      return check(await sb.from('book_trees').insert(t).select('id,book_id,month,cell').single()) as BookTree;
-    },
-    async moveBookTree(id, cell) {
-      check(await sb.from('book_trees').update({ cell }).eq('id', id));
     },
     async getReadingGoals() {
       const row = check(
@@ -310,18 +283,6 @@ export function supabaseApi(sb: SupabaseClient): Api {
         await sb.from('owned_items').insert({ item_id: itemId, via: 'chest', ref: week }).select('id,item_id,via,ref,created_at').single(),
       ) as OwnedItem;
     },
-    async listPlacements() {
-      return all<Placement>((a, b) => sb.from('island_placements').select('id,month,owned_id,x,z,rot').order('created_at').order('id').range(a, b));
-    },
-    async placeItem(p) {
-      return check(await sb.from('island_placements').insert(p).select('id,month,owned_id,x,z,rot').single()) as Placement;
-    },
-    async movePlacement(id, x, z, rot) {
-      check(await sb.from('island_placements').update({ x, z, rot }).eq('id', id));
-    },
-    async removePlacement(id) {
-      check(await sb.from('island_placements').delete().eq('id', id));
-    },
     async getEquipped() {
       const row = check(await sb.from('family_settings').select('equipped').maybeSingle()) as { equipped: Equipped | null } | null;
       return row?.equipped ?? null;
@@ -329,6 +290,12 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async saveEquipped(equipped) {
       const { data: u } = await sb.auth.getUser();
       check(await sb.from('family_settings').upsert({ user_id: u.user?.id, equipped, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }));
+    },
+    async listSpaces() {
+      return check(await sb.from('user_spaces').select('space,layout')) as { space: SpaceId; layout: SpaceLayout }[];
+    },
+    async saveSpace(space, layout) {
+      check(await sb.rpc('save_space', { p_space: space, p_layout: layout }));
     },
   };
 }
@@ -339,10 +306,8 @@ interface DemoDb {
   logs: StudyLog[];
   tasks: Task[];
   reflections: Reflection[];
-  trees?: ForestTree[];
   books?: Book[];
   readingLogs?: ReadingLog[];
-  bookTrees?: BookTree[];
   readingGoals?: ReadingGoals;
   reportSettings?: ReportSettings;
   reports?: Record<string, DailyReport>;
@@ -353,12 +318,12 @@ interface DemoDb {
   abandoned?: Abandoned[];
   ledger?: LedgerEntry[];
   owned?: OwnedItem[];
-  placements?: Placement[];
   equipped?: Equipped;
   sessions?: StudySession[];
+  spaces?: Partial<Record<SpaceId, SpaceLayout>>;
 }
 
-export const DEMO_KEY = 'ct-demo-db-v12';
+export const DEMO_KEY = 'ct-demo-db-v13';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -539,33 +504,6 @@ export function localApi(seed: () => DemoDb): Api {
     async countDoneTasks() {
       return load().tasks.filter((t) => t.done).length;
     },
-    async listTrees() {
-      // Kopya: upgradeTree/moveTree yerinde değiştirdiğinde ekrandaki eski durum bozulmasın
-      return (load().trees ?? []).map((t) => ({ ...t }));
-    },
-    async plantTree(t) {
-      const db = load();
-      db.trees ??= [];
-      if (db.trees.some((x) => x.month === t.month && x.cell === t.cell)) throw new Error('Bu yer dolu');
-      if (db.trees.some((x) => x.date === t.date)) throw new Error(ONE_PER_DAY);
-      const tree = { ...t, id: uid() };
-      db.trees.push(tree);
-      save();
-      return tree;
-    },
-    async moveTree(id, cell) {
-      const db = load();
-      const tree = db.trees?.find((x) => x.id === id);
-      if (!tree) return;
-      if (db.trees!.some((x) => x.month === tree.month && x.cell === cell)) throw new Error('Bu yer dolu');
-      tree.cell = cell;
-      save();
-    },
-    async upgradeTree(id, stage) {
-      const tree = load().trees?.find((x) => x.id === id);
-      if (tree) tree.stage = stage;
-      save();
-    },
     async listBooks() {
       return [...(load().books ?? [])];
     },
@@ -573,9 +511,9 @@ export function localApi(seed: () => DemoDb): Api {
       const db = load();
       db.books ??= [];
       const book: Book = {
+        current_page: 0, started_on: null, finished_on: null, isbn: null, ol_key: null, cover_url: null, favorite_part: null,
         ...b,
-        id: uid(), status: b.status ?? 'want', current_page: 0, started_on: null, finished_on: null,
-        rating: null, fav_character: null, review: null, created_at: now(),
+        id: uid(), status: b.status ?? 'want', rating: null, fav_character: null, review: null, created_at: now(),
       };
       db.books.push(book);
       save();
@@ -590,7 +528,6 @@ export function localApi(seed: () => DemoDb): Api {
       const db = load();
       db.books = (db.books ?? []).filter((b) => b.id !== id);
       db.readingLogs = (db.readingLogs ?? []).filter((l) => l.book_id !== id);
-      db.bookTrees = (db.bookTrees ?? []).filter((t) => t.book_id !== id);
       save();
     },
     async listReadingLogs() {
@@ -603,27 +540,6 @@ export function localApi(seed: () => DemoDb): Api {
       db.readingLogs.push(log);
       save();
       return log;
-    },
-    async listBookTrees() {
-      return (load().bookTrees ?? []).map((t) => ({ ...t }));
-    },
-    async plantBookTree(t) {
-      const db = load();
-      db.bookTrees ??= [];
-      if (db.bookTrees.some((x) => x.month === t.month && x.cell === t.cell)) throw new Error('Bu yer dolu');
-      if (db.bookTrees.some((x) => x.book_id === t.book_id)) throw new Error('Bu kitabın ağacı zaten dikili');
-      const tree = { ...t, id: uid() };
-      db.bookTrees.push(tree);
-      save();
-      return tree;
-    },
-    async moveBookTree(id, cell) {
-      const db = load();
-      const tree = db.bookTrees?.find((x) => x.id === id);
-      if (!tree) return;
-      if (db.bookTrees!.some((x) => x.month === tree.month && x.cell === cell)) throw new Error('Bu yer dolu');
-      tree.cell = cell;
-      save();
     },
     async getReadingGoals() {
       return load().readingGoals ?? DEFAULT_READING_GOALS;
@@ -795,35 +711,33 @@ export function localApi(seed: () => DemoDb): Api {
       save();
       return { ...row };
     },
-    async listPlacements() {
-      return (load().placements ?? []).map((p) => ({ ...p }));
-    },
-    async placeItem(p) {
-      const db = load();
-      db.placements ??= [];
-      if (!(db.owned ?? []).some((o) => o.id === p.owned_id)) throw new Error('Bu eşya sende yok');
-      if (db.placements.some((x) => x.month === p.month && x.owned_id === p.owned_id)) throw new Error('Bu eşya zaten adada');
-      const row: Placement = { ...p, id: uid() };
-      db.placements.push(row);
-      save();
-      return { ...row };
-    },
-    async movePlacement(id, x, z, rot) {
-      const p = load().placements?.find((q) => q.id === id);
-      if (p) Object.assign(p, { x, z, rot });
-      save();
-    },
-    async removePlacement(id) {
-      const db = load();
-      db.placements = (db.placements ?? []).filter((p) => p.id !== id);
-      save();
-    },
     async getEquipped() {
       const e = load().equipped;
       return e ? { ...e, pets: [...e.pets] } : null;
     },
     async saveEquipped(e) {
       load().equipped = { ...e, pets: [...e.pets] };
+      save();
+    },
+    async listSpaces() {
+      return Object.entries(load().spaces ?? {}).map(([space, layout]) => ({ space: space as SpaceId, layout: structuredClone(layout!) }));
+    },
+    async saveSpace(space, layout) {
+      const db = load();
+      db.spaces ??= {};
+      // Sunucudaki save_space ile aynı kurallar (world.ts)
+      const ok = trusted(db.logs);
+      const minutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
+      const ctx = { totalMinutes: minutes, booksDone: (db.books ?? []).filter((b) => b.status === 'done').length };
+      const progress = { bestStreak: 0, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees: ok.length };
+      const elsewhere = (id: string) =>
+        Object.entries(db.spaces!)
+          .filter(([s]) => s !== space)
+          .reduce((n, [, l]) => n + (l?.items.filter((p) => p.item === id).length ?? 0), 0);
+      if (!['room', 'library', 'garden'].includes(space)) throw new Error('Alan geçersiz');
+      const bad = layoutProblem(space, layout, ctx, (it) => ownedCount(it, db.owned ?? [], progress), elsewhere);
+      if (bad) throw new Error(bad.message);
+      db.spaces[space] = structuredClone(layout);
       save();
     },
   };

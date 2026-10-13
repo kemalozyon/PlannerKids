@@ -1,28 +1,23 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useApi } from './ApiContext';
 import { toLocalDate } from './date';
-import { monthOf } from './forest';
-import { autoPlantPlan, computeStats, diffStats, type Celebration, type GameStats } from './game';
-import type { Api, Equipped, ForestTree, Placement, StudyLog } from './types';
+import { computeStats, diffStats, type Celebration, type GameStats } from './game';
+import type { Equipped } from './types';
+import type { SpaceId, SpaceLayout } from './world';
 
 interface GameCtx {
   stats: GameStats | null;
   /** Kayıt/görev/değerlendirme değiştikten sonra çağır; yeni gelişmeler kutlanır. */
   refresh: () => Promise<void>;
-  plant: (t: Omit<ForestTree, 'id'>) => Promise<void>;
-  move: (id: string, cell: number) => Promise<void>;
-  /** Dikili bitkiyi farkı o günün cüzdanından ödeyerek büyütür */
-  upgrade: (id: string, stage: number) => Promise<void>;
   celebrate: (c: Celebration) => void;
   /** Dükkândan satın al (bakiye yetmezse hata fırlatır) */
   buy: (itemId: string) => Promise<void>;
   openChest: (week: string, itemId: string) => Promise<void>;
   /** Gezintide yıldız topla (günün i. yıldızı) */
   collectStar: (i: number) => Promise<void>;
-  place: (p: Omit<Placement, 'id'>) => Promise<void>;
-  movePlaced: (id: string, x: number, z: number, rot: number) => Promise<void>;
-  removePlaced: (id: string) => Promise<void>;
   equip: (e: Equipped) => Promise<void>;
+  /** Odanın/bahçenin yerleşimini kaydet (sunucu doğrular; geçersizse hata fırlatır) */
+  saveSpace: (space: SpaceId, layout: SpaceLayout) => Promise<void>;
   celebrations: (Celebration & { key: number })[];
   dismiss: (key: number) => void;
 }
@@ -33,42 +28,6 @@ export function useGame(): GameCtx {
   const c = useContext(Ctx);
   if (!c) throw new Error('GameProvider yok');
   return c;
-}
-
-/** Geçmiş aylarda dikilmemiş/büyütülmemiş günleri tamamlar (bkz. autoPlantPlan). Güncel ağaç listesini döner. */
-async function autoPlantPastMonths(api: Api, logs: StudyLog[], trees: ForestTree[], today: string) {
-  const dayTotals = new Map<string, number>();
-  logs.forEach((l) => dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes));
-  const out = [...trees];
-  for (const step of autoPlantPlan(dayTotals, trees, today)) {
-    try {
-      if (step.kind === 'plant') out.push(await api.plantTree(step.tree));
-      else {
-        await api.upgradeTree(step.id, step.stage);
-        const i = out.findIndex((t) => t.id === step.id);
-        out[i] = { ...out[i], stage: step.stage };
-      }
-    } catch {
-      /* başka sekme aynı anda yapmış olabilir */
-    }
-  }
-  return out;
-}
-
-/** Bu ayın adası boşsa son yerleşimli ayın eşyaları taşınır (geçmiş aylar anı olarak kalır) */
-async function carryPlacements(api: Api, placements: Placement[], month: string): Promise<Placement[]> {
-  if (!placements.length || placements.some((p) => p.month === month)) return placements;
-  const last = placements.map((p) => p.month).filter((m) => m < month).sort().at(-1);
-  if (!last) return placements;
-  const out = [...placements];
-  for (const p of placements.filter((q) => q.month === last)) {
-    try {
-      out.push(await api.placeItem({ month, owned_id: p.owned_id, x: p.x, z: p.z, rot: p.rot }));
-    } catch {
-      /* başka sekme aynı anda taşımış olabilir */
-    }
-  }
-  return out;
 }
 
 /** Eski sürümde yıldızlar tarayıcıda tutuluyordu (ct-stars-v1): bugünkü yıldızlar bir kez deftere taşınır */
@@ -107,26 +66,24 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const today = toLocalDate();
-    const [logs, reflections, doneTasks, trees0, plans, abandoned, ledger0, owned, placements0, equipped, books, courses] = await Promise.all([
+    const [logs, reflections, doneTasks, plans, abandoned, ledger0, owned, equipped, books, courses, spaces] = await Promise.all([
       api.listLogs('2000-01-01', today),
       api.listReflections('2000-01-01', today),
       api.countDoneTasks(),
-      api.listTrees(),
       // Plan tablosu henüz kurulmadıysa (0005 çalıştırılmadı) oyun yine çalışsın
       api.listPlans('2000-01-01', today).catch(() => []),
-      // 0007 çalıştırılmadıysa solgun fidan olmadan devam
+      // 0007 çalıştırılmadıysa kuru ağaç olmadan devam
       api.listAbandoned().catch(() => []),
       // 0008 çalıştırılmadıysa oyun ekonomisi olmadan devam
       api.listLedger().catch(() => null),
       api.listOwned().catch(() => []),
-      api.listPlacements().catch(() => []),
       api.getEquipped().catch(() => null),
       api.listBooks().catch(() => []),
       api.listCourses().catch(() => []),
+      // 0012 çalıştırılmadıysa varsayılan oda
+      api.listSpaces().catch(() => []),
     ]);
-    const trees = await autoPlantPastMonths(api, logs, trees0, today);
     let ledger = ledger0 ?? [];
-    let placements = placements0;
     if (ledger0) {
       // Elmas'ı sunucu kayıtlardan hesaplar; deftere yalnızca o yazar (0010 yoksa eski defterle devam)
       for (const i of legacyStars(today)) await api.collectStar(today, i).catch(() => {});
@@ -134,22 +91,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
         .syncEconomy()
         .then(() => api.listLedger())
         .catch(() => ledger);
-      placements = await carryPlacements(api, placements, monthOf(today));
     }
     const next = computeStats({
       logs,
       reflections,
-      trees,
       doneTasks,
       today,
       plans,
       abandoned,
       ledger,
       owned,
-      placements,
       equipped: equipped ?? legacyAvatar(),
       books,
       courses,
+      spaces: Object.fromEntries(spaces.map((s) => [s.space, s.layout])),
     });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);
@@ -161,85 +116,31 @@ export function GameProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
-  const plant = useCallback(
-    async (t: Omit<ForestTree, 'id'>) => {
-      await api.plantTree(t);
-      await refresh();
-    },
-    [api, refresh],
-  );
-
-  const move = useCallback(
-    async (id: string, cell: number) => {
-      await api.moveTree(id, cell);
-      await refresh();
-    },
-    [api, refresh],
-  );
-
-  const upgrade = useCallback(
-    async (id: string, stage: number) => {
-      await api.upgradeTree(id, stage);
-      await refresh();
-    },
-    [api, refresh],
-  );
-
-  const buy = useCallback(
-    async (itemId: string) => {
-      await api.buyItem(itemId);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const openChest = useCallback(
-    async (week: string, itemId: string) => {
-      await api.openChest(week, itemId);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const collectStar = useCallback(
-    async (i: number) => {
-      await api.collectStar(toLocalDate(), i);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const place = useCallback(
-    async (p: Omit<Placement, 'id'>) => {
-      await api.placeItem(p);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const movePlaced = useCallback(
-    async (id: string, x: number, z: number, rot: number) => {
-      await api.movePlacement(id, x, z, rot);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const removePlaced = useCallback(
-    async (id: string) => {
-      await api.removePlacement(id);
-      await refresh();
-    },
-    [api, refresh],
-  );
-  const equip = useCallback(
-    async (e: Equipped) => {
-      await api.saveEquipped(e);
-      await refresh();
-    },
-    [api, refresh],
+  const after = useCallback(
+    <A extends unknown[]>(f: (...a: A) => Promise<unknown>) =>
+      async (...a: A) => {
+        await f(...a);
+        await refresh();
+      },
+    [refresh],
   );
 
   const dismiss = useCallback((key: number) => setCelebrations((cs) => cs.filter((c) => c.key !== key)), []);
 
   return (
     <Ctx.Provider
-      value={{ stats, refresh, plant, move, upgrade, celebrate, celebrations, dismiss, buy, openChest, collectStar, place, movePlaced, removePlaced, equip }}
+      value={{
+        stats,
+        refresh,
+        celebrate,
+        celebrations,
+        dismiss,
+        buy: after((id: string) => api.buyItem(id)),
+        openChest: after((week: string, id: string) => api.openChest(week, id)),
+        collectStar: after((i: number) => api.collectStar(toLocalDate(), i)),
+        equip: after((e: Equipped) => api.saveEquipped(e)),
+        saveSpace: after((space: SpaceId, layout: SpaceLayout) => api.saveSpace(space, layout)),
+      }}
     >
       {children}
     </Ctx.Provider>

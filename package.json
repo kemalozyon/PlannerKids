@@ -11,12 +11,14 @@
     "build:demo": "tsc -b && vite build --mode demo",
     "test": "node --import ./scripts/resolve-ts.mjs --test 'supabase/functions/**/*.test.ts' 'src/**/*.test.ts'",
     "config:sql": "node scripts/gen-config-sql.mjs",
+    "demo:audio": "node --env-file-if-exists=.env scripts/gen-demo-audio.mjs",
     "report:preview": "node --env-file-if-exists=.env scripts/report-preview.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.1",
     "@supabase/supabase-js": "^2.117.3",
+    "driver.js": "^1.9.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.186.1"
