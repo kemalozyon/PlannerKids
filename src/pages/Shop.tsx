@@ -9,6 +9,7 @@ import { buyCheck, owns, unlockHint, unlockValue } from '../lib/economy';
 import { useGame } from '../lib/GameContext';
 import { useSession } from '../lib/SessionContext';
 import { sfx } from '../lib/sfx';
+import { setShopOpen } from '../lib/shop';
 import type { Equipped } from '../lib/types';
 import { hasWebGL } from '../lib/webgl';
 
@@ -38,6 +39,10 @@ export default function ShopWindow({ onClose, goCollection, onPlace }: { onClose
   const [tab, setTab] = useState('mobilya');
   const [open, setOpen] = useState<Item | null>(null);
   const can3D = useMemo(hasWebGL, []);
+  useEffect(() => {
+    setShopOpen(true);
+    return () => setShopOpen(false);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);

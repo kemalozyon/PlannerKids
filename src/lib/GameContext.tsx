@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useApi } from './ApiContext';
 import { toLocalDate } from './date';
 import { computeStats, diffStats, type Celebration, type GameStats } from './game';
-import type { Equipped } from './types';
+import type { Equipped, RoomInput, UserRoom } from './types';
 import type { SpaceId, SpaceLayout } from './world';
 
 interface GameCtx {
@@ -19,6 +19,10 @@ interface GameCtx {
   /** Odanın/bahçenin yerleşimini kaydet: hemen görünür, sunucuya sırayla gider (sunucu doğrular; reddederse kayıtlı
    *  hâl geri yüklenir ve hata fırlatılır) */
   saveSpace: (space: SpaceId, layout: SpaceLayout) => Promise<void>;
+  /** Oda ekle / değiştir / sil (sonra yeniden yüklenir) */
+  addRoom: (r: RoomInput) => Promise<UserRoom>;
+  updateRoom: (id: string, r: RoomInput) => Promise<void>;
+  deleteRoom: (id: string) => Promise<void>;
   /** Yeni haritaya taşın (evin dekoru baştan yapılır) */
   celebrations: (Celebration & { key: number })[];
   dismiss: (key: number) => void;
@@ -60,7 +64,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const unsaved = useRef(new Map<SpaceId, SpaceLayout>());
   const refresh = useCallback(async () => {
     const today = toLocalDate();
-    const [logs, reflections, doneTasks, plans, abandoned, ledger0, owned, equipped, books, courses, spaces] = await Promise.all([
+    const [logs, reflections, doneTasks, plans, abandoned, ledger0, owned, equipped, books, courses, spaces, rooms] = await Promise.all([
       api.listLogs('2000-01-01', today),
       api.listReflections('2000-01-01', today),
       api.countDoneTasks(),
@@ -76,6 +80,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       api.listCourses().catch(() => []),
       // 0012 çalıştırılmadıysa varsayılan oda
       api.listSpaces().catch(() => []),
+      // 0023 çalıştırılmadıysa eklenen oda yok
+      api.listRooms().catch(() => []),
     ]);
     let ledger = ledger0 ?? [];
     if (ledger0) {
@@ -99,6 +105,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       books,
       courses,
       spaces: { ...Object.fromEntries(spaces.map((s) => [s.space, s.layout])), ...Object.fromEntries(unsaved.current) },
+      rooms,
     });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);
@@ -152,6 +159,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
     [api, refresh],
   );
 
+  const addRoom = useCallback(
+    async (r: RoomInput) => {
+      const row = await api.addRoom(r);
+      await refresh();
+      return row;
+    },
+    [api, refresh],
+  );
+
   const dismiss = useCallback((key: number) => setCelebrations((cs) => cs.filter((c) => c.key !== key)), []);
 
   return (
@@ -167,6 +183,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
         collectStar: after((i: number) => api.collectStar(toLocalDate(), i)),
         equip: after((e: Equipped) => api.saveEquipped(e)),
         saveSpace,
+        addRoom,
+        updateRoom: after((id: string, r: RoomInput) => api.updateRoom(id, r)),
+        deleteRoom: after(async (id: string) => {
+          unsaved.current.delete(`r:${id}`);
+          await api.deleteRoom(id);
+        }),
       }}
     >
       {children}

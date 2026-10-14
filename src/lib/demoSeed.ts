@@ -84,7 +84,7 @@ export function demoSeed(): DemoDb {
  * çiçek, bank ve fener; bu ayın ağaç bahçesinde taş yol ve bostan. Elmaslar ilk açılışta geçmiş kayıtlardan
  * kazanılır (syncEconomy); burada yalnızca harcamalar var.
  */
-function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped'> {
+function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped' | 'rooms'> {
   const bought = [
     'mob:koltuk-mavi', 'mob:sehpa', 'mob:laptop', 'isik:masa-lambasi', 'mob:radyo', 'duvar:gezegenler', 'duvar:saat', 'duvar:harita',
     'dis:cit', 'dis:cit', 'dis:cit', 'dis:cicek-sari', 'dis:cicek-mor', 'dis:bank', 'isik:fener',
@@ -101,6 +101,8 @@ function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | '
   return {
     owned,
     ledger,
+    // Odanın doğusunda L biçimli bir mutfak (oda ekle/şeklini değiştir denensin)
+    rooms: [{ id: 'mutfak', kind: 'kitchen', shape: 'l', size: 'm', name: 'Mutfak', pos: 0 }],
     spaces: {
       room: {
         floor: 'zemin:ahsap',

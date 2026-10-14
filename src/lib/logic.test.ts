@@ -22,8 +22,14 @@ import {
   blockedTiles,
   isMonthSpace,
   isRoom,
-  ROOMS,
-  roomsOf,
+  cellRects,
+  defaultCover,
+  inCells,
+  ROOM_KINDS,
+  ROOM_SHAPES,
+  ROOM_SIZES,
+  roomInputProblem,
+  roomSpace,
   canPlaceAt,
   creaturesOf,
   dayTrees,
@@ -326,7 +332,7 @@ test('demo API: seans — not zorunlu, kayıt timer olur ve Elmas yazılır; ell
 });
 
 // ---------- Dünya: haritalar, karo ızgarası, yerleştirme, yol bulma, günlük ağaçlar ----------
-const ctx0: WorldCtx = { map: 'acik', today: MON, best: 0 };
+const ctx0: WorldCtx = { map: 'acik', today: MON, rooms: [] };
 const owned1 = () => 1;
 
 test('dünya: ayak izi dönüşle değişir; yerleşim sınır, sabit karo, çakışma ve envanteri denetler', () => {
@@ -504,50 +510,111 @@ test('dünya planı: ev, bahçe, yol ve ay bahçeleri tek dünyada; bölgeler ar
   assert.ok(door[1] > 10, 'kapıdan çıkılır');
 });
 
-test('odalar: en iyi seriyle açılır, kalıcıdır; odanın doğusunda sırayla, kapıdan girilir', () => {
-  assert.deepEqual(
-    ROOMS.map((r) => r.streak),
-    CFG.elmas.streak.tiers.map((t) => t.days),
-    'oda eşikleri seri kademeleriyle aynı',
-  );
-  assert.deepEqual([0, 2, 3, 7, 29, 30].map((b) => roomsOf(b).unlocked.length), [0, 0, 1, 2, 3, 4]);
-  assert.equal(roomsOf(30).next, null);
-  // Seri düşse de en iyi seri kalır: 10 günlük seri, sonra bir kaçırma → seri 7, en iyi 10 (yatak odası açık)
-  const days = ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];
-  assert.equal(bestStreakOf(days.map((d) => log(d, 30)), [], '2026-10-09'), 10);
+test('odalar: kilitsiz, şablon şekilli; odanın doğusunda sırayla, kapıdan girilir', () => {
+  // Her şablon ve boyut kurala uyar: arka sıra ve sol sütun dolu (duvarlar düz), kapılar zeminde, derinlik en
+  // küçük haritanın odasını geçmez (bahçe ve yolla çakışmasın), zemin tek parça ve parçalar zemini tam kaplar
+  const minH = Math.min(...MAPS.map((m) => m.room.h));
+  for (const sh of ROOM_SHAPES) {
+    let last = 0;
+    for (const z of ROOM_SIZES) {
+      const c = sh.sizes[z.id];
+      const tag = `${sh.id} ${z.id}`;
+      assert.ok(c.h >= 6 && c.h <= minH, `${tag} derinlik`);
+      for (let x = 0; x < c.w; x++) assert.ok(inCells(c, x, 0), `${tag} arka sıra`);
+      for (let y = 0; y < c.h; y++) assert.ok(inCells(c, 0, y), `${tag} sol sütun`);
+      assert.ok(inCells(c, c.w - 1, 5), `${tag} doğu kapısı`);
+      const floor: string[] = [];
+      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (inCells(c, x, y)) floor.push(`${x},${y}`);
+      assert.ok(floor.length > last, `${tag} büyür`);
+      last = floor.length;
+      const covered = cellRects(c).flatMap(([x0, y0, w, h]) => Array.from({ length: w * h }, (_, i) => `${x0 + (i % w)},${y0 + Math.floor(i / w)}`));
+      assert.deepEqual(covered.sort(), [...floor].sort(), `${tag} zemin parçaları`);
+      const seen = new Set(['0,0']);
+      const todo = ['0,0'];
+      while (todo.length) {
+        const [x, y] = todo.pop()!.split(',').map(Number);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const k = `${x + dx},${y + dy}`;
+          if (!inCells(c, x + dx, y + dy) || seen.has(k)) continue;
+          seen.add(k);
+          todo.push(k);
+        }
+      }
+      assert.equal(seen.size, floor.length, `${tag} tek parça`);
+    }
+  }
+  for (const k of ROOM_KINDS) assert.ok(itemById(k.floor)?.category === 'zemin' && itemById(k.wall)?.category === 'duvar', `${k.id} kaplaması`);
+  // 0, 1 ve en çok odayla: sırayla doğuda, çakışmaz, hepsine kapıdan yürünür, ay bahçeleri evden sonra
+  const mk = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `o${i}`,
+      kind: ROOM_KINDS[i % ROOM_KINDS.length].id,
+      shape: ROOM_SHAPES[i % ROOM_SHAPES.length].id,
+      size: ROOM_SIZES[i % 3].id,
+      name: `Oda ${i}`,
+      pos: i,
+    }));
   for (const m of MAPS) {
-    for (const best of [0, 3, 7, 30]) {
-      const ctx = { ...ctx0, map: m.id, best };
+    for (const n of [0, 1, CFG.world.maxRooms]) {
+      const ctx = { ...ctx0, map: m.id, rooms: mk(n) };
       const plan = worldPlan(ctx);
+      const tag = `${m.id} ${n}`;
       const rooms = plan.regions.filter((r) => isRoom(r.id));
-      const { unlocked, next } = roomsOf(best);
-      assert.deepEqual(rooms.map((r) => [r.id, !!r.locked]), [...unlocked.map((r) => [r.id, false]), ...(next ? [[next.id, true]] : [])], `${m.id} ${best}`);
-      // Alanlar çakışmaz; ay bahçeleri evin doğusundan sonra başlar
-      const solid = plan.regions.filter((r) => r.id !== 'trail');
-      const area = solid.reduce((n, r) => n + r.w * r.h, 0);
-      assert.equal(plan.grid.filter((i) => i && plan.regions[i - 1].id !== 'trail').length, area, `${m.id} ${best} çakışma yok`);
+      assert.deepEqual(rooms.map((r) => r.id), ctx.rooms.map((r) => roomSpace(r.id)), tag);
+      const cells = (r: (typeof plan.regions)[number]) => (r.cells ? cellRects(r.cells).reduce((a, [, , w, h]) => a + w * h, 0) : r.w * r.h);
+      const area = plan.regions.filter((r) => r.id !== 'trail').reduce((a, r) => a + cells(r), 0);
+      assert.equal(plan.grid.filter((i) => i && plan.regions[i - 1].id !== 'trail').length, area, `${tag} çakışma yok`);
       const houseEnd = Math.max(...rooms.map((r) => r.x + r.w), 0);
-      for (const r of plan.regions.filter((x) => isMonthSpace(x.id))) assert.ok(r.x > houseEnd, `${m.id} ${best} ${r.id}`);
-      // Odadan her açık odaya yürünür; kilitli odaya girilmez
+      for (const r of plan.regions.filter((x) => isMonthSpace(x.id))) assert.ok(r.x > houseEnd, `${tag} ${r.id}`);
       const blocked = worldBlocked(plan, {});
       const step = (a: { x: number; y: number }, b: { x: number; y: number }) => canStep(plan, a, b);
       const from = entryOf(plan, 'room')!;
-      for (const r of rooms) {
-        const path = findPath(from, entryOf(plan, r.id)!, plan.w, plan.h, blocked, step);
-        if (r.locked) assert.equal(path, null, `${m.id} ${r.id} kilitli`);
-        else assert.ok(path, `${m.id} ${r.id} yolu`);
-      }
-      assert.ok(findPath(from, entryOf(plan, 'garden')!, plan.w, plan.h, blocked, step), `${m.id} bahçe`);
+      for (const r of rooms) assert.ok(findPath(from, entryOf(plan, r.id)!, plan.w, plan.h, blocked, step), `${tag} ${r.id} yolu`);
+      assert.ok(findPath(from, entryOf(plan, 'garden')!, plan.w, plan.h, blocked, step), `${tag} bahçe`);
     }
   }
-  // Kilitli odaya kayıt yok; açılınca iç mekân kuralları (duvar süsü, kaplama) geçerli
-  const k = { ...ctx0, best: 2 };
-  assert.match(layoutProblem('kitchen', { items: [] }, k, owned1)!.message, /3 günlük seriyle/);
-  const open = { ...ctx0, best: 3 };
-  assert.equal(layoutProblem('kitchen', { floor: 'zemin:ahsap', items: [{ item: 'mob:sandalye', x: 2, y: 2, rot: 0 }] }, open, owned1), null);
-  assert.deepEqual(spaceSize('kitchen', { ...open, map: 'sahil' }), { w: 8, h: 14 });
-  assert.equal(canPlaceAt('kitchen', { items: [] }, open, { item: 'mob:sandalye', x: 0, y: 5, rot: 0 }), false, 'kapı karosu');
-  assert.equal(canPlaceAt('room', { items: [] }, open, { item: 'mob:sandalye', x: 11, y: 5, rot: 0 }), false, 'odanın doğu kapısı');
+  // Kesik karo dışarısıdır: eşya konmaz, kimsenin bölgesi değil
+  const L = { id: 'l1', kind: 'kitchen', shape: 'l', size: 'm' as const, name: 'L mutfak', pos: 0 };
+  const lctx = { ...ctx0, rooms: [L] };
+  const plan = worldPlan(lctx);
+  const lr = regionOf(plan, 'r:l1')!;
+  assert.equal(regionAt(plan, { x: lr.x + 7, y: 7 }), null, 'kesik dünyada boş');
+  assert.equal(canPlaceAt('r:l1', { items: [] }, lctx, { item: 'mob:sandalye', x: 7, y: 7, rot: 0 }), false, 'kesik');
+  assert.equal(canPlaceAt('r:l1', { items: [] }, lctx, { item: 'mob:sandalye', x: 2, y: 7, rot: 0 }), true);
+  assert.equal(canPlaceAt('r:l1', { items: [] }, lctx, { item: 'mob:sandalye', x: 0, y: 5, rot: 0 }), false, 'kapı karosu');
+  assert.equal(canPlaceAt('room', { items: [] }, lctx, { item: 'mob:sandalye', x: 11, y: 5, rot: 0 }), false, 'odanın doğu kapısı');
+  assert.equal(layoutProblem('r:l1', { floor: 'zemin:ahsap', items: [{ item: 'duvar:saat', x: 3, y: -1, rot: 0 }] }, lctx, owned1), null, 'duvar süsü');
+  assert.match(layoutProblem('r:yok', { items: [] }, lctx, owned1)!.message, /oda yok/);
+  assert.equal(defaultCover('r:l1', 'floor', lctx), 'zemin:dama');
+  // Oda küçülünce sığmayan eşyalar envantere döner
+  const lay = { items: [{ item: 'mob:sandalye', x: 2, y: 2, rot: 0 }, { item: 'mob:kitaplik', x: 9, y: 2, rot: 0 }] };
+  assert.equal(sanitizeLayout('r:l1', lay, { ...ctx0, rooms: [{ ...L, shape: 'kare', size: 's' as const }] }, owned1).dropped, 1);
+  assert.equal(roomInputProblem({ kind: 'kitchen', shape: 'l', size: 'm', name: 'Mutfak' }), null);
+  assert.match(roomInputProblem({ kind: 'kitchen', shape: 'l', size: 'm', name: '  ' })!, /adı/);
+  assert.match(roomInputProblem({ kind: 'uzay', shape: 'l', size: 'm', name: 'x' })!, /türü/);
+  assert.match(roomInputProblem({ kind: 'kitchen', shape: 'l', size: 'xl', name: 'x' })!, /boyu/);
+  // En iyi seri yine hesaplanır (rozetler): 10 günlük seri, sonra bir kaçırma → en iyi 10
+  const days = ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];
+  assert.equal(bestStreakOf(days.map((d) => log(d, 30)), [], '2026-10-09'), 10);
+});
+
+test('demo API: oda ekle, değiştir, sil; en çok maxRooms', async () => {
+  const api = localApi(() => ({ courses: [], logs: [], tasks: [], reflections: [] }));
+  const a = await api.addRoom({ kind: 'kitchen', shape: 'l', size: 'm', name: ' Mutfak ' });
+  assert.match(a.id, /^[a-z0-9]{1,12}$/);
+  assert.equal(a.name, 'Mutfak');
+  await api.saveSpace(roomSpace(a.id), { items: [{ item: 'mob:sandalye', x: 2, y: 2, rot: 0 }] });
+  await assert.rejects(api.saveSpace(roomSpace(a.id), { items: [{ item: 'mob:sandalye', x: 7, y: 7, rot: 0 }] }), /boş değil/);
+  await assert.rejects(api.saveSpace('r:yok', { items: [] }), /oda yok/);
+  await api.updateRoom(a.id, { kind: 'bath', shape: 'kare', size: 's', name: 'Banyo' });
+  assert.deepEqual((await api.listRooms()).map((r) => [r.kind, r.shape, r.size, r.name]), [['bath', 'kare', 's', 'Banyo']]);
+  await assert.rejects(api.addRoom({ kind: 'kitchen', shape: 'yok', size: 'm', name: 'x' }), /şekli/);
+  for (let i = 1; i < CFG.world.maxRooms; i++) await api.addRoom({ kind: 'free', shape: 'kare', size: 's', name: `Oda ${i}` });
+  await assert.rejects(api.addRoom({ kind: 'free', shape: 'kare', size: 's', name: 'Fazla' }), /En çok/);
+  assert.deepEqual((await api.listRooms()).map((r) => r.pos), Array.from({ length: CFG.world.maxRooms }, (_, i) => i));
+  await api.deleteRoom(a.id);
+  assert.equal((await api.listRooms()).length, CFG.world.maxRooms - 1);
+  assert.ok(!(await api.listSpaces()).some((x) => x.space === roomSpace(a.id)), 'yerleşimi de silinir');
 });
 
 test('eşyalar: otur/yat/sallan noktası, yaklaşılan karo ve aç-kapa', () => {

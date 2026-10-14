@@ -1,6 +1,6 @@
 // Kodla çizilen, parça parça kurulan low-poly avatar (Habbo gibi): ten, yüz, saç, üst, alt, ayakkabı, şapka,
 // gözlük ve sırt. Parçaların stili items.json → style, renkleri görünüşten (avatar.ts → AvatarLook).
-// Kemik yok: kollar omuzdan, bacaklar kalçadan döner; yürüme, koşma, zıplama, süzülme, el sallama, oturma,
+// Kemik yok: kollar omuzdan, bacaklar kalçadan döner; yürüme, koşma, zıplama, süzülme, el sallama, dans, oturma,
 // yatma ve sallanma useFrame'de hesaplanır (yatarken gövdeyi yatıran çağıran taraftır). Ayakların altı y = 0, boy ~1.2 birim.
 // `holding`: bir eşyadan alınan ikram (DISPENSE: kahve, dondurma…) sağ elde, kol öne kalkık.
 //
@@ -12,7 +12,7 @@ import { useMemo, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { Color, DoubleSide, ExtrudeGeometry, Shape, type Group } from 'three';
 import { BODIES, styleOf, type AvatarLook } from '../../lib/avatar';
 
-export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'sit' | 'lie' | 'swing';
+export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'dance' | 'sit' | 'lie' | 'swing';
 
 /** Kalçanın yüksekliği: oturunca kalça oturağa gelsin diye çağıran taraf karakteri bu kadar indirir */
 export const HIP_Y = 0.38;
@@ -89,6 +89,9 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     let bob = 0;
     let wave = 0;
     let lean = 0;
+    // Dansta gövde sağa sola salınır ve döner
+    let sway = 0;
+    let turn = 0;
     // Oturunca iki bacak birden öne (diz yok: bacaklar öne uzanır), yatınca düz
     let seated = 0;
     if (s === 'sit' || s === 'swing') {
@@ -114,6 +117,14 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
       leg = 0.15;
     } else if (s === 'wave') {
       wave = 1;
+    } else if (s === 'dance') {
+      const b = t * 7;
+      leg = Math.sin(b) * 0.35;
+      arm = Math.sin(b) * 0.5;
+      armZ = 2.1 + Math.sin(b * 2) * 0.45;
+      bob = Math.abs(Math.sin(b)) * 0.07;
+      sway = Math.sin(b) * 0.14;
+      turn = Math.sin(b / 2) * 0.5;
     } else if (live) {
       bob = Math.sin(t * 2) * 0.008;
       arm = Math.sin(t * 2) * 0.04;
@@ -132,6 +143,9 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     if (body.current) {
       body.current.position.y = bob;
       body.current.rotation.x += (lean - body.current.rotation.x) * k;
+      body.current.rotation.z += (sway - body.current.rotation.z) * k;
+      body.current.rotation.y += (turn - body.current.rotation.y) * k;
+      moving += Math.abs(body.current.rotation.z) + Math.abs(body.current.rotation.y);
     }
     if (back.current) back.current.rotation.x = -0.1 - Math.abs(leg) * 0.35 - (s === 'fall' || s === 'glide' ? 0.6 : 0);
     if (eyes.current) eyes.current.scale.y = s === 'lie' || (live && t % 3.7 < 0.13) ? 0.15 : 1;

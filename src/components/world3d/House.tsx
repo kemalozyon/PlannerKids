@@ -1,10 +1,11 @@
-// Evin dış kabuğu (Sims gibi): oda ve kütüphane bu kabuğun gerçek içidir (worldPlan.ts → kütüphane | oda).
-// Dışarıdayken ön ve doğu duvarları, üst kat ve çatı görünür. Karakter içeri girince (ya da içerisi
-// düzenlenirken) çatı silikleşir, ön ve doğu duvarları kısa bir basamağa iner; içerisi görünür.
+// Evin dış kabuğu (Sims gibi): oda ve kütüphane bu kabuğun gerçek içidir (worldPlan.ts → kütüphane | oda); eklenen
+// odalar doğuda tek katlı, düz çatılı ekler. Dış duvarlar evin karolarının güney ve doğu kenarlarını izler (şekilli
+// odada kesiklerin kenarından döner). Dışarıdayken dış duvarlar, üst kat ve çatı görünür. Karakter içeri girince
+// (ya da içerisi düzenlenirken) çatı silikleşir, dış duvarlar kısa bir basamağa iner; içerisi görünür.
 // İç duvarlar (arka ve sol) Room.tsx'tedir; burası yalnızca dışarıdan görünen yüzleri çizer.
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
-import { ExtrudeGeometry, Shape, type Group, type MeshStandardMaterial } from 'three';
+import { ExtrudeGeometry, MeshStandardMaterial, Shape, type Group } from 'three';
 import type { MapDef } from '../../lib/config';
 import { isTap } from './light';
 import { WALL_H } from './Room';
@@ -15,9 +16,15 @@ const LOW = 0.32;
 const FLOOR_H = 1.6;
 
 export interface HouseShellProps {
-  /** Evin dünyadaki ölçüsü: kütüphane + oda genişliği, odanın derinliği */
+  /** Ana evin dünyadaki ölçüsü: kütüphane + oda genişliği, odanın derinliği (üst kat ve beşik çatı bunun üstünde) */
   w: number;
   h: number;
+  /** Evin bütün karoları ("x,y", dünya): dış duvarlar bunların kenarından */
+  cells: Set<string>;
+  /** Evin en doğusu (arka duvarın dış yüzü buraya kadar) */
+  houseW: number;
+  /** Eklenen odaların zemin parçaları (dünya): düz çatı */
+  annex: [number, number, number, number][];
   /** Ön kapının x'i (dünya, karo) */
   doorX: number;
   theme: MapDef['theme'];
@@ -28,12 +35,39 @@ export interface HouseShellProps {
   onClick: () => void;
 }
 
-export default function HouseShell({ w, h, doorX, theme, open, night, onClick }: HouseShellProps) {
+/** Dış duvarlar: karoların güney ve doğu kenarları, birleşik parçalar (ön kapının karosu boş) */
+function outerWalls(cells: Set<string>, door: { x: number; y: number }) {
+  const has = (x: number, y: number) => cells.has(`${x},${y}`);
+  const south = new Map<number, number[]>();
+  const east = new Map<number, number[]>();
+  for (const c of cells) {
+    const [x, y] = c.split(',').map(Number);
+    if (!has(x, y + 1) && !(x === door.x && y === door.y)) south.set(y + 1, [...(south.get(y + 1) ?? []), x]);
+    if (!has(x + 1, y)) east.set(x + 1, [...(east.get(x + 1) ?? []), y]);
+  }
+  const runs = (m: Map<number, number[]>) => {
+    const out: { at: number; a: number; b: number }[] = [];
+    for (const [at, list] of m) {
+      const xs = [...list].sort((p, q) => p - q);
+      let a = xs[0];
+      for (let i = 1; i <= xs.length; i++) {
+        if (i < xs.length && xs[i] === xs[i - 1] + 1) continue;
+        out.push({ at, a, b: xs[i - 1] + 1 });
+        a = xs[i];
+      }
+    }
+    return out;
+  };
+  return { south: runs(south), east: runs(east) };
+}
+
+export default function HouseShell({ w, h, cells, houseW, annex, doorX, theme, open, night, onClick }: HouseShellProps) {
   const k = useRef(open ? 1 : 0);
   const front = useRef<Group>(null);
   const top = useRef<Group>(null);
-  const roofMat = useRef<MeshStandardMaterial>(null);
-  const upperMat = useRef<MeshStandardMaterial>(null);
+  // Çatılar ve üst kat aynı malzemeyi paylaşır (birlikte silikleşir)
+  const roofMat = useMemo(() => new MeshStandardMaterial({ color: theme.roof, flatShading: true, transparent: true }), [theme.roof]);
+  const upperMat = useMemo(() => new MeshStandardMaterial({ color: theme.wall, transparent: true }), [theme.wall]);
   const invalidate = useThree((s) => s.invalidate);
   const floors = Math.max(1, theme.floors);
   const upper = (floors - 1) * FLOOR_H;
@@ -60,8 +94,8 @@ export default function HouseShell({ w, h, doorX, theme, open, night, onClick }:
     const v = k.current;
     if (front.current) front.current.scale.y = 1 - v * (1 - LOW / WALL_H);
     if (top.current) top.current.visible = v < 0.98;
-    if (roofMat.current) roofMat.current.opacity = 1 - v;
-    if (upperMat.current) upperMat.current.opacity = 1 - v;
+    roofMat.opacity = 1 - v;
+    upperMat.opacity = 1 - v;
   });
 
   const tap = (e: ThreeEvent<MouseEvent>) => {
@@ -70,45 +104,40 @@ export default function HouseShell({ w, h, doorX, theme, open, night, onClick }:
     onClick();
   };
 
-  // Ön duvar kapının iki yanında; kapının üstünde lento
-  const left = doorX;
-  const right = w - doorX - 1;
   const glass = night ? '#ffd98a' : '#a8dcff';
+  const walls = useMemo(() => outerWalls(cells, { x: doorX, y: h - 1 }), [cells, doorX, h]);
+  // Ön duvarlarda pencereler (kapının yanı hariç)
   const frontWindows = useMemo(() => {
-    const out: number[] = [];
-    for (let x = 1.5; x < w - 1; x += 3) if (Math.abs(x - (doorX + 0.5)) > 1.2) out.push(x);
+    const out: { x: number; z: number }[] = [];
+    for (const r of walls.south) for (let x = r.a + 1.5; x < r.b - 1; x += 3) if (r.at !== h || Math.abs(x - (doorX + 0.5)) > 1.2) out.push({ x, z: r.at });
     return out;
-  }, [w, doorX]);
+  }, [walls, doorX, h]);
 
   return (
     <group onClick={tap}>
       {/* Arka ve sol duvarın dış yüzü */}
-      <mesh position={[w / 2, WALL_H / 2, -T - 0.02]} castShadow>
-        <boxGeometry args={[w + T * 2, WALL_H, 0.04]} />
+      <mesh position={[houseW / 2, WALL_H / 2, -T - 0.02]} castShadow>
+        <boxGeometry args={[houseW + T * 2, WALL_H, 0.04]} />
         <meshStandardMaterial color={theme.wall} />
       </mesh>
       <mesh position={[-T - 0.02, WALL_H / 2, h / 2]} castShadow>
         <boxGeometry args={[0.04, WALL_H, h + T * 2]} />
         <meshStandardMaterial color={theme.wall} />
       </mesh>
-      {/* Ön (güney) ve doğu duvarları: içerisi görünürken alçalır */}
+      {/* Güney ve doğu dış duvarları (karoların kenarından): içerisi görünürken alçalır */}
       <group ref={front}>
-        {left > 0 && (
-          <mesh position={[left / 2, WALL_H / 2, h + T / 2]} castShadow receiveShadow>
-            <boxGeometry args={[left, WALL_H, T]} />
+        {walls.south.map((r) => (
+          <mesh key={`s${r.at},${r.a}`} position={[(r.a + r.b) / 2, WALL_H / 2, r.at + T / 2]} castShadow receiveShadow>
+            <boxGeometry args={[r.b - r.a, WALL_H, T]} />
             <meshStandardMaterial color={theme.wall} />
           </mesh>
-        )}
-        {right > 0 && (
-          <mesh position={[doorX + 1 + right / 2, WALL_H / 2, h + T / 2]} castShadow receiveShadow>
-            <boxGeometry args={[right, WALL_H, T]} />
+        ))}
+        {walls.east.map((r) => (
+          <mesh key={`e${r.at},${r.a}`} position={[r.at + T / 2, WALL_H / 2, (r.a + r.b + T) / 2]} castShadow receiveShadow>
+            <boxGeometry args={[T, WALL_H, r.b - r.a + T]} />
             <meshStandardMaterial color={theme.wall} />
           </mesh>
-        )}
-        <mesh position={[w + T / 2, WALL_H / 2, h / 2]} castShadow receiveShadow>
-          <boxGeometry args={[T, WALL_H, h + T * 2]} />
-          <meshStandardMaterial color={theme.wall} />
-        </mesh>
+        ))}
         {/* Kapı kasası */}
         {[doorX, doorX + 1].map((x) => (
           <mesh key={x} position={[x, WALL_H / 2, h + T / 2]}>
@@ -116,8 +145,8 @@ export default function HouseShell({ w, h, doorX, theme, open, night, onClick }:
             <meshStandardMaterial color="#6b4a2f" />
           </mesh>
         ))}
-        {frontWindows.map((x) => (
-          <mesh key={x} position={[x, 1.45, h + T + 0.01]}>
+        {frontWindows.map(({ x, z }) => (
+          <mesh key={`${x},${z}`} position={[x, 1.45, z + T + 0.01]}>
             <boxGeometry args={[0.9, 0.8, 0.04]} />
             <meshStandardMaterial color={glass} emissive={glass} emissiveIntensity={night ? 0.6 : 0.2} />
           </mesh>
@@ -135,14 +164,17 @@ export default function HouseShell({ w, h, doorX, theme, open, night, onClick }:
         </mesh>
         {/* Üst katlar ve çatı */}
         {upper > 0 && (
-          <mesh position={[w / 2, WALL_H + upper / 2, h / 2]} castShadow>
+          <mesh position={[w / 2, WALL_H + upper / 2, h / 2]} material={upperMat} castShadow>
             <boxGeometry args={[w + T * 2, upper, h + T * 2]} />
-            <meshStandardMaterial ref={upperMat} color={theme.wall} transparent />
           </mesh>
         )}
-        <mesh geometry={roof} position={[w / 2, WALL_H + upper, h / 2]} rotation-y={Math.PI / 2} castShadow>
-          <meshStandardMaterial ref={roofMat} color={theme.roof} flatShading transparent />
-        </mesh>
+        <mesh geometry={roof} position={[w / 2, WALL_H + upper, h / 2]} rotation-y={Math.PI / 2} material={roofMat} castShadow />
+        {/* Eklenen odaların düz çatısı */}
+        {annex.map(([x, y, aw, ah]) => (
+          <mesh key={`${x},${y}`} position={[x + aw / 2, WALL_H + 0.09, y + ah / 2]} material={roofMat} castShadow>
+            <boxGeometry args={[aw + T * 2, 0.18, ah + T * 2]} />
+          </mesh>
+        ))}
         <mesh position={[w * 0.75, WALL_H + upper + roofH * 0.6, h * 0.3]} castShadow>
           <boxGeometry args={[0.5, 1.2, 0.5]} />
           <meshStandardMaterial color="#b0563f" />

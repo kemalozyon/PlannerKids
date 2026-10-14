@@ -6,7 +6,7 @@ import { CFG } from './config';
 import { toLocalDate } from './date';
 import { balances, bestStreakOf, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
 import { levelOf } from './level';
-import { dayTrees, isHome, isMonthSpace, itemCounts, layoutProblem, mapFor, type SpaceId, type SpaceLayout } from './world';
+import { dayTrees, isHome, isMonthSpace, itemCounts, layoutProblem, mapFor, roomInputProblem, roomSpace, type SpaceId, type SpaceLayout } from './world';
 import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
@@ -28,6 +28,7 @@ import {
   type StudyLog,
   type Task,
   type Equipped,
+  type UserRoom,
   type LedgerEntry,
   type OwnedItem,
 } from './types';
@@ -297,6 +298,18 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async saveSpace(space, layout) {
       check(await sb.rpc('save_space', { p_space: space, p_layout: layout }));
     },
+    async listRooms() {
+      return check(await sb.from('user_rooms').select('id,kind,shape,size,name,pos').order('pos')) as UserRoom[];
+    },
+    async addRoom(r) {
+      return check(await sb.rpc('add_room', { p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim() })) as UserRoom;
+    },
+    async updateRoom(id, r) {
+      check(await sb.rpc('update_room', { p_id: id, p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim() }));
+    },
+    async deleteRoom(id) {
+      check(await sb.rpc('delete_room', { p_id: id }));
+    },
   };
 }
 
@@ -321,9 +334,10 @@ interface DemoDb {
   equipped?: Equipped;
   sessions?: StudySession[];
   spaces?: Partial<Record<SpaceId, SpaceLayout>>;
+  rooms?: UserRoom[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v15';
+export const DEMO_KEY = 'ct-demo-db-v16';
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -730,9 +744,8 @@ export function localApi(seed: () => DemoDb): Api {
       const minutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
       // Arazi saatle yerinde büyür (sunucuda world_ctx.map)
       const today = toLocalDate();
-      // Seriyle açılan odalar en iyi seriyle (sunucuda world_ctx.best)
       const best = bestStreakOf(db.logs, db.owned ?? [], today);
-      const ctx = { map: mapFor(minutes).id, today, best };
+      const ctx = { map: mapFor(minutes).id, today, rooms: db.rooms ?? [] };
       const trees = dayTrees(db.logs, []).length;
       const progress = { bestStreak: best, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees };
       const elsewhere = (id: string) =>
@@ -743,6 +756,35 @@ export function localApi(seed: () => DemoDb): Api {
       const bad = layoutProblem(space, layout, ctx, (it) => ownedCount(it, db.owned ?? [], progress), elsewhere);
       if (bad) throw new Error(bad.message);
       db.spaces[space] = structuredClone(layout);
+      save();
+    },
+    async listRooms() {
+      return structuredClone([...(load().rooms ?? [])].sort((a, b) => a.pos - b.pos));
+    },
+    async addRoom(r) {
+      const db = load();
+      db.rooms ??= [];
+      const bad = roomInputProblem(r);
+      if (bad) throw new Error(bad);
+      if (db.rooms.length >= CFG.world.maxRooms) throw new Error(`En çok ${CFG.world.maxRooms} oda eklenebilir`);
+      const row: UserRoom = { id: uid().replace(/[^a-z0-9]/g, '').slice(0, 8), kind: r.kind, shape: r.shape, size: r.size, name: r.name.trim(), pos: Math.max(-1, ...db.rooms.map((x) => x.pos)) + 1 };
+      db.rooms.push(row);
+      save();
+      return { ...row };
+    },
+    async updateRoom(id, r) {
+      const db = load();
+      const row = db.rooms?.find((x) => x.id === id);
+      if (!row) throw new Error('Bu oda yok');
+      const bad = roomInputProblem(r);
+      if (bad) throw new Error(bad);
+      Object.assign(row, { kind: r.kind, shape: r.shape, size: r.size, name: r.name.trim() });
+      save();
+    },
+    async deleteRoom(id) {
+      const db = load();
+      db.rooms = (db.rooms ?? []).filter((x) => x.id !== id);
+      delete db.spaces?.[roomSpace(id)];
       save();
     },
   };

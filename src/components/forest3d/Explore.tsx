@@ -2,9 +2,11 @@
 // kamerayla yürür. Sahne dünya görünümüyle aynıdır (world3d/WorldScene, aynı dünya planı); yalnızca kamera ve
 // kontroller farklı. Alanlar arasında yalnızca kapılardan geçilir; eve girince çatı kalkar. Bir ağaca yaklaşınca o
 // günün özeti çıkar, "Bak" ile gün kartı açılır; her gün saklanan yıldızlar toplanır.
-// Bir eşyaya yaklaşınca adı çıkar; ona (ya da düğmeye, E'ye) dokununca dört seçenek: Kullan (otur, yat, sallan,
-// aç-kapa, raflar), Taşı (eşya karakterin önünde yeşil/kırmızı hayalet olarak gezer, "Bırak" ile öndeki karoya
-// konur; explore.ts → carrySpot), Döndür, Kaldır. Kayıtlar dünya sayfasının işleriyle (World.tsx) yapılır. Seviye atladıkça yeni yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş
+// Bir eşyaya yaklaşınca adı çıkar; bir eşyaya (ya da düğmeye, E'ye) dokununca seçenek balonu eşyanın yanında açılır:
+// Kullan (otur, yat, sallan, aç-kapa, raflar; yanında olmak gerekir), Taşı (eşya karakterin önünde yeşil/kırmızı
+// hayalet olarak gezer, "Bırak" ile öndeki karoya konur; explore.ts → carrySpot), Döndür, Kaldır. 🎒 bulunduğun
+// alanın envanterini açar (seçilen eşya aynı şekilde önünde taşınır), 🛍️ dükkânı açar (açıkken gezinti durur).
+// Karaktere (ya da 🙂'ye) dokununca karakter menüsü: dans, el salla, yanına hayvan al, kıyafet, görünüş. Kayıtlar dünya sayfasının işleriyle (World.tsx) yapılır. Seviye atladıkça yeni yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş
 // yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar, Shift koş, boşluk zıpla (basılı tut: süzül), E bak, Esc çık.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
@@ -13,6 +15,11 @@ import type { ThreeEvent } from '@react-three/fiber';
 import type { AvatarLook } from '../../lib/avatar';
 import { has, itemById, type Item } from '../../lib/catalog';
 import { CFG, type MapDef } from '../../lib/config';
+import InventoryDrawer, { type InvEntry } from '../InventoryDrawer';
+import type { Tab as LookTab } from '../avatar/AvatarEditor';
+import ScreenAnchor from '../world3d/Anchor';
+import Companions from '../world3d/Companion';
+import Pop from '../world3d/Pop';
 import { dayPhase } from '../../lib/dayPhase';
 import { formatMinutes, formatShort } from '../../lib/date';
 import { carrySpot, dailyStars, moveDir, nearest, resolveMove, STAR_REACH } from '../../lib/explore';
@@ -22,6 +29,7 @@ import type { Book } from '../../lib/types';
 import {
   canPlaceAt,
   canRotate,
+  fitsSpace,
   footSize,
   isIndoor,
   isMonthSpace,
@@ -36,6 +44,7 @@ import {
   wallRot,
   type ActionId,
   type DayTree,
+  type PlacedItem,
   type Pose,
   type SpaceId,
   type SpaceLayout,
@@ -100,6 +109,18 @@ export interface ExploreProps {
   onMove: (r: ItemRef, to: Tile, rot: number) => string | null;
   /** Dünya sayfasının kısa bildirimi (kaydedilemedi, envantere döndü…) */
   toast: string | null;
+  /** Yanına alınan evcil hayvanlar */
+  pets: string[];
+  /** Envanter (World.tsx): alana konabilecek boştaki eşyalar, sahip olunan adet, kaplama, envanterden koy */
+  inventoryFor: (sp: SpaceId) => InvEntry[];
+  owned: (it: Item) => number;
+  onCover: (sp: SpaceId, slot: 'floor' | 'wall', id: string) => void;
+  onPlace: (sp: SpaceId, p: PlacedItem) => string | null;
+  onShop: () => void;
+  /** Dükkândan "Hemen yerleştir": eşya karakterin önünde taşınır (n her istekte artar) */
+  carryNew: { item: string; n: number } | null;
+  /** Karakter menüsünden: hayvan seçimi ya da görünüş düzenleyici (sayfa açar) */
+  onMe: (k: 'pets' | LookTab) => void;
 }
 
 type TreeNear = { kind: 'tree'; key: string; x: number; z: number; tree: DayTree };
@@ -147,19 +168,28 @@ interface PlayerState {
   jumps: number;
   /** Eşyanın üstünde: otur, yat, sallan (dünya konumu); hareket edince `back`'e iner */
   pose?: { kind: Pose; x: number; z: number; y: number; face: number; back: { x: number; z: number } } | null;
+  /** Dururken oynayan hareket (karakter menüsü); `until` (performance.now) gelince biter; hareket edince biter */
+  emote?: { kind: 'dance' | 'wave'; until?: number } | null;
 }
 
 export default function Explore(props: ExploreProps) {
   const { plan, map, forest, today, paused, onTree, onClose, perks } = props;
   const size = { w: plan.w, h: plan.h };
-  // Seçenekleri açık eşya, oturulan eşya, elde taşınan eşya (önündeki karo: spot)
+  // Seçenekleri açık eşya, oturulan eşya, elde taşınan eşya (index null: envanterden; önündeki karo: spot)
   const [sel, setSel] = useState<ItemRef | null>(null);
   const [posed, setPosed] = useState<ItemRef | null>(null);
-  const [carry, setCarry] = useState<{ space: SpaceId; index: number; item: Item; rot: number } | null>(null);
+  const [carry, setCarry] = useState<{ space: SpaceId; index: number | null; item: Item; rot: number } | null>(null);
   const [spot, setSpot] = useState<Tile | null>(null);
+  // Envanter çekmecesi, karakter menüsü, seçenek balonu
+  const [bag, setBag] = useState(false);
+  const [me, setMe] = useState(false);
+  const popRef = useRef<HTMLDivElement>(null);
   // Taşınan eşya (ve üstündekiler) yerinden kalkmış görünür; yürüyüşü engellemez
   const layouts = useMemo(
-    () => (carry && props.layouts[carry.space] ? { ...props.layouts, [carry.space]: removeItemAt(props.layouts[carry.space]!, carry.index) } : props.layouts),
+    () =>
+      carry && carry.index != null && props.layouts[carry.space]
+        ? { ...props.layouts, [carry.space]: removeItemAt(props.layouts[carry.space]!, carry.index) }
+        : props.layouts,
     [props.layouts, carry],
   );
   const blocked = useMemo(() => worldBlocked(plan, layouts), [plan, layouts]);
@@ -228,8 +258,6 @@ export default function Explore(props: ExploreProps) {
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
   const [sound, setSound] = useState(soundOn);
   const [near, setNear] = useState<Near | null>(null);
-  const selRef = useRef<ItemRef | null>(null);
-  selRef.current = sel;
   const [msg, setMsg] = useState<string | null>('Joystick ile yürü · boş yerde sürükleyip etrafına bak');
   const [party, setParty] = useState(false);
   const [pendingStars, setPendingStars] = useState<number[]>([]);
@@ -275,25 +303,23 @@ export default function Explore(props: ExploreProps) {
     nearRef.current = n;
     setNear(n);
     if (n) sfx.pop();
-    // Seçili eşyadan uzaklaşınca seçenekler kapanır
-    const s = selRef.current;
-    if (s && !(n?.kind === 'item' && n.space === s.space && n.index === s.index)) setSel(null);
   }, []);
 
   // ---------- Eşyalar ----------
-  /** Dokunulan eşya: yakındaysa seçenekler, uzaktaysa ipucu */
-  const onItem = useCallback(
-    (kind: 'down' | 'click', space: SpaceId, index: number, e: ThreeEvent<PointerEvent | MouseEvent>) => {
-      if (kind === 'down' || !isTap(e as ThreeEvent<MouseEvent>)) return;
-      e.stopPropagation();
-      const s = spots.find((x) => x.space === space && x.index === index);
-      const p = player.current;
-      if (s && rectDist(s, p.x, p.z) > TAP_REACH) return say('Önce yanına yürü.');
-      sfx.pop();
-      setSel({ space, index });
-    },
-    [spots], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  /** Dokunulan eşya: seçenek balonu açılır (kullanmak için yanına yürümek gerekir) */
+  const onItem = useCallback((kind: 'down' | 'click', space: SpaceId, index: number, e: ThreeEvent<PointerEvent | MouseEvent>) => {
+    if (kind === 'down' || !isTap(e as ThreeEvent<MouseEvent>)) return;
+    e.stopPropagation();
+    sfx.pop();
+    setMe(false);
+    setBag(false);
+    setSel({ space, index });
+  }, []);
+  const selSpot = sel ? spots.find((x) => x.space === sel.space && x.index === sel.index) : undefined;
+  const nearSel = () => {
+    const p = player.current;
+    return !selSpot || rectDist(selSpot, p.x, p.z) <= TAP_REACH;
+  };
   const say = (text: string) => {
     clearTimeout(msgTimer.current);
     setMsg(text);
@@ -317,6 +343,8 @@ export default function Explore(props: ExploreProps) {
   const runSel = (id: ActionId) => {
     if (!sel || !selItem || !selPlaced) return;
     if (id === 'stand') return standUp();
+    if (!nearSel()) return say(`Önce ${selItem.name} yanına yürü.`);
+    player.current.emote = null;
     if (id === 'sit' || id === 'lie' || id === 'swing') {
       const r = regionOf(plan, sel.space);
       const seat = seatOf(selItem, selPlaced);
@@ -343,11 +371,59 @@ export default function Explore(props: ExploreProps) {
   const carryOk = !!carry && !!carryP && canPlaceAt(carry.space, layouts[carry.space] ?? { items: [] }, plan.ctx, carryP);
   const dropCarry = () => {
     if (!carry || !carryP) return;
-    const err = props.onMove({ space: carry.space, index: carry.index }, { x: carryP.x, y: carryP.y }, carryP.rot);
-    if (err) return say(err);
+    if (carry.index == null) {
+      // Envanterden: Habbo gibi çit, yol elde kalır
+      const left = props.inventoryFor(carry.space).find((x) => x.it.id === carry.item.id)?.n ?? 0;
+      const err = props.onPlace(carry.space, carryP);
+      if (err) return say(err);
+      if (carry.item.repeat && left > 1) return;
+    } else {
+      const err = props.onMove({ space: carry.space, index: carry.index }, { x: carryP.x, y: carryP.y }, carryP.rot);
+      if (err) return say(err);
+    }
     setCarry(null);
     setSpot(null);
   };
+  // Envanter: bulunduğun alan (yolda ya da kilitli bahçede değil)
+  const hereR = here ? regionOf(plan, here) : undefined;
+  const bagSpace = hereR && here !== 'trail' && !hereR.locked ? (here as SpaceId) : null;
+  /** Envanterden ya da dükkândan gelen eşyayı karakterin önünde taşı */
+  const carryFresh = (it: Item) => {
+    if (!bagSpace) return say('Eşya koymak için evine ya da bir bahçeye gir.');
+    if (!fitsSpace(it, bagSpace)) return say(it.placement === 'outdoor' ? `${it.name} dışarıya konur: bahçene git.` : `${it.name} evin içine konur: odana git.`);
+    standUp();
+    setSel(null);
+    setMe(false);
+    setBag(false);
+    setCarry({ space: bagSpace, index: null, item: it, rot: it.rotations?.[0] ?? 0 });
+    say(it.placement === 'wall' ? 'Duvarın dibine gel, duvara bak, sonra Bırak.' : 'Yürü ve dön: eşya önünde gelir. Yeşilken Bırak.');
+  };
+  // Dükkândan "Hemen yerleştir"
+  useEffect(() => {
+    const c = props.carryNew;
+    const it = c && itemById(c.item);
+    if (it) carryFresh(it);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.carryNew?.n]);
+  /** Karakter menüsü: dans et, el salla, dur */
+  const emote = (kind: 'dance' | 'wave' | null) => {
+    standUp();
+    player.current.emote = kind ? { kind, until: kind === 'wave' ? performance.now() + 2500 : undefined } : null;
+    setMe(false);
+  };
+  const leader = useCallback(() => {
+    const p = player.current;
+    return p.pose ? { x: p.pose.back.x, z: p.pose.back.z, face: p.pose.face } : { x: p.x, z: p.z, face: p.face };
+  }, []);
+  // Balonun bağlandığı nokta: seçili eşyanın üstü ya da karakterin başı
+  const popAt = useCallback((): [number, number, number] | null => {
+    const s = spotRef.current;
+    if (s) return [(s.x0 + s.x1) / 2, s.item.placement === 'wall' ? 2 : 1.1, (s.z0 + s.z1) / 2];
+    const p = player.current;
+    return p.pose ? [p.pose.x, p.pose.y + 1.4, p.pose.z] : [p.x, p.y + 1.75, p.z];
+  }, []);
+  const spotRef = useRef<Spot | undefined>(undefined);
+  spotRef.current = sel ? selSpot : undefined;
   const selected = useMemo(() => sel ?? null, [sel]);
 
   const collect = useCallback(
@@ -372,7 +448,11 @@ export default function Explore(props: ExploreProps) {
       const c = ctl.current;
       if (paused) return;
       if (e.code === 'Escape') {
-        onClose();
+        if (me) setMe(false);
+        else if (bag) setBag(false);
+        else if (sel) setSel(null);
+        else if (carry) setCarry(null);
+        else onClose();
         return;
       }
       if (e.code === 'Space') {
@@ -479,13 +559,32 @@ export default function Explore(props: ExploreProps) {
             </group>
           )}
           {stars.map((s, i) => !got.has(i) && <Star key={i} x={s.x} z={s.z} i={i} />)}
-          <Player look={props.look} holding={props.holding} player={player} ctl={ctl} blocked={blocked} step={step} size={size} perks={perks} onTile={onTile} onStand={standUp} />
+          <Player
+            look={props.look}
+            holding={props.holding}
+            player={player}
+            ctl={ctl}
+            blocked={blocked}
+            step={step}
+            size={size}
+            perks={perks}
+            onTile={onTile}
+            onStand={standUp}
+            onTap={() => {
+              sfx.pop();
+              setSel(null);
+              setBag(false);
+              setMe((m) => !m);
+            }}
+          />
+          <Companions pets={props.pets} at={leader} />
         </Suspense>
         {perks.trail && <Trail player={player} />}
         <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
         <FollowCam player={player} ctl={ctl} />
         <Brain player={player} trees={trees} spots={carry ? NO_SPOTS : spots} stars={stars} got={got} onNear={onNear} onStar={collect} />
         {carry && carryRegion && <Carry player={player} carry={carry} region={carryRegion} onSpot={setSpot} />}
+        {((sel && !carry) || me) && <ScreenAnchor el={popRef} at={popAt} id={sel ? `${sel.space}:${sel.index}` : 'me'} />}
       </Canvas>
 
       <div className="explore-top">
@@ -498,6 +597,33 @@ export default function Explore(props: ExploreProps) {
           </span>
         )}
         <span className="grow" />
+        <button
+          className={`explore-chip${me ? ' on' : ''}`}
+          aria-label="Karakterim"
+          onClick={() => {
+            setSel(null);
+            setBag(false);
+            setMe(!me);
+          }}
+        >
+          🙂
+        </button>
+        <button
+          className={`explore-chip${bag ? ' on' : ''}`}
+          aria-label="Envanter"
+          onClick={() => {
+            if (!bagSpace) return say('Eşya koymak için evine ya da bir bahçeye gir.');
+            setSel(null);
+            setMe(false);
+            setCarry(null);
+            setBag(!bag);
+          }}
+        >
+          🎒
+        </button>
+        <button className="explore-chip" aria-label="Dükkân" onClick={props.onShop}>
+          🛍️
+        </button>
         <button
           className="explore-chip"
           aria-label={sound ? 'Sesi kapat' : 'Sesi aç'}
@@ -548,60 +674,136 @@ export default function Explore(props: ExploreProps) {
       >
         ⤴
       </button>
-      {near && !sel && !carry && (
+      {near && !sel && !carry && !bag && !me && (
         <button className="explore-act" onClick={act}>
           {near.kind === 'tree' ? '👀 O güne bak' : `${near.item.icon} Seçenekler`}
           <span className="explore-key">E</span>
         </button>
       )}
       {sel && selItem && !carry && (
-        <div className="explore-bar" role="toolbar" aria-label={selItem.name}>
-          <span className="use-name">
-            {selItem.icon} <strong>{selItem.name}</strong>
-          </span>
-          {selActions.length ? (
-            selActions.map((a, k) => (
-              <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runSel(a.id)}>
-                {a.label}
+        <Pop
+          ref={popRef}
+          title={
+            <>
+              {selItem.icon} <strong>{selItem.name}</strong>
+            </>
+          }
+          onClose={() => setSel(null)}
+        >
+          {(selActions.length > 0 || (selItem.fx === 'tv' && selOn)) && (
+            <div className="pop-row">
+              {selActions.map((a, k) => (
+                <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runSel(a.id)}>
+                  {a.label}
+                </button>
+              ))}
+              {selItem.fx === 'tv' && selOn && (
+                <button className="btn sm" onClick={() => props.onChannel(sel)}>
+                  🔁 {(props.channels[selKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="pop-row edit">
+            <button className="btn sm" onClick={startCarry}>
+              ✋ Taşı
+            </button>
+            {canRotate(selItem) && (
+              <button
+                className="btn sm"
+                onClick={() => {
+                  const err = props.onRotate(sel);
+                  if (err) say(err);
+                }}
+              >
+                ↻ Döndür
               </button>
-            ))
-          ) : (
-            <button className="btn sm primary" disabled>
-              ▶ Kullan
+            )}
+            <button
+              className="btn sm"
+              onClick={() => {
+                standUp();
+                props.onRemove(sel);
+                setSel(null);
+              }}
+            >
+              📦 Kaldır
             </button>
-          )}
-          <button className="btn sm" onClick={startCarry}>
-            ✋ Taşı
-          </button>
-          <button
-            className="btn sm"
-            disabled={!canRotate(selItem)}
-            onClick={() => {
-              const err = props.onRotate(sel);
-              if (err) say(err);
-            }}
-          >
-            ↻ Döndür
-          </button>
-          <button
-            className="btn sm"
-            onClick={() => {
-              standUp();
-              props.onRemove(sel);
-              setSel(null);
-            }}
-          >
-            📦 Kaldır
-          </button>
-          {selItem.fx === 'tv' && selOn && (
-            <button className="btn sm" onClick={() => props.onChannel(sel)}>
-              🔁 {(props.channels[selKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
+          </div>
+        </Pop>
+      )}
+      {me && (
+        <Pop
+          ref={popRef}
+          title={
+            <>
+              🙂 <strong>Ben</strong>
+            </>
+          }
+          onClose={() => setMe(false)}
+        >
+          <div className="pop-row">
+            {player.current.emote?.kind === 'dance' ? (
+              <button className="btn sm primary" onClick={() => emote(null)}>
+                ⏹ Dur
+              </button>
+            ) : (
+              <button className="btn sm primary" onClick={() => emote('dance')}>
+                💃 Dans et
+              </button>
+            )}
+            <button className="btn sm" onClick={() => emote('wave')}>
+              👋 El salla
             </button>
-          )}
-          <button className="btn sm ghost" onClick={() => setSel(null)} aria-label="Kapat">
-            ✕
-          </button>
-        </div>
+            <button
+              className="btn sm"
+              onClick={() => {
+                setMe(false);
+                props.onMe('pets');
+              }}
+            >
+              🐾 Hayvanımı yanıma al
+            </button>
+          </div>
+          <div className="pop-row edit">
+            <button
+              className="btn sm"
+              onClick={() => {
+                setMe(false);
+                props.onMe('top');
+              }}
+            >
+              👕 Kıyafet değiştir
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => {
+                setMe(false);
+                props.onMe('govde');
+              }}
+            >
+              🙂 Görünüşüm
+            </button>
+          </div>
+        </Pop>
+      )}
+      {bag && bagSpace && !carry && (
+        <InventoryDrawer
+          space={bagSpace}
+          layout={props.layouts[bagSpace]}
+          ctx={plan.ctx}
+          items={props.inventoryFor(bagSpace)}
+          owned={props.owned}
+          onHold={carryFresh}
+          onCover={(slot, id) => props.onCover(bagSpace, slot, id)}
+          onClose={() => setBag(false)}
+          onShop={props.onShop}
+          tools={
+            <span className="grow">
+              🎒 <strong>Envanter</strong> <span className="muted small">· bir eşya seç: önünde taşırsın</span>
+            </span>
+          }
+        />
       )}
       {carry && (
         <div className="explore-bar" role="toolbar" aria-label={carry.item.name}>
@@ -690,6 +892,7 @@ function Player({
   perks,
   onTile,
   onStand,
+  onTap,
 }: {
   look: AvatarLook;
   holding: string | null;
@@ -702,6 +905,8 @@ function Player({
   onTile: (t: Tile) => void;
   /** Otururken hareket edilince kalkar */
   onStand: () => void;
+  /** Karaktere dokunuldu (karakter menüsü) */
+  onTap: () => void;
 }) {
   const group = useRef<Group>(null);
   const inner = useRef<Group>(null);
@@ -760,6 +965,8 @@ function Player({
         c.yaw += cd * Math.min(1, dt * 1.4 * iy);
       }
     }
+    if (mag > 0.05 || c.jump) p.emote = null;
+    if (p.emote?.until != null && performance.now() > p.emote.until) p.emote = null;
     const grounded = p.y <= 0.001;
     if (grounded) p.jumps = perks.doubleJump ? 1 : 0;
     if (c.jump) {
@@ -782,7 +989,7 @@ function Player({
       if (p.y === 0) p.vy = 0;
     }
     anim.current.state =
-      performance.now() < waveUntil.current ? 'wave' : p.y > 0.05 ? (gliding ? 'glide' : p.vy > 0 ? 'jump' : 'fall') : mag > 0.05 ? (run ? 'run' : 'walk') : 'idle';
+      performance.now() < waveUntil.current ? 'wave' : p.y > 0.05 ? (gliding ? 'glide' : p.vy > 0 ? 'jump' : 'fall') : mag > 0.05 ? (run ? 'run' : 'walk') : (p.emote?.kind ?? 'idle');
     g.position.set(p.x, p.y + 0.02, p.z);
     g.rotation.y = p.face;
     const t = { x: Math.floor(p.x), y: Math.floor(p.z) };
@@ -793,7 +1000,14 @@ function Player({
   });
 
   return (
-    <group ref={group}>
+    <group
+      ref={group}
+      onClick={(e) => {
+        if (!isTap(e)) return;
+        e.stopPropagation();
+        onTap();
+      }}
+    >
       <group ref={inner}>
         <AvatarModel look={look} anim={anim} live holding={holding} />
       </group>

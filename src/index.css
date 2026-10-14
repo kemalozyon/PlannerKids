@@ -807,6 +807,26 @@ button.world-chip { cursor: pointer; }
 .use-bar .btn { padding: 6px 10px; min-height: 0; font-size: .85rem; }
 .use-bar .btn:not(.primary) { background: #f3efe6; color: #1c1d1f; }
 .use-name { flex: 1 0 100%; min-width: 0; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Seçenek balonu: eşyanın/karakterin yanında (konumu ScreenAnchor yazar; ilk karede gizli) */
+.item-pop {
+  position: absolute; left: 0; top: 0; z-index: 3; visibility: hidden; transform: translate(-50%, calc(-100% - 14px));
+  width: max-content; max-width: min(300px, calc(100% - 16px)); display: grid; gap: 6px; padding: 7px 8px 8px; border-radius: 16px;
+  background: rgba(255, 255, 255, .97); color: #1c1d1f; box-shadow: 0 6px 20px rgba(0, 0, 0, .22); animation: pop-in .16s ease;
+}
+.item-pop::after {
+  content: ''; position: absolute; left: 50%; bottom: -7px; width: 14px; height: 14px; translate: -50% 0; rotate: 45deg;
+  background: inherit; box-shadow: 3px 3px 6px rgba(0, 0, 0, .08);
+}
+.item-pop[data-below="1"] { transform: translate(-50%, 0); }
+.item-pop[data-below="1"]::after { bottom: auto; top: -7px; box-shadow: -3px -3px 6px rgba(0, 0, 0, .06); }
+.pop-head { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+.pop-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-x { border: 0; background: none; font: inherit; color: #6b6f76; cursor: pointer; padding: 2px 4px; }
+.pop-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.pop-row.edit { padding-top: 6px; border-top: 1px solid #eee7da; }
+.item-pop .btn { padding: 6px 10px; min-height: 0; font-size: .84rem; }
+.item-pop .btn:not(.primary) { background: #f3efe6; color: #1c1d1f; }
+@keyframes pop-in { from { opacity: 0; scale: .92; } to { opacity: 1; scale: 1; } }
 .world-hint {
   position: absolute; top: 46px; left: 0; right: 0; text-align: center; font-size: .72rem; pointer-events: none;
   color: rgba(40, 30, 20, .65);
@@ -898,6 +918,8 @@ button.world-chip { cursor: pointer; }
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   background: rgba(255, 255, 255, .82); color: #1c1d1f; backdrop-filter: blur(6px); box-shadow: 0 2px 10px rgba(0, 0, 0, .15);
 }
+.explore-chip.on { background: #fff3c4; color: #1c1d1f; }
+@media (max-width: 400px) { .explore-top { gap: 5px; } .explore-chip { padding: 0 9px; min-width: 40px; } }
 .phase-gece .explore-chip, .phase-gece .explore-round { background: rgba(20, 28, 60, .72); color: #e8ecff; }
 .explore-msg {
   position: absolute; top: calc(66px + env(safe-area-inset-top, 0px)); left: 50%; translate: -50% 0; max-width: calc(100% - 32px);
@@ -1013,6 +1035,23 @@ button.world-chip { cursor: pointer; }
 .pick-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .pick { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 6px 10px; font: inherit; font-size: 0.82rem; cursor: pointer; }
 .pick.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); font-weight: 700; }
+/* Oda ekle / değiştir (RoomBuilder) */
+.room-builder { display: grid; gap: 4px; }
+.room-builder input { width: 100%; }
+.rb-label { font-size: .8rem; font-weight: 700; color: var(--muted); margin-top: 4px; }
+.shape-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin: 2px 0 8px; }
+.shape-btn {
+  display: grid; justify-items: center; align-content: center; gap: 4px; min-height: 76px; padding: 8px 4px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: .78rem;
+}
+.shape-btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); font-weight: 700; }
+.shape-prev { display: inline-grid; gap: 1px; }
+.shape-prev > span { border-radius: 1px; }
+.shape-prev > span.on { background: #c89a6a; }
+.shape-prev > span.door { background: #6b4a2f; }
+.rb-preview { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; background: var(--bg); margin: 4px 0; }
+.rb-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.chip.add { border-style: dashed; }
 
 .gift-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 10px 0; }
 .gift-form label { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }

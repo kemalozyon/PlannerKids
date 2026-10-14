@@ -1,4 +1,5 @@
 import type { SessionState, StudySession } from './session';
+import type { RoomSize } from './config';
 import type { SpaceId, SpaceLayout } from './world';
 import type { AvatarLook } from './avatar';
 
@@ -136,7 +137,29 @@ export interface Api {
   listSpaces(): Promise<{ space: SpaceId; layout: SpaceLayout }[]>;
   /** Yerleşimi sunucu doğrular (sınır, sabit karo, çakışma, envanter) ve kaydeder */
   saveSpace(space: SpaceId, layout: SpaceLayout): Promise<void>;
+
+  /** Eklenen odalar, sırasıyla (0023 yoksa hata) */
+  listRooms(): Promise<UserRoom[]>;
+  /** Yeni oda (en sona; en çok world.maxRooms) */
+  addRoom(r: RoomInput): Promise<UserRoom>;
+  /** Türü, şekli, boyutu ya da adı değişir; sığmayan eşyalar envantere döner */
+  updateRoom(id: string, r: RoomInput): Promise<void>;
+  /** Oda ve içindekiler silinir (eşyalar envantere döner) */
+  deleteRoom(id: string): Promise<void>;
 }
+
+/** Çocuğun eklediği oda (user_rooms): alan anahtarı r:<id> */
+export interface UserRoom {
+  id: string;
+  /** Oda türü (economy.json → world.rooms) */
+  kind: string;
+  /** Şablon (world.roomShapes) ve boyutu */
+  shape: string;
+  size: RoomSize;
+  name: string;
+  pos: number;
+}
+export type RoomInput = Pick<UserRoom, 'kind' | 'shape' | 'size' | 'name'>;
 
 /** Yarıda bırakılan seans: ormanda kuru ağaç olarak kalır (session_abandon yazar). */
 export interface Abandoned {

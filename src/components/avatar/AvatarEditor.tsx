@@ -28,7 +28,7 @@ import { sfx } from '../../lib/sfx';
 import { ItemIcon } from '../ItemCard';
 import AvatarPreview from './AvatarPreview';
 
-type Tab = 'govde' | 'yuz' | Slot | 'aksesuar';
+export type Tab = 'govde' | 'yuz' | Slot | 'aksesuar';
 const TABS: { id: Tab; name: string; icon: string }[] = [
   { id: 'govde', name: 'Vücut', icon: '🧍' },
   { id: 'yuz', name: 'Yüz', icon: '🙂' },
@@ -39,10 +39,10 @@ const TABS: { id: Tab; name: string; icon: string }[] = [
   { id: 'aksesuar', name: 'Aksesuar', icon: '🎒' },
 ];
 
-export default function AvatarEditor({ onClose }: { onClose: () => void }) {
+export default function AvatarEditor({ onClose, initialTab = 'govde' }: { onClose: () => void; initialTab?: Tab }) {
   const { stats, equip, buy } = useGame();
   const [look, setLook] = useState<AvatarLook>(() => stats!.equipped.look);
-  const [tab, setTab] = useState<Tab>('govde');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!stats) return null;

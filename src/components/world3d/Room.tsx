@@ -3,6 +3,7 @@
 // doğu duvarları, çatı evin dış kabuğundadır (House.tsx). Odanın sol duvarı kütüphaneyle aradaki iç duvardır:
 // kenarı 'w' olan kapı orada gerçek bir açıklıktır, karakter içinden yürüyerek geçer.
 // Kütüphane odasında arka duvar boyunca gömme raflar ve bitirilen kitaplar durur.
+// Eklenen odaların şekli olabilir (L, basamak…): zemin dikdörtgen parçalardan çizilir (`rects`), kesikler dışarısıdır.
 import type { ThreeEvent } from '@react-three/fiber';
 import { useMemo } from 'react';
 import { Color, type Texture } from 'three';
@@ -31,23 +32,31 @@ export interface RoomProps {
   view?: Texture;
   /** Sol duvar (batıdaki odayla bölme) alçalsın: karakter batıdaki odadayken içerisi görünsün */
   lowLeft?: boolean;
+  /** Şekilli odanın zemin parçaları [x, y, en, boy]; yoksa bütün w×h */
+  rects?: [number, number, number, number][];
 }
 
 /** Alçalan bölme duvarının yüksekliği */
 const LOW_WALL = 0.32;
 
-export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view, lowLeft }: RoomProps) {
+export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view, lowLeft, rects }: RoomProps) {
   const c1 = floor?.color ?? '#c89a6a';
   const c2 = floor?.color2 ?? c1;
   const wc = wall?.color ?? '#f3e6cf';
   const wc2 = wall?.color2 ?? wc;
-  const floorMap = useMemo(() => {
-    const t = patternTexture(floor?.pattern ?? (floor?.color2 ? 'checker' : 'plain'), c1, c2, 'floor').clone();
-    const checker = !floor?.pattern;
-    t.repeat.set(checker ? w / 2 : w, checker ? h / 2 : h);
-    t.needsUpdate = true;
-    return t;
-  }, [floor, c1, c2, w, h]);
+  const parts = useMemo(() => rects ?? [[0, 0, w, h] as [number, number, number, number]], [rects, w, h]);
+  // Her parçanın deseni aynı ızgaraya oturur (parçalar arasında desen kaymaz)
+  const floorMaps = useMemo(() => {
+    const base = patternTexture(floor?.pattern ?? (floor?.color2 ? 'checker' : 'plain'), c1, c2, 'floor');
+    const k = floor?.pattern ? 1 : 2;
+    return parts.map(([x, y, pw, ph]) => {
+      const t = base.clone();
+      t.repeat.set(pw / k, ph / k);
+      t.offset.set(x / k, -(y + ph) / k);
+      t.needsUpdate = true;
+      return t;
+    });
+  }, [floor, c1, c2, parts]);
   // Duvarlardaki açıklıklar: arka duvarda kenarı 'n', sol duvarda 'w' olan kapılar
   const gapsBack = fixed.filter((f) => f.kind === 'door' && f.edge === 'n' && f.y === 0).map((f) => f.x);
   const gapsLeft = fixed.filter((f) => f.kind === 'door' && f.edge === 'w' && f.x === 0).map((f) => f.y);
@@ -58,15 +67,19 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
   const shelves = fixed.filter((f) => f.kind === 'shelf');
   return (
     <group>
-      {/* Zemin */}
-      <mesh position={[w / 2, -0.05, h / 2]} receiveShadow>
-        <boxGeometry args={[w, 0.1, h]} />
-        <meshStandardMaterial color={c2} />
-      </mesh>
-      <mesh position={[w / 2, 0.001, h / 2]} rotation-x={-Math.PI / 2} receiveShadow>
-        <planeGeometry args={[w, h]} />
-        <meshStandardMaterial map={floorMap} />
-      </mesh>
+      {/* Zemin (şekilli odada parça parça) */}
+      {parts.map(([x, y, pw, ph], i) => (
+        <group key={`${x},${y}`}>
+          <mesh position={[x + pw / 2, -0.05, y + ph / 2]} receiveShadow>
+            <boxGeometry args={[pw, 0.1, ph]} />
+            <meshStandardMaterial color={c2} />
+          </mesh>
+          <mesh position={[x + pw / 2, 0.001, y + ph / 2]} rotation-x={-Math.PI / 2} receiveShadow>
+            <planeGeometry args={[pw, ph]} />
+            <meshStandardMaterial map={floorMaps[i]} />
+          </mesh>
+        </group>
+      ))}
       {/* Arka duvar (z = 0) ve sol duvar (x = 0), kapı açıklıklarıyla parça parça */}
       <WallStrip len={w} gaps={gapsBack} side="back" wall={wall} c1={wc} c2={wc2} />
       <group scale-y={lowLeft ? LOW_WALL / WALL_H : 1}>

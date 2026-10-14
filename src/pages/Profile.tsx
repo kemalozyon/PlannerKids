@@ -225,7 +225,6 @@ function LookCard() {
 }
 
 const STREAK_TIERS = CFG.elmas.streak.tiers;
-const ROOMS = CFG.world.rooms;
 
 /** Rozetler ve kademeli serinin kuralı */
 function BadgesCard() {
@@ -267,9 +266,6 @@ function BadgesCard() {
         Hafta içi bir günü kaçırırsan serin sıfırlanmaz, bir kademe düşer ({STREAK_TIERS.map((t) => t.days).join(' → ')} gün).
         Kademen yükseldikçe her gün fazladan Elmas kazanırsın.{' '}
         {stats.streakTier > 0 && <span className="pill">Kademe {stats.streakTier}: günde +{STREAK_TIERS[stats.streakTier - 1].bonus} 💎</span>}
-        <br />
-        <strong>Evinde yeni odalar:</strong> en iyi serin{' '}
-        {ROOMS.map((r) => `${r.streak} güne ulaşınca ${r.icon} ${r.name}`).join(', ')} açılır. Açılan oda seri düşse de senin kalır.
       </div>
     </section>
   );

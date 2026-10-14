@@ -55,11 +55,12 @@ export interface EconomyConfig {
 
 /**
  * Bir alandaki sabit karo: kapı (yürünür, eşya konmaz), bahçe kapısı (ağaç bahçelerine), ev, su, köprü, tepe,
- * koru, kütüphanenin gömme rafları, pencere (duvarda: arka duvar y = -1, sol duvar x = -1), aylık bahçede ekim yeri.
+ * koru, kütüphanenin gömme rafları, pencere (duvarda: arka duvar y = -1, sol duvar x = -1), aylık bahçede ekim yeri,
+ * odanın şeklinden kesilen boşluk (void: zemin yok, eşya konmaz, yürünmez).
  * Kapı ve bahçe kapısının `edge`'i, dünyada komşu alana açıldığı kenardır (worldPlan.ts → links).
  */
 export interface FixedTile {
-  kind: 'door' | 'gate' | 'house' | 'water' | 'bridge' | 'hill' | 'grove' | 'shelf' | 'window' | 'plot';
+  kind: 'door' | 'gate' | 'house' | 'water' | 'bridge' | 'hill' | 'grove' | 'shelf' | 'window' | 'plot' | 'void';
   x: number;
   y: number;
   w?: number;
@@ -74,26 +75,37 @@ export interface FixedTile {
 
 /** Ay bahçesi: m:YYYY-MM */
 export type MonthSpace = `m:${string}`;
-/** Seriyle açılan odalar (evin doğusunda, odadan sonra sırayla) */
-export type RoomId = 'kitchen' | 'bedroom' | 'bath' | 'playroom';
-/** Evin alanları (haritaya göre), seriyle açılan odalar ve aylık ağaç bahçeleri */
+/** Çocuğun eklediği odalar: r:<kimlik> (evin doğusunda, odadan sonra sırayla; user_rooms) */
+export type RoomId = `r:${string}`;
+/** Evin alanları (haritaya göre), eklenen odalar ve aylık ağaç bahçeleri */
 export type SpaceId = 'room' | 'library' | 'garden' | RoomId | MonthSpace;
 export type HomeSpace = 'room' | 'library' | 'garden' | RoomId;
 
-/**
- * Seriyle açılan oda: en iyi seri `streak` güne ulaşınca bir kez açılır, kalıcıdır. Derinliği haritanın odasıyla
- * aynı (aşamayla güneye büyür), eni sabit. floor/wall: kaplama seçilmemişken görünen (sahip olmak gerekmez).
- */
-export interface RoomDef {
-  id: RoomId;
+/** Oda türü (mutfak, yatak odası…): adı, simgesi ve kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez) */
+export interface RoomKind {
+  id: string;
   name: string;
   icon: string;
-  streak: number;
-  w: number;
   floor: string;
   wall: string;
   desc: string;
-  fixed: FixedTile[];
+}
+
+export type RoomSize = 's' | 'm' | 'l';
+/** Odanın bir boyuttaki ölçüsü; `cut` zeminden çıkarılan dikdörtgenler [x, y, en, boy] (ön ve doğu taraftan) */
+export interface RoomCells {
+  w: number;
+  h: number;
+  cut?: [number, number, number, number][];
+}
+/**
+ * Oda şablonu (Habbo'daki oda modelleri gibi): Kare, L, Basamak… her biri küçük/orta/büyük. Arka sıra (y 0) ve sol
+ * sütun (x 0) hep dolu (duvarlar, pencere ve duvar eşyaları değişmez); batı ve doğu kapıları (0,5) ve (w-1,5).
+ */
+export interface RoomShape {
+  id: string;
+  name: string;
+  sizes: Record<RoomSize, RoomCells>;
 }
 
 export interface SpaceDef {
@@ -143,7 +155,10 @@ export interface SpeciesDef {
 
 export interface WorldConfig {
   maps: MapDef[];
-  rooms: RoomDef[];
+  rooms: RoomKind[];
+  roomShapes: RoomShape[];
+  /** Eklenebilecek en çok oda */
+  maxRooms: number;
   /** Kitaplık görünümünde (ShelfView) raf başına kitap */
   library: { perShelf: number };
   season: { from: string; to: string };

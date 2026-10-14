@@ -1,20 +1,24 @@
 // Dünyam: tek bağlı dünya (worldPlan.ts). Ev (kütüphane | oda), önündeki bahçe, orman yolu ve aylık ağaç
 // bahçeleri yan yana; karakter kapılardan yürüyerek geçer, eve girince çatı kalkar. Çalıştıkça dünya büyür: her
 // çalışılan gün bir ağaç, toplam saatle arazi yerinde genişler (eşyalar yerinde kalır).
-// Bir eşyaya dokununca karakter yanına yürür, varınca seçenekler açılır: eşyanın davranışlarından eylemler
-// (world.ts → itemActions: otur, yat, aç-kapa, kapak, renk, depo, al, çal, mama, raflar), Taşı (eşya elde, karoya
-// dokununca konur), Döndür, Kaldır (envantere). "🎒 Envanter" bulunduğun alanın çekmecesini açar: Elmasla alınan
+// Bir eşyaya dokununca seçenek balonu eşyanın yanında açılır (karakter yürümez): eşyanın davranışlarından
+// eylemler (world.ts → itemActions: otur, yat, aç-kapa, kapak, renk, depo, al, çal, mama, raflar; seçilince
+// karakter yanına yürür, varınca yapar), Taşı (eşya elde, karoya dokununca konur), Döndür, Kaldır (envantere). "🎒 Envanter" bulunduğun alanın çekmecesini açar: Elmasla alınan
 // eşyalar Habbo gibi kare kare yerleşir, zemin/duvar seçilir. Kaydet tuşu yok: her değişiklik (eşyanın durumu da)
 // hemen görünür ve kaydedilir (GameContext → saveSpace). ⛶ dünyayı tam ekran açar. "Yakından gez" (Explore) aynı
-// eşya işlerini kullanır.
+// eşya işlerini kullanır. Karaktere dokununca karakter menüsü: görünüş, kıyafet, dans, el salla, yanına hayvan al.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { TvData } from '../components/world3d/art';
 import type { ItemRef } from '../components/world3d/WorldView';
+import Pop from '../components/world3d/Pop';
+import PetPicker from '../components/PetPicker';
+import RoomBuilder from '../components/RoomBuilder';
+import type { Tab as LookTab } from '../components/avatar/AvatarEditor';
 import StorageSheet from '../components/StorageSheet';
+import InventoryDrawer from '../components/InventoryDrawer';
 import ShelfView, { BookCard } from '../components/ShelfView';
-import { ItemIcon } from '../components/ItemCard';
 import DaySheet from '../components/DaySheet';
-import { CATEGORIES, groupOf, has, itemById, ITEMS, SUBS, type Item } from '../lib/catalog';
+import { has, itemById, ITEMS, type Item } from '../lib/catalog';
 import { CFG } from '../lib/config';
 import { dayPhase } from '../lib/dayPhase';
 import { addDays, formatMinutes, toLocalDate, weekStart } from '../lib/date';
@@ -25,19 +29,20 @@ import { perksOf } from '../lib/level';
 import { useReading } from '../lib/ReadingContext';
 import { useSession } from '../lib/SessionContext';
 import { setSoundOn, sfx, soundOn } from '../lib/sfx';
-import { PLACE_EVENT, takePlace } from '../lib/shop';
+import { PLACE_EVENT, takePlace, useShopOpen } from '../lib/shop';
 import { VIEW_EVENT } from '../lib/tour';
-import type { Book, Course } from '../lib/types';
+import type { Book, Course, UserRoom } from '../lib/types';
 import { hasWebGL } from '../lib/webgl';
 import {
   applyAction,
   canPlaceAt,
   canRotate,
   daysIn,
-  defaultCover,
   isIndoor,
   isRoom,
-  roomById,
+  kindById,
+  roomOf,
+  roomSpace,
   emptyLayout,
   fitsSpace,
   footprint,
@@ -72,6 +77,7 @@ import { entryOf, regionAt, regionOf, worldPlan, type RegionId, type WorldPlan }
 
 const WorldView = lazy(() => import('../components/world3d/WorldView'));
 const Explore = lazy(() => import('../components/forest3d/Explore'));
+const AvatarEditor = lazy(() => import('../components/avatar/AvatarEditor'));
 
 const POS_KEY = 'ct-world-pos-v1';
 /** Eldeki ikram (DISPENSE) bu kadar sonra biter */
@@ -127,14 +133,10 @@ const PLACE_NAME: Record<string, string> = {
   room: 'Odan',
   library: 'Kütüphanen',
   garden: 'Bahçen',
-  kitchen: 'Mutfağın',
-  bedroom: 'Yatak odan',
-  bath: 'Banyon',
-  playroom: 'Oyun odan',
 };
 
 export default function World({ courses, goShop }: { courses: Course[]; goShop: () => void }) {
-  const { stats, saveSpace, collectStar } = useGame();
+  const { stats, saveSpace, collectStar, addRoom, updateRoom, deleteRoom } = useGame();
   const reading = useReading();
   const ses = useSession();
   const can3D = useMemo(hasWebGL, []);
@@ -161,16 +163,33 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const [book, setBook] = useState<Book | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
+  const exploringRef = useRef(false);
+  exploringRef.current = exploring;
+  /** Gezintideyken dükkândan "Hemen yerleştir": n her istekte artar */
+  const [exploreCarry, setExploreCarry] = useState<{ item: string; n: number } | null>(null);
+  const shopOpen = useShopOpen();
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
   // Yerleştirme: envanterin açık olduğu alan; taşınan eşyanın alanı (taslak: eşya çıkarılmış hâli); elde tutulan
   const [inv, setInv] = useState<SpaceId | null>(null);
   const [moving, setMoving] = useState<{ space: SpaceId; layout: SpaceLayout } | null>(null);
   const [held, setHeld] = useState<{ item: string; rot: number; from?: PlacedItem } | null>(null);
-  const [tab, setTab] = useState('hepsi');
   const [grown, setGrown] = useState<string[]>(() => JSON.parse(read(GROWN_KEY) ?? '[]') as string[]);
   // Oynarken: seçenekleri açık eşya, otur/yat isteği, oturulan eşya, aç/kapa, TV kanalları
   const [using, setUsing] = useState<ItemRef | null>(null);
   const [action, setAction] = useState<{ space: SpaceId; index: number; n: number; stand?: boolean } | null>(null);
+  /** Kullan: karakter eşyanın yanına yürür, varınca bekleyen eylem yapılır */
+  const [reach, setReach] = useState<{ space: SpaceId; index: number; n: number } | null>(null);
+  const pending = useRef<ActionId | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  // Karakter menüsü: açık mı, hareket isteği (dans/el salla/dur), dans ediyor mu, görünüş düzenleyici, hayvan seçimi
+  const [me, setMe] = useState(false);
+  const [emote, setEmote] = useState<{ kind: 'dance' | 'wave' | null; n: number } | null>(null);
+  const [dancing, setDancing] = useState(false);
+  const [lookTab, setLookTab] = useState<LookTab | null>(null);
+  const [petPick, setPetPick] = useState(false);
+  /** Oda ekle / değiştir penceresi; şekli değişen oda (sığmayan eşyaları envantere döndürmek için bir kez kaydedilir) */
+  const [builder, setBuilder] = useState<{ room?: UserRoom } | null>(null);
+  const reshaped = useRef<SpaceId | null>(null);
   const [posedAt, setPosedAt] = useState<ItemRef | null>(null);
   /** Depo penceresi açık eşya; karakterin elindeki ikram (DISPENSE) */
   const [storage, setStorage] = useState<ItemRef | null>(null);
@@ -235,8 +254,8 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
     };
   }, [full]);
 
-  const best = stats?.bestStreak ?? 0;
-  const ctx: WorldCtx = useMemo(() => ({ map: stats?.world.map ?? CFG.world.maps[0].id, today, best }), [stats?.world.map, today, best]);
+  const rooms = stats?.rooms;
+  const ctx: WorldCtx = useMemo(() => ({ map: stats?.world.map ?? CFG.world.maps[0].id, today, rooms: rooms ?? [] }), [stats?.world.map, today, rooms]);
   const plan = useMemo(() => worldPlan(ctx, months), [ctx, months]);
   const [start] = useState(() => startTile(plan, startShelf));
   // Sahne yüklenmeden de bulunduğun alan bilinsin (sekme, envanter)
@@ -268,6 +287,18 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, stats?.spaces, stats?.owned, stats?.unlock, ctx, allSpaces]);
+  // Şekli değişen odada sığmayan eşyalar bir kez kaydedilip envantere döner
+  useEffect(() => {
+    const sp = reshaped.current;
+    if (!sp || !stats || !roomOf(sp, ctx)) return;
+    reshaped.current = null;
+    const raw = stats.spaces[sp];
+    const now = layouts[sp];
+    if (raw && now && JSON.stringify(raw) !== JSON.stringify(now)) {
+      saveSpace(sp, now).catch(() => {});
+      setToast('Yeni şekle sığmayan eşyalar envanterine döndü.');
+    }
+  }, [layouts]); // eslint-disable-line react-hooks/exhaustive-deps
   const invLayout = inv ? layouts[inv] : undefined;
   // Sahnedeki yerleştirme katmanı: taşınan eşyanın taslağı ya da envanterin alanı
   const edit = useMemo(() => moving ?? (inv ? { space: inv, layout: invLayout ?? emptyLayout(inv) } : null), [moving, inv, invLayout]);
@@ -299,7 +330,6 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   useEffect(() => {
     if (!inv || held || hereSpace === inv) return;
     setInv(hereSpace);
-    setTab('hepsi');
   }, [hereSpace]); // eslint-disable-line react-hooks/exhaustive-deps
   // Esc: elde tutulanı bırak (taşınan eşya yerinde kalır), yoksa tam ekrandan çık
   useEffect(() => {
@@ -326,15 +356,18 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
     setGrown(next);
     write(GROWN_KEY, JSON.stringify(next));
   };
+  const doEmote = (kind: 'dance' | 'wave' | null) => {
+    setEmote((e) => ({ kind, n: (e?.n ?? 0) + 1 }));
+    setDancing(kind === 'dance');
+    setMe(false);
+  };
   const goTo = (to: RegionId) => {
     if (held) return;
     setUsing(null);
+    setMe(false);
+    setDancing(false);
     const r = plan.regions.find((x) => x.id === to);
     if (r?.locked && isMonthSpace(to)) setToast(`🔒 ${formatMonth(to.slice(2))} bahçesi 1 ${formatMonth(to.slice(2))} günü açılır.`);
-    if (isRoom(to) && stats.bestStreak < roomById(to).streak) {
-      const d = roomById(to);
-      return setToast(`🔒 ${d.icon} ${d.name} ${d.streak} günlük seriyle açılır. En iyi serin: ${stats.bestStreak} gün.`);
-    }
     setGoal((g) => ({ to, n: (g?.n ?? 0) + 1 }));
   };
 
@@ -356,20 +389,17 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   // ---------- Envanter ----------
   const usedAll = (id: string) => Object.values(allSpaces).reduce((n, l) => n + usedIn(l, id), 0);
   const free = (it: Item) => owned(it) - usedAll(it.id);
-  const inventory = inv
-    ? ITEMS.filter((it) => !!it.placement && fitsSpace(it, inv))
-        .map((it) => ({ it, n: free(it) }))
-        .filter((x) => x.n > 0)
-    : [];
-  const invTabs = CATEGORIES.filter((c) => inventory.some((x) => c.cats.includes(x.it.category)));
-  const shown = tab === 'hepsi' ? inventory : inventory.filter((x) => CATEGORIES.find((c) => c.id === tab)?.cats.includes(x.it.category));
-  const coverings = (cat: 'zemin' | 'duvar') => ITEMS.filter((it) => it.category === cat && owned(it) > 0);
+  /** Bir alana konabilecek, boşta duran eşyalar */
+  const inventoryFor = (sp: SpaceId) =>
+    ITEMS.filter((it) => !!it.placement && fitsSpace(it, sp))
+      .map((it) => ({ it, n: free(it) }))
+      .filter((x) => x.n > 0);
   const openInv = (sp: SpaceId) => {
     setInv(sp);
     setMoving(null);
     setHeld(null);
     setUsing(null);
-    setTab('hepsi');
+    setMe(false);
   };
   /** Envanterden bir eşyayı eline al */
   const hold = (it: Item) => setHeld({ item: it.id, rot: it.rotations?.[0] ?? 0 });
@@ -396,8 +426,20 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
       setHeld(null);
     } else if (!it.repeat || free(it) <= 1) setHeld(null); // Habbo gibi: çit, yol elde kalır
   };
-  /** Dükkândan "Hemen yerleştir": bulunduğun alanın envanteri eşya elde açılır */
+  /** Gezintide envanterden konan eşya (öndeki karo); hata metni döner */
+  const placeItem = (sp: SpaceId, p: PlacedItem): string | null => {
+    const it = itemById(p.item);
+    if (!it) return 'Eşya bulunamadı.';
+    if (free(it) <= 0) return `Bütün ${it.name} eşyaların yerleştirilmiş.`;
+    const l = layoutOf(sp);
+    if (!canPlaceAt(sp, l, ctx, p)) return 'Buraya konamaz.';
+    persist(sp, { ...l, items: [...l.items, p] });
+    sfx.place();
+    return null;
+  };
+  /** Dükkândan "Hemen yerleştir": bulunduğun alanın envanteri eşya elde açılır (gezintide eşya karakterin önünde) */
   const placeFromShop = (id: string) => {
+    if (exploringRef.current) return setExploreCarry((c) => ({ item: id, n: (c?.n ?? 0) + 1 }));
     const it = itemById(id);
     if (!it || !hereSpace) return setToast('Eşyanı yerleştirmek için evine ya da bahçene git, sonra 🎒 Envanter.');
     if (!fitsSpace(it, hereSpace)) return setToast(it.placement === 'outdoor' ? `${it.name} dışarıya konur: bahçene git, sonra 🎒 Envanter.` : `${it.name} evin içine konur: odana git, sonra 🎒 Envanter.`);
@@ -482,7 +524,15 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const runAction = (id: ActionId) => {
     if (!using) return;
     if (id === 'sit' || id === 'lie' || id === 'swing' || id === 'stand') return setAction((a) => ({ ...using, n: (a?.n ?? 0) + 1, stand: id === 'stand' }));
-    doAction(using, id);
+    // Önce yanına yürü, varınca yap (dans biter)
+    setDancing(false);
+    pending.current = id;
+    setReach((a) => ({ ...using, n: (a?.n ?? 0) + 1 }));
+  };
+  const onReached = (r: ItemRef) => {
+    const id = pending.current;
+    pending.current = null;
+    if (id) doAction(r, id);
   };
   // Depo penceresi: içindekiler ve envanterde boşta duran, içine konabilecek eşyalar
   const storePlaced = storage ? placedAt(storage) : undefined;
@@ -497,12 +547,13 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const maps = stats.maps;
   const nextMap = maps.next;
   const toNext = nextMap ? nextMap.hours * 60 - stats.trustedMinutes : 0;
-  const placeName = (sp: SpaceId) => (isMonthSpace(sp) ? `${formatMonth(sp.slice(2))} bahçen` : PLACE_NAME[sp]);
+  const placeName = (sp: SpaceId) => (isMonthSpace(sp) ? `${formatMonth(sp.slice(2))} bahçen` : isRoom(sp) ? (roomOf(sp, ctx)?.name ?? 'Odan') : PLACE_NAME[sp]);
+  const hereRoom = here && isRoom(here) ? roomOf(here, ctx) : undefined;
   const tabOn = (v: 'room' | 'library' | 'garden' | 'month') => (v === 'month' ? !!hereMonth || here === 'trail' : v === 'room' ? here === 'room' || (!!here && isRoom(here)) : here === v);
   const atHome = !!here && (here === 'room' || isRoom(here));
   const chipMonth = hereMonth ?? (months.includes(thisMonth) ? thisMonth : months.at(-1)!);
   const monthTrees = stats.forest.filter((t) => t.month === chipMonth);
-  const idle = !using && !inv && !held;
+  const idle = !using && !inv && !held && !me;
 
   const fallback = (
     <section className="card">
@@ -548,26 +599,30 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
           ))}
         </div>
 
-        {atHome && !held && (stats.rooms.unlocked.length > 0 || stats.rooms.next) && (
+        {atHome && !held && (
           <div className="month-bar" role="group" aria-label="Evin odalarına git">
             <div className="month-chips">
               <button className={`chip${here === 'room' ? ' on' : ''}`} aria-pressed={here === 'room'} onClick={() => goTo('room')}>
                 🛋️ Odam
               </button>
-              {[...stats.rooms.unlocked, ...(stats.rooms.next ? [stats.rooms.next] : [])].map((r) => {
-                const open = stats.bestStreak >= r.streak;
+              {stats.rooms.map((r) => {
+                const sp = roomSpace(r.id);
                 return (
-                  <button key={r.id} className={`chip${here === r.id ? ' on' : ''}${open ? '' : ' locked'}`} aria-pressed={here === r.id} onClick={() => goTo(r.id)}>
-                    {open ? r.icon : '🔒'} {r.name}
-                    {!open && (
-                      <span className="muted">
-                        {' '}
-                        {stats.bestStreak}/{r.streak}
-                      </span>
-                    )}
+                  <button key={r.id} className={`chip${here === sp ? ' on' : ''}`} aria-pressed={here === sp} onClick={() => goTo(sp)}>
+                    {kindById(r.kind).icon} {r.name}
                   </button>
                 );
               })}
+              {hereRoom && (
+                <button className="chip" onClick={() => setBuilder({ room: hereRoom })} aria-label={`${hereRoom.name}: şeklini değiştir`}>
+                  ✏️ Odayı değiştir
+                </button>
+              )}
+              {stats.rooms.length < CFG.world.maxRooms && (
+                <button className="chip add" onClick={() => setBuilder({})}>
+                  ➕ Oda ekle
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -616,14 +671,23 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                 edit={edit}
                 held={held}
                 onDrop={drop}
-                onAim={() => {
-                  setUsing(null);
-                  setInv(null);
-                }}
                 onUse={(sp, i) => {
                   sfx.pop();
+                  setInv(null);
+                  setMe(false);
                   setUsing({ space: sp, index: i });
                 }}
+                reach={reach}
+                onReached={onReached}
+                pop={popRef}
+                avatarMenu={me && !using}
+                onAvatar={() => {
+                  sfx.pop();
+                  setUsing(null);
+                  setMe((m) => !m);
+                }}
+                emote={emote}
+                pets={stats.equipped.pets}
                 using={using}
                 action={action}
                 onPosed={setPosedAt}
@@ -642,7 +706,11 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                   pos.current = t;
                   write(POS_KEY, JSON.stringify(t));
                 }}
-                onFloor={() => setUsing(null)}
+                onFloor={() => {
+                  setUsing(null);
+                  setMe(false);
+                  setDancing(false);
+                }}
               />
             </Suspense>
             <div className="world-top">
@@ -691,46 +759,104 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
               </div>
             )}
             {using && useDef && usedItem && !held && (
-              <div className="use-bar" role="toolbar" aria-label={useDef.name}>
-                <span className="use-name">
-                  {useDef.icon} <strong>{useDef.name}</strong>
-                </span>
-                {actions.length ? (
-                  actions.map((a, k) => (
-                    <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runAction(a.id)}>
-                      {a.label}
+              <Pop
+                ref={popRef}
+                title={
+                  <>
+                    {useDef.icon} <strong>{useDef.name}</strong>
+                  </>
+                }
+                onClose={() => setUsing(null)}
+              >
+                {(actions.length > 0 || (useDef.fx === 'tv' && useOn)) && (
+                  <div className="pop-row">
+                    {actions.map((a, k) => (
+                      <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runAction(a.id)}>
+                        {a.label}
+                      </button>
+                    ))}
+                    {useDef.fx === 'tv' && useOn && (
+                      <button className="btn sm" onClick={() => nextChannel(using)}>
+                        🔁 {(channels[useKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="pop-row edit">
+                  <button className="btn sm" onClick={() => startMove(using)}>
+                    ✋ Taşı
+                  </button>
+                  {canRotate(useDef) && (
+                    <button
+                      className="btn sm"
+                      onClick={() => {
+                        const err = rotateItem(using);
+                        if (err) setToast(err);
+                      }}
+                    >
+                      ↻ Döndür
                     </button>
-                  ))
-                ) : (
-                  <button className="btn sm primary" disabled>
-                    ▶ Kullan
+                  )}
+                  <button className="btn sm" onClick={() => removeItem(using)}>
+                    📦 Kaldır
                   </button>
-                )}
-                <button className="btn sm" onClick={() => startMove(using)}>
-                  ✋ Taşı
-                </button>
-                <button
-                  className="btn sm"
-                  disabled={!canRotate(useDef)}
-                  onClick={() => {
-                    const err = rotateItem(using);
-                    if (err) setToast(err);
-                  }}
-                >
-                  ↻ Döndür
-                </button>
-                <button className="btn sm" onClick={() => removeItem(using)}>
-                  📦 Kaldır
-                </button>
-                {useDef.fx === 'tv' && useOn && (
-                  <button className="btn sm" onClick={() => nextChannel(using)}>
-                    🔁 {(channels[useKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
+                </div>
+              </Pop>
+            )}
+            {me && !using && !held && (
+              <Pop
+                ref={popRef}
+                title={
+                  <>
+                    🙂 <strong>Ben</strong>
+                  </>
+                }
+                onClose={() => setMe(false)}
+              >
+                <div className="pop-row">
+                  {dancing ? (
+                    <button className="btn sm primary" onClick={() => doEmote(null)}>
+                      ⏹ Dur
+                    </button>
+                  ) : (
+                    <button className="btn sm primary" onClick={() => doEmote('dance')}>
+                      💃 Dans et
+                    </button>
+                  )}
+                  <button className="btn sm" onClick={() => doEmote('wave')}>
+                    👋 El salla
                   </button>
-                )}
-                <button className="btn sm ghost" onClick={() => setUsing(null)} aria-label="Kapat">
-                  ✕
-                </button>
-              </div>
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      setMe(false);
+                      setPetPick(true);
+                    }}
+                  >
+                    🐾 Hayvanımı yanıma al
+                  </button>
+                </div>
+                <div className="pop-row edit">
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      setMe(false);
+                      setLookTab('top');
+                    }}
+                  >
+                    👕 Kıyafet değiştir
+                  </button>
+                  <button
+                    className="btn sm"
+                    onClick={() => {
+                      setMe(false);
+                      setLookTab('govde');
+                    }}
+                  >
+                    🙂 Görünüşüm
+                  </button>
+                </div>
+              </Pop>
             )}
             {held?.from && heldItem && (
               <div className="use-bar" role="toolbar">
@@ -748,9 +874,19 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
               </div>
             )}
             {inv && (
-              <div className="edit-drawer" role="region" aria-label="Envanter">
-                <div className="edit-tools">
-                  {held && heldItem ? (
+              <InventoryDrawer
+                space={inv}
+                layout={invLayout}
+                ctx={ctx}
+                items={inventoryFor(inv)}
+                owned={owned}
+                held={held?.item}
+                onHold={hold}
+                onCover={(slot, id) => invLayout && persist(inv, { ...invLayout, [slot]: id })}
+                onClose={closeEdit}
+                onShop={goShop}
+                tools={
+                  held && heldItem ? (
                     <>
                       <span className="grow">
                         {heldItem.icon} <strong>{heldItem.name}</strong>{' '}
@@ -769,64 +905,9 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                     <span className="grow">
                       🎒 <strong>{placeName(inv)}</strong> <span className="muted small">· bir eşya seç, sonra karoya dokun</span>
                     </span>
-                  )}
-                  <button className="btn sm ghost" onClick={closeEdit} aria-label="Envanteri kapat">
-                    ✕
-                  </button>
-                </div>
-                {isIndoor(inv) && invLayout && (
-                  <div className="cover-row">
-                    {(['zemin', 'duvar'] as const).map((cat) => (
-                      <span key={cat} className="cover-group">
-                        <span className="muted small">{cat === 'zemin' ? 'Zemin' : 'Duvar'}</span>
-                        {coverings(cat).map((it) => {
-                          const slot = cat === 'zemin' ? 'floor' : 'wall';
-                          const on = (invLayout[slot] ?? defaultCover(inv, slot)) === it.id;
-                          return (
-                            <button
-                              key={it.id}
-                              className={`swatch${on ? ' on' : ''}${it.pattern ? ' pat' : ''}`}
-                              title={it.name}
-                              aria-label={it.name}
-                              aria-pressed={on}
-                              style={{ background: it.color2 ? `linear-gradient(135deg, ${it.color} 50%, ${it.color2} 50%)` : it.color }}
-                              onClick={() => persist(inv, { ...invLayout, [slot]: it.id })}
-                            />
-                          );
-                        })}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {invTabs.length > 1 && (
-                  <div className="inv-tabs" role="tablist" aria-label="Envanter türleri">
-                    {[{ id: 'hepsi', name: 'Hepsi', icon: '✨' }, ...invTabs].map((c) => (
-                      <button key={c.id} role="tab" aria-selected={tab === c.id} className={tab === c.id ? 'on' : ''} onClick={() => setTab(c.id)}>
-                        {c.icon} {c.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="inventory">
-                  {inventory.length === 0 ? (
-                    <p className="muted small">
-                      Burada koyabileceğin eşya yok. <button className="link" onClick={goShop}>Dükkândan</button> alabilirsin.
-                    </p>
-                  ) : (
-                    shown
-                      .sort((a, b) => groupOf(a.it).localeCompare(groupOf(b.it)))
-                      .map(({ it, n }) => (
-                        <button key={it.id} className={`inv-item${held?.item === it.id ? ' on' : ''}`} title={it.sub ? SUBS[it.sub] : undefined} onClick={() => hold(it)}>
-                          <span aria-hidden>
-                            <ItemIcon item={it} />
-                          </span>
-                          <span className="inv-name">{it.name}</span>
-                          {n > 1 && n < 1000 && <span className="inv-n">×{n}</span>}
-                        </button>
-                      ))
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             )}
             {idle && (
               <div className="world-actions">
@@ -851,7 +932,7 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                 </button>
               </div>
             )}
-            {idle && <span className="world-hint">Bir yere dokun, yürüsün · bir eşyaya dokun: kullan, taşı, döndür, kaldır</span>}
+            {idle && <span className="world-hint">Dokun: yürü · eşyaya: seçenekler · karaktere: menü</span>}
           </div>
         ) : (
           fallback
@@ -890,14 +971,8 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
           ))}
         </div>
         <p className="small">
-          {stats.rooms.next ? (
-            <>
-              Evinde yeni oda: {stats.rooms.next.icon} <strong>{stats.rooms.next.name}</strong> {stats.rooms.next.streak} günlük seriyle açılır (en iyi serin {stats.bestStreak} gün). Açılan
-              oda kalıcıdır.
-            </>
-          ) : (
-            <>Evinin bütün odalarını açtın! 🏠</>
-          )}
+          Evinde {stats.rooms.length ? `${stats.rooms.length} oda daha var` : 'henüz ek oda yok'}: 🏠 Odam sekmesinden <strong>➕ Oda ekle</strong> ile istediğin şekilde yeni odalar yapabilirsin
+          (en çok {CFG.world.maxRooms}).
         </p>
         <p className="small">
           Bahçelerine gelenler: {stats.creatures.length ? stats.creatures.map((c) => c.icon).join(' ') : <span className="muted">2 gün çalışınca ilk kelebekler gelir.</span>}
@@ -906,6 +981,43 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
 
       {tree && <DaySheet date={tree.date} tree={tree} minutes={stats.dayTotals.get(tree.date) ?? tree.minutes} courses={courses} onClose={() => setTree(null)} />}
 
+      {lookTab && (
+        <Suspense fallback={null}>
+          <AvatarEditor initialTab={lookTab} onClose={() => setLookTab(null)} />
+        </Suspense>
+      )}
+      {petPick && <PetPicker onClose={() => setPetPick(false)} />}
+      {builder && (
+        <RoomBuilder
+          room={builder.room}
+          count={stats.rooms.length}
+          onClose={() => setBuilder(null)}
+          onSave={async (r) => {
+            if (builder.room) {
+              const sp = roomSpace(builder.room.id);
+              if (builder.room.shape !== r.shape || builder.room.size !== r.size) reshaped.current = sp;
+              await updateRoom(builder.room.id, r);
+              setToast(`${r.name} güncellendi.`);
+            } else {
+              const row = await addRoom(r);
+              sfx.plant();
+              setToast(`${kindById(r.kind).icon} ${r.name} eklendi! Karakterin oraya yürüyor.`);
+              setGoal((g) => ({ to: roomSpace(row.id), n: (g?.n ?? 0) + 1 }));
+            }
+          }}
+          onDelete={
+            builder.room &&
+            (async () => {
+              const room = builder.room!;
+              closeEdit();
+              setUsing(null);
+              if (here === roomSpace(room.id)) setGoal((g) => ({ to: 'room', n: (g?.n ?? 0) + 1 }));
+              await deleteRoom(room.id);
+              setToast(`${room.name} silindi, eşyaları envanterine döndü.`);
+            })
+          }
+        />
+      )}
       {shelf && <ShelfView books={reading.books} onClose={() => setShelf(false)} />}
       {book && <BookCard book={book} onClose={() => setBook(null)} />}
       {storage && storeDef && storePlaced && (
@@ -944,7 +1056,7 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
               onStar={collectStar}
               onTree={(t) => setTree(t)}
               onClose={() => setExploring(false)}
-              paused={!!tree || shelf || !!book || !!storage}
+              paused={!!tree || shelf || !!book || !!storage || shopOpen || !!lookTab || petPick}
               holding={holding}
               channels={channels}
               tv={tv}
@@ -956,6 +1068,14 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
               onRemove={removeItem}
               onMove={moveItem}
               toast={toast}
+              pets={stats.equipped.pets}
+              inventoryFor={inventoryFor}
+              owned={owned}
+              onCover={(sp, slot, id) => persist(sp, { ...layoutOf(sp), [slot]: id })}
+              onPlace={placeItem}
+              onShop={goShop}
+              carryNew={exploreCarry}
+              onMe={(k) => (k === 'pets' ? setPetPick(true) : setLookTab(k))}
             />
           </Suspense>
         </div>

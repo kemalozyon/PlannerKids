@@ -11,15 +11,15 @@ import type { DayPhase } from '../../lib/dayPhase';
 import { has, itemById } from '../../lib/catalog';
 import { CFG, type FixedTile, type MapDef } from '../../lib/config';
 import type { Book } from '../../lib/types';
-import { colorOf, defaultCover, emptyLayout, fixedDefs, fixedTiles, footSize, isIndoor, isMonthSpace, isOn, isOpen, isRoom, powerKey, roomById, supportOf, type DayTree, type SpaceId, type SpaceLayout, type Tile } from '../../lib/world';
-import { regionOf, type Region, type RegionId, type WorldPlan } from '../../lib/worldPlan';
+import { cellRects, colorOf, defaultCover, emptyLayout, fixedDefs, fixedTiles, footSize, isIndoor, isMonthSpace, isOn, isOpen, powerKey, supportOf, type DayTree, type SpaceId, type SpaceLayout, type Tile } from '../../lib/world';
+import { regionAt, regionOf, type Region, type RegionId, type WorldPlan } from '../../lib/worldPlan';
 import type { Texture } from 'three';
 import { tvTexture, windowTexture, type TvData } from './art';
 import { capacity } from './Books';
 import HouseShell from './House';
 import { ItemModel, OnSurface } from './items';
-import { Creatures, MonthGarden, Sign, Terrain, Trail, Yard } from './Outdoor';
-import Room, { WALL_H } from './Room';
+import { Creatures, MonthGarden, Terrain, Trail, Yard } from './Outdoor';
+import Room from './Room';
 
 export interface WorldSceneProps {
   plan: WorldPlan;
@@ -83,10 +83,19 @@ function WorldScene(p: WorldSceneProps) {
   const { plan, map } = p;
   const room = regionOf(plan, 'room')!;
   const lib = regionOf(plan, 'library')!;
-  // Evin açık odaları (kütüphane, oda, seriyle açılanlar) ve sıradaki kilitli oda
-  const indoor = plan.regions.filter((r) => isIndoor(r.id) && !r.locked);
-  const lockedRooms = plan.regions.filter((r) => isRoom(r.id) && r.locked);
+  // Evin odaları (kütüphane, oda, eklenenler): karoları dış duvarlar için, eklenenlerin zemini düz çatı için
+  const indoor = plan.regions.filter((r) => isIndoor(r.id));
   const houseW = Math.max(...indoor.map((r) => r.x + r.w));
+  const house = useMemo(() => {
+    const cells = new Set<string>();
+    const annex: [number, number, number, number][] = [];
+    for (const r of plan.regions) {
+      if (!isIndoor(r.id)) continue;
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (regionAt(plan, { x, y }) === r) cells.add(`${x},${y}`);
+      if (r.cells) for (const [x, y, w, h] of cellRects(r.cells)) annex.push([r.x + x, r.y + y, w, h]);
+    }
+    return { cells, annex };
+  }, [plan]);
   const hereR = p.here ? plan.regions.find((r) => r.id === p.here && isIndoor(r.id)) : undefined;
   const yard = regionOf(plan, 'garden')!;
   const trails = plan.regions.filter((r) => r.id === 'trail');
@@ -136,12 +145,12 @@ function WorldScene(p: WorldSceneProps) {
           lowLeft={!!hereR && hereR.x + hereR.w === r.x}
         />
       ))}
-      {lockedRooms.map((r) => (
-        <LockedRoom key={r.id} r={r} />
-      ))}
       <HouseShell
-        w={houseW - lib.x}
+        w={room.x + room.w - lib.x}
         h={room.h}
+        cells={house.cells}
+        houseW={houseW}
+        annex={house.annex}
         doorX={room.x + (front?.x ?? 0)}
         theme={map.theme}
         open={p.open}
@@ -226,8 +235,9 @@ function IndoorRegion(
       <Room
         w={r.w}
         h={r.h}
-        floor={itemById(layout.floor ?? defaultCover(space, 'floor'))}
-        wall={itemById(layout.wall ?? defaultCover(space, 'wall'))}
+        floor={itemById(layout.floor ?? defaultCover(space, 'floor', p.plan.ctx))}
+        wall={itemById(layout.wall ?? defaultCover(space, 'wall', p.plan.ctx))}
+        rects={r.cells ? cellRects(r.cells) : undefined}
         lowLeft={p.lowLeft}
         fixed={defs}
         onDoor={(d: FixedTile) => p.walkLocal(r, { x: d.x, y: d.y })}
@@ -237,50 +247,6 @@ function IndoorRegion(
         view={p.view}
       />
       {p.detail && <Items {...p} space={space} layout={layout} caseBooks={caseBooks} reach={reach} leftWall={!p.lowLeft} />}
-    </group>
-  );
-}
-
-/** Seriyle açılacak oda: atılmış temel, yarım duvar dipleri, iskele ve tabela (girilmez) */
-function LockedRoom({ r }: { r: Region }) {
-  const def = roomById(r.id as Parameters<typeof roomById>[0]);
-  const posts = [
-    [0.2, 0.2],
-    [r.w - 0.2, 0.2],
-    [0.2, r.h - 0.2],
-    [r.w - 0.2, r.h - 0.2],
-  ];
-  return (
-    <group position={[r.x, 0, r.y]}>
-      <mesh position={[r.w / 2, 0.06, r.h / 2]} receiveShadow>
-        <boxGeometry args={[r.w, 0.12, r.h]} />
-        <meshStandardMaterial color="#bdb6a8" />
-      </mesh>
-      {/* Duvar dipleri: arka ve doğu */}
-      <mesh position={[r.w / 2, 0.3, 0.07]}>
-        <boxGeometry args={[r.w, 0.5, 0.14]} />
-        <meshStandardMaterial color="#d8cdb8" />
-      </mesh>
-      <mesh position={[r.w - 0.07, 0.3, r.h / 2]}>
-        <boxGeometry args={[0.14, 0.5, r.h]} />
-        <meshStandardMaterial color="#d8cdb8" />
-      </mesh>
-      {posts.map(([x, z], i) => (
-        <mesh key={i} position={[x, WALL_H / 2, z]} castShadow>
-          <boxGeometry args={[0.12, WALL_H, 0.12]} />
-          <meshStandardMaterial color="#c98a3c" />
-        </mesh>
-      ))}
-      <mesh position={[r.w / 2, WALL_H, 0.2]}>
-        <boxGeometry args={[r.w, 0.1, 0.1]} />
-        <meshStandardMaterial color="#c98a3c" />
-      </mesh>
-      {/* Kapalı kapı (batı duvarı, odadan) */}
-      <mesh position={[0.06, 0.95, 5.5]}>
-        <boxGeometry args={[0.08, 1.9, 0.9]} />
-        <meshStandardMaterial color="#8a5a34" />
-      </mesh>
-      <Sign x={r.w / 2} z={r.h / 2} y={1.6} text={`🔒 ${def.icon} ${def.name} · ${def.streak} günlük seri`} scale={1} />
     </group>
   );
 }

@@ -5,14 +5,15 @@
 // Oynarken: bir karoya dokununca karakter A* ile oraya yürür (uzun yolda koşar); alanlar arasında yalnızca
 // kapılardan geçer (worldPlan.ts → canStep). Eve girince çatı kalkar. Kitaplığa, kitaba ya da ağaca dokununca
 // yanına gidip penceresini açar.
-// Bir eşyaya dokununca eşya havalanır, karakter yanına yürür, varınca sayfa seçenekleri açar (kullan, taşı,
-// döndür, kaldır). Oturunca karakter eşyanın üstüne geçer; boş bir yere dokununca kalkar.
+// Bir eşyaya dokununca eşya havalanır ve seçenek balonu eşyanın yanında açılır (ScreenAnchor); karakter yerinden
+// kıpırdamaz. Yalnızca bir kullanım eylemi seçilince (reach) yanına yürür, varınca sayfa eylemi yapar. Oturunca
+// karakter eşyanın üstüne geçer; boş bir yere dokununca kalkar. Karaktere dokununca karakter menüsü açılır.
 // Yerleştirirken (envanter açık ya da eşya taşınırken: `edit`) karakter görünür kalır; bulunduğu alanın ızgarası
 // görünür, elde tutulan eşya imleçle gezer ve karoya (duvar süsü duvara) bırakılır. İmleç yalnızca düzenleme
 // katmanını (EditOverlay) yeniden çizer; dünya (WorldScene, memo) yerinde kalır.
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react';
 import { Vector3, type DirectionalLight } from 'three';
 import type { OrbitControls as OrbitImpl } from 'three-stdlib';
 import type { AvatarLook } from '../../lib/avatar';
@@ -25,6 +26,7 @@ import {
   blockedTiles,
   canPlaceAt,
   findPath,
+  footprint,
   isIndoor,
   powerKey,
   seatOf,
@@ -38,6 +40,8 @@ import {
 } from '../../lib/world';
 import { canStep, entryOf, regionAt, regionOf, worldBlocked, type Region, type RegionId, type WorldPlan } from '../../lib/worldPlan';
 import { modelUrl } from '../forest3d/models';
+import ScreenAnchor from './Anchor';
+import Companions from './Companion';
 import type { TvData } from './art';
 import Avatar, { pathSpeed, type Walker } from './Avatar';
 import { FootTiles, GridLines, HoverTile, ItemModel, OnSurface } from './items';
@@ -76,10 +80,21 @@ export interface WorldViewProps {
   held: { item: string; rot: number } | null;
   onDrop: (tile: Tile) => void;
   onTree: (t: DayTree) => void;
-  /** Bir eşyaya dokunuldu (karakter yanına yürümeye başladı) */
-  onAim: () => void;
-  /** Karakter dokunulan eşyanın yanına vardı: seçenekler açılsın */
+  /** Bir eşyaya dokunuldu: seçenekler açılsın (karakter yürümez) */
   onUse: (space: SpaceId, index: number) => void;
+  /** Kullanım eylemi için eşyanın yanına yürü: n her istekte artar; varınca onReached */
+  reach: { space: SpaceId; index: number; n: number } | null;
+  onReached: (r: ItemRef) => void;
+  /** Seçenek balonu (eşyanın ya da karakterin yanında durur) */
+  pop: RefObject<HTMLDivElement | null>;
+  /** Karakter menüsü açık (balon karakterin başında) */
+  avatarMenu: boolean;
+  /** Karaktere dokunuldu */
+  onAvatar: () => void;
+  /** Dans et / el salla / dur (kind null): n her istekte artar */
+  emote: { kind: 'dance' | 'wave' | null; n: number } | null;
+  /** Yanına alınan evcil hayvanlar (peşinden gelir) */
+  pets: string[];
   /** Boş bir yere dokunuldu (seçenekler kapanır) */
   onFloor: () => void;
   /** Seçenekleri açık eşya (biraz havalanır) */
@@ -170,7 +185,7 @@ function Scene(p: WorldViewProps) {
   const follow = useRef(true);
   const [here, setHere] = useState<RegionId | null>(() => regionAt(plan, p.start)?.id ?? null);
   const [center, setCenter] = useState<Tile>(p.start);
-  /** Dokunulan, karakterin yürüdüğü eşya (havalanır; varınca seçenekler açılır) */
+  /** Kullanmak için karakterin yürüdüğü eşya (havalanık kalır) */
   const [aim, setAim] = useState<ItemRef | null>(null);
   /** Bırakmanın hemen ardından gelen "click" karakteri yürütmesin */
   const droppedAt = useRef(0);
@@ -243,6 +258,31 @@ function Scene(p: WorldViewProps) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.action?.n]);
+  // Karakter menüsü: dans et, el salla, dur (oturuyorsa önce kalkar)
+  useEffect(() => {
+    const e = p.emote;
+    if (!e) return;
+    if (e.kind) standUp();
+    walker.current.emote = e.kind ? { kind: e.kind } : null;
+    invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.emote?.n]);
+  // Kullan: eşyanın yanına yürü (duvar eşyasında ya da yol yoksa hemen), varınca sayfa eylemi yapar
+  useEffect(() => {
+    const a = p.reach;
+    if (!a) return;
+    const it = layouts[a.space]?.items[a.index];
+    const item = it && itemById(it.item);
+    if (!it || !item) return;
+    const ref = { space: a.space, index: a.index };
+    const done = () => {
+      setAim(null);
+      p.onReached(ref);
+    };
+    setAim(ref);
+    if (item.placement === 'wall' || !walkToItem(a.space, a.index, done)) done();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.reach?.n]);
   // Oturduğu eşya taşınır ya da kalkarsa karakter de kalkar
   useEffect(() => {
     if (!posed) return;
@@ -313,15 +353,42 @@ function Scene(p: WorldViewProps) {
     if (!it || !item || !isTap(e as ThreeEvent<MouseEvent>)) return;
     e.stopPropagation();
     if (p.held) return;
-    // Yanına yürü; varınca seçenekler (duvar eşyasında ya da yol yoksa hemen)
-    p.onAim();
-    setAim({ space, index: i });
-    const show = () => {
-      setAim(null);
-      p.onUse(space, i);
-    };
-    if (item.placement === 'wall' || !walkToItem(space, i, show)) show();
+    // Karakter yürümez: seçenekler eşyanın yanında açılır
+    setAim(null);
+    p.onUse(space, i);
   });
+  const onAvatar = useStable(() => {
+    if (!p.held) p.onAvatar();
+  });
+  const leader = useStable(() => {
+    const w = walker.current;
+    const P = w.pose;
+    return P && !w.path.length ? { x: P.back.x, z: P.back.z, face: P.face } : { x: w.x, z: w.z, face: w.face };
+  });
+  // Balonun bağlandığı nokta: seçili eşyanın üstü ya da karakterin başı
+  const popAt = (): [number, number, number] | null => {
+    const u = p.using;
+    if (u) {
+      const r = regionOf(plan, u.space);
+      const it = layouts[u.space]?.items[u.index];
+      const item = it && itemById(it.item);
+      if (!r || !it || !item) return null;
+      if (item.placement === 'wall') {
+        const n = item.w ?? 1;
+        return it.y === -1 ? [r.x + it.x + n / 2, 2, r.y + 0.1] : [r.x + 0.1, 2, r.y + it.y + n / 2];
+      }
+      const f = footprint(item, it.x, it.y, it.rot);
+      const cx = f.reduce((s, t) => s + t.x, 0) / f.length + 0.5;
+      const cz = f.reduce((s, t) => s + t.y, 0) / f.length + 0.5;
+      return [r.x + cx, supportOf(layouts[u.space]!, it, u.index) != null ? 1.5 : 1.1, r.y + cz];
+    }
+    if (p.avatarMenu) {
+      const w = walker.current;
+      const P = w.pose;
+      return P && !w.path.length ? [P.x, P.y + 1.4, P.z] : [w.x, 1.75, w.z];
+    }
+    return null;
+  };
   const onBook = useStable((b: Book) => p.onBook(b));
   const onTree = useStable((t: DayTree) => p.onTree(t));
   const onGrown = useStable(() => p.onGrown());
@@ -372,7 +439,9 @@ function Scene(p: WorldViewProps) {
         <planeGeometry args={[plan.w, plan.h]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <Avatar look={p.look} walker={walker} onTile={onTile} holding={p.holding} />
+      <Avatar look={p.look} walker={walker} onTile={onTile} holding={p.holding} onTap={onAvatar} />
+      <Companions pets={p.pets} at={leader} />
+      {(p.using || p.avatarMenu) && <ScreenAnchor el={p.pop} at={popAt} id={p.using ? `${p.using.space}:${p.using.index}` : 'avatar'} />}
       {p.held && <HoldCursor />}
     </>
   );

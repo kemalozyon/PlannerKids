@@ -9,7 +9,7 @@ import { computeStreak } from './streak';
 import { levelOf, skillsOf, type LevelInfo, type Skill } from './level';
 import { CFG } from './config';
 import { normalizeEquipped } from './avatar';
-import { creaturesOf, dayTrees, mapsOf, roomsOf, type DayTree, type SpaceId, type SpaceLayout } from './world';
+import { creaturesOf, dayTrees, mapsOf, type DayTree, type SpaceId, type SpaceLayout } from './world';
 import {
   type WorldState,
   type Abandoned,
@@ -21,6 +21,7 @@ import {
   type PlanItem,
   type Reflection,
   type StudyLog,
+  type UserRoom,
 } from './types';
 
 export interface Badge {
@@ -51,6 +52,8 @@ export interface GameInput {
   courses?: Course[];
   /** Kayıtlı dünya alanları (0012 yoksa boş) */
   spaces?: Partial<Record<SpaceId, SpaceLayout>>;
+  /** Eklenen odalar (0023 yoksa boş) */
+  rooms?: UserRoom[];
   /** Kullanıcının haritası (0015 yoksa ilk harita) */
 }
 
@@ -76,8 +79,8 @@ export interface GameStats {
   /** Arazi: bugünkü aşama (saatten türer), açılanlar, sıradaki */
   world: WorldState;
   maps: ReturnType<typeof mapsOf>;
-  /** Seriyle açılan odalar (en iyi seriden) ve sıradaki */
-  rooms: ReturnType<typeof roomsOf>;
+  /** Çocuğun eklediği odalar, sırasıyla */
+  rooms: UserRoom[];
   /** Bahçelere gelen canlılar */
   creatures: ReturnType<typeof creaturesOf>;
   booksDone: number;
@@ -120,6 +123,7 @@ export function computeStats({
   books = [],
   courses = [],
   spaces = {},
+  rooms = [],
 }: GameInput): GameStats {
   const dayTotals = new Map<string, number>();
   for (const l of logs) dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes);
@@ -200,7 +204,7 @@ export function computeStats({
     treeCount: living.length,
     world: ws,
     maps,
-    rooms: roomsOf(bestStreak),
+    rooms: [...rooms].sort((a, b) => a.pos - b.pos),
     creatures: creaturesOf(living.length),
     booksDone,
     badges,
@@ -269,10 +273,6 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
   const wasMap = new Set(prev.maps.unlocked.map((m) => m.id));
   for (const m of next.maps.unlocked) {
     if (!wasMap.has(m.id)) out.push({ kind: 'land', icon: m.icon, title: `Arazin genişledi: ${m.name}!`, detail: `${m.desc} Eşyaların yerinde duruyor.` });
-  }
-  const wasRoom = new Set(prev.rooms.unlocked.map((r) => r.id));
-  for (const r of next.rooms.unlocked) {
-    if (!wasRoom.has(r.id)) out.push({ kind: 'land', icon: r.icon, title: `Evinde yeni oda açıldı: ${r.name}!`, detail: `${r.streak} günlük seriyle kazandın, artık hep senin. ${r.desc}` });
   }
   const wasCreature = new Set(prev.creatures.map((c) => c.id));
   for (const c of next.creatures) {

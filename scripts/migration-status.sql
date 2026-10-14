@@ -17,6 +17,8 @@ select m, ok from (values
   ('0017_world_v3', exists (select 1 from pg_proc where proname = 'world_ctx' and prosrc like '%mins%') and not exists (select 1 from pg_proc where proname = 'move_map')),
   ('0018_config', exists (select 1 from public.item_defs where id = 'dis:salincak')),
   ('0019_config', public.economy_cfg() #> '{world,rooms}' is not null),
-  ('0020_rooms', exists (select 1 from pg_proc where proname = 'economy_best_streak'))
+  ('0020_rooms', exists (select 1 from pg_proc where proname = 'economy_best_streak')),
+  ('0023_user_rooms', to_regclass('public.user_rooms') is not null),
+  ('0024_config', public.economy_cfg() #> '{world,roomShapes}' is not null)
 ) v(m, ok)
 order by m;

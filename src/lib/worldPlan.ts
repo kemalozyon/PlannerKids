@@ -2,8 +2,8 @@
 // (user_spaces, save_space), burada yan yana tek bir dünyaya yerleşir. Saf ve deterministik: 3D sahne,
 // gezinti ve testler aynı planı kullanır; hiçbir şey saklanmaz.
 //
-//   kütüphane | oda | mutfak | yatak odası | …   ← arka duvarlar y = 0'da hizalı (hepsi room.h derinliğinde);
-//                                                 seriyle açılan odalar ve sıradaki kilitli oda
+//   kütüphane | oda | eklenen odalar …   ← arka duvarlar y = 0'da hizalı; eklenen odalar sırayla, kendi
+//                                          şekliyle (kesik karolar hiçbir bölgeye ait değil: dışarısı)
 //   bahçe (evin önü)  ──yol──┬── 1. sıra ay bahçeleri (kapıları güneydeki yola açılır)
 //                            ├── 2. sıra ay bahçeleri
 //                            └── 2. yol
@@ -19,8 +19,11 @@ import {
   mapById,
   monthSpace,
   monthState,
-  roomsOf,
+  cellsOf,
+  inCells,
+  roomSpace,
   seasonMonths,
+  type RoomCells,
   type SpaceId,
   type SpaceLayout,
   type Tile,
@@ -38,6 +41,8 @@ export interface Region {
   h: number;
   /** Günü gelmemiş ay bahçesi: görünür ama girilmez */
   locked?: boolean;
+  /** Eklenen odanın şekli (kesikler bölgeye ait değil) */
+  cells?: RoomCells;
 }
 
 export interface WorldPlan {
@@ -73,12 +78,12 @@ export function worldPlan(ctx: WorldCtx, months: string[] = seasonMonths()): Wor
     { id: 'room', x: map.library.w, y: 0, w: map.room.w, h: H },
     { id: 'garden', x: 0, y: H, w: map.garden.w, h: map.garden.h },
   ];
-  // Seriyle açılan odalar odanın doğusunda sırayla; sıradaki kilitli oda da görünür (temeli atılmış)
-  const rooms = roomsOf(ctx.best);
+  // Eklenen odalar odanın doğusunda sırayla, kapıları (y 5) zincirlenir
   let rx = map.library.w + map.room.w;
-  for (const r of [...rooms.unlocked, ...(rooms.next ? [rooms.next] : [])]) {
-    regions.push({ id: r.id, x: rx, y: 0, w: r.w, h: H, locked: ctx.best < r.streak });
-    rx += r.w;
+  for (const r of ctx.rooms) {
+    const cells = cellsOf(r.shape, r.size);
+    regions.push({ id: roomSpace(r.id), x: rx, y: 0, w: cells.w, h: cells.h, cells });
+    rx += cells.w;
   }
   const gate = map.garden.fixed.find((f) => f.kind === 'gate');
   const open = months.filter((m) => monthState(m, ctx.today) !== 'out');
@@ -109,7 +114,8 @@ export function worldPlan(ctx: WorldCtx, months: string[] = seasonMonths()): Wor
   const h = Math.max(...regions.map((r) => r.y + r.h)) + 1;
   const grid = new Int16Array(w * h);
   regions.forEach((r, i) => {
-    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (!grid[y * w + x]) grid[y * w + x] = i + 1;
+    for (let y = r.y; y < r.y + r.h; y++)
+      for (let x = r.x; x < r.x + r.w; x++) if (!grid[y * w + x] && (!r.cells || inCells(r.cells, x - r.x, y - r.y))) grid[y * w + x] = i + 1;
   });
   const plan: WorldPlan = { ctx, regions, w, h, months: open, grid, links: new Set() };
   // Kapılar komşu bölgeye bağlanır

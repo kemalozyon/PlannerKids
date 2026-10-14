@@ -8,11 +8,25 @@
 // ve ay bahçeleri. Arazi toplam saatle yerinde büyür (aşama, saklanmaz). Her gün bir ağaç: çalışılan her gün o
 // ayın bahçesinde kendi yerine (takvim düzeni) bir ağaç dikilir.
 import { has, itemById, poseOf, type Item } from './catalog';
-import { CFG, type FixedTile, type HomeSpace, type MapDef, type MonthSpace, type RoomDef, type RoomId, type SpaceId, type SpeciesDef, type StageDef } from './config';
+import {
+  CFG,
+  type FixedTile,
+  type HomeSpace,
+  type MapDef,
+  type MonthSpace,
+  type RoomCells,
+  type RoomKind,
+  type RoomId,
+  type RoomShape,
+  type RoomSize,
+  type SpaceId,
+  type SpeciesDef,
+  type StageDef,
+} from './config';
 import { rng } from './rng';
-import type { Abandoned, StudyLog } from './types';
+import type { Abandoned, StudyLog, UserRoom } from './types';
 
-export type { SpaceId, HomeSpace, MonthSpace, RoomId, RoomDef };
+export type { SpaceId, HomeSpace, MonthSpace, RoomId, RoomKind, RoomShape, RoomSize, RoomCells, UserRoom };
 const W = CFG.world;
 
 export interface Tile {
@@ -54,8 +68,8 @@ export interface WorldCtx {
   map: string;
   /** Bugün (YYYY-MM-DD): aylık bahçelerin kilidi */
   today: string;
-  /** En iyi seri (gün): seriyle açılan odalar (sunucuda world_ctx.best) */
-  best: number;
+  /** Çocuğun eklediği odalar, sırasıyla (user_rooms) */
+  rooms: UserRoom[];
 }
 
 export const key = (x: number, y: number) => `${x},${y}`;
@@ -79,20 +93,84 @@ export function mapsOf(totalMinutes: number) {
   };
 }
 
-// ---------- Seriyle açılan odalar ----------
-export const ROOMS: RoomDef[] = W.rooms;
-export const isRoom = (s: string): s is RoomId => ROOMS.some((r) => r.id === s);
-export const roomById = (id: RoomId): RoomDef => ROOMS.find((r) => r.id === id)!;
-/** En iyi seriyle açılan odalar ve sıradaki (bir kez açılan oda kalıcıdır) */
-export function roomsOf(best: number) {
-  return { unlocked: ROOMS.filter((r) => best >= r.streak), next: ROOMS.find((r) => best < r.streak) ?? null };
+// ---------- Eklenen odalar ----------
+// Kilit yok: çocuk istediği kadar (en çok maxRooms) oda ekler; türünü (adı, simgesi, varsayılan kaplaması), şeklini
+// (Habbo modelleri gibi şablon) ve boyutunu seçer. Odalar odanın doğusunda sırayla durur (worldPlan.ts).
+export const ROOM_KINDS: RoomKind[] = W.rooms;
+export const ROOM_SHAPES: RoomShape[] = W.roomShapes;
+export const ROOM_SIZES: { id: RoomSize; name: string }[] = [
+  { id: 's', name: 'Küçük' },
+  { id: 'm', name: 'Orta' },
+  { id: 'l', name: 'Büyük' },
+];
+/** Oda kimliği: küçük harf ve rakam (sunucuda aynı kural) */
+export const isRoom = (s: string): s is RoomId => /^r:[a-z0-9]{1,12}$/.test(s);
+export const roomSpace = (id: string): RoomId => `r:${id}`;
+export const roomOf = (space: string, ctx: Pick<WorldCtx, 'rooms'>): UserRoom | undefined => ctx.rooms.find((r) => `r:${r.id}` === space);
+export const kindById = (id: string): RoomKind => ROOM_KINDS.find((k) => k.id === id) ?? ROOM_KINDS.at(-1)!;
+export const shapeById = (id: string): RoomShape | undefined => ROOM_SHAPES.find((s) => s.id === id);
+/** Şablonun bir boyuttaki ölçüsü ve kesikleri (bilinmeyen şablon: küçük kare) */
+export const cellsOf = (shape: string, size: RoomSize): RoomCells => shapeById(shape)?.sizes[size] ?? ROOM_SHAPES[0].sizes.s;
+/** Odanın zemini mi (kesik değil, alanın içinde) */
+export function inCells(c: RoomCells, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= c.w || y >= c.h) return false;
+  return !(c.cut ?? []).some(([cx, cy, cw, ch]) => x >= cx && x < cx + cw && y >= cy && y < cy + ch);
+}
+/** Odanın sabitleri: batı/doğu kapısı (zincir), arka duvarda pencere, kesikler (boşluk) */
+export function roomFixed(c: RoomCells): FixedTile[] {
+  return [
+    { kind: 'door', x: 0, y: 5, edge: 'w' },
+    { kind: 'door', x: c.w - 1, y: 5, edge: 'e' },
+    { kind: 'window', x: Math.max(1, Math.floor(c.w / 2) - 1), y: -1, w: 2 },
+    ...(c.cut ?? []).map(([x, y, w, h]): FixedTile => ({ kind: 'void', x, y, w, h })),
+  ];
+}
+/** Zemini dikdörtgenlere böler (satır satır, aynı aralıklı satırlar birleşir): 3D zemin ve dış duvarlar */
+export function cellRects(c: RoomCells): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  let open: [number, number, number, number][] = [];
+  for (let y = 0; y < c.h; y++) {
+    const runs: [number, number][] = [];
+    for (let x = 0; x < c.w; x++) {
+      if (!inCells(c, x, y)) continue;
+      const last = runs.at(-1);
+      if (last && last[0] + last[1] === x) last[1]++;
+      else runs.push([x, 1]);
+    }
+    const next: [number, number, number, number][] = [];
+    for (const [x, w] of runs) {
+      const same = open.find((r) => r[0] === x && r[2] === w);
+      if (same) {
+        same[3]++;
+        next.push(same);
+      } else next.push([x, y, w, 1]);
+    }
+    for (const r of open) if (!next.includes(r)) out.push(r);
+    open = next;
+  }
+  return [...out, ...open];
+}
+/** Oda bilgisi geçerli mi (sunucuda add_room/update_room ile aynı) */
+export function roomInputProblem(r: { kind: string; shape: string; size: string; name: string }): string | null {
+  if (!ROOM_KINDS.some((k) => k.id === r.kind)) return 'Oda türü yok';
+  if (!shapeById(r.shape)) return 'Oda şekli yok';
+  if (!ROOM_SIZES.some((z) => z.id === r.size)) return 'Oda boyu yok';
+  const n = (r.name ?? '').trim();
+  if (n.length < 1 || n.length > 24) return 'Odanın adı 1–24 harf olmalı';
+  return null;
+}
+/** Alanın zemin ölçüsü ve kesikleri (oda değilse dikdörtgen) */
+export function spaceCells(space: SpaceId, ctx: WorldCtx): RoomCells {
+  const r = isRoom(space) ? roomOf(space, ctx) : undefined;
+  if (r) return cellsOf(r.shape, r.size);
+  return spaceSize(space, ctx);
 }
 
 // ---------- Alanlar ----------
 export const isMonthSpace = (s: string): s is MonthSpace => /^m:\d{4}-\d{2}$/.test(s);
 export const monthSpace = (month: string): MonthSpace => `m:${month}`;
 export const isHome = (s: string): s is HomeSpace => s === 'room' || s === 'library' || s === 'garden' || isRoom(s);
-/** Evin içi: oda, kütüphane ve seriyle açılan odalar */
+/** Evin içi: oda, kütüphane ve eklenen odalar */
 export const isIndoor = (s: string) => s === 'room' || s === 'library' || isRoom(s);
 export const isOutdoor = (s: SpaceId) => s === 'garden' || isMonthSpace(s);
 
@@ -132,7 +210,10 @@ export function plotOf(month: string, day: number): Tile {
 
 export function spaceSize(space: SpaceId, ctx: WorldCtx): { w: number; h: number } {
   if (isMonthSpace(space)) return { w: W.monthGarden.w, h: W.monthGarden.h };
-  if (isRoom(space)) return { w: roomById(space).w, h: mapById(ctx.map).room.h };
+  if (isRoom(space)) {
+    const r = roomOf(space, ctx);
+    return r ? { w: cellsOf(r.shape, r.size).w, h: cellsOf(r.shape, r.size).h } : { w: 0, h: 0 };
+  }
   const s = mapById(ctx.map)[space];
   return { w: s.w, h: s.h };
 }
@@ -144,7 +225,10 @@ export function fixedDefs(space: SpaceId, ctx: WorldCtx): FixedTile[] {
     const plots: FixedTile[] = Array.from({ length: daysIn(month) }, (_, i) => ({ kind: 'plot', ...plotOf(month, i + 1), day: i + 1 }));
     return [...plots, { kind: 'gate', ...W.monthGarden.gate, edge: 's', to: 'garden' }];
   }
-  if (isRoom(space)) return roomById(space).fixed;
+  if (isRoom(space)) {
+    const r = roomOf(space, ctx);
+    return r ? roomFixed(cellsOf(r.shape, r.size)) : [];
+  }
   return mapById(ctx.map)[space].fixed;
 }
 
@@ -318,10 +402,7 @@ export function itemCounts(layout: SpaceLayout | undefined): Map<string, number>
 }
 
 function monthProblem(space: SpaceId, ctx: WorldCtx): string | null {
-  if (isRoom(space)) {
-    const r = roomById(space);
-    return ctx.best >= r.streak ? null : `${r.name} ${r.streak} günlük seriyle açılır`;
-  }
+  if (isRoom(space)) return roomOf(space, ctx) ? null : 'Bu oda yok';
   if (!isMonthSpace(space)) return null;
   const st = monthState(space.slice(2), ctx.today);
   return st === 'out' ? 'Bu ayın bahçesi yok' : st === 'locked' ? 'Bu ayın bahçesi henüz açılmadı' : null;
@@ -480,7 +561,7 @@ export function sanitizeLayout(
   };
   const out: SpaceLayout = { items: keep };
   if (isIndoor(space)) {
-    // Seriyle açılan odalarda kaplama seçilmemişse odanın kendi görünüşü kalır (defaultCover; sahip olmak gerekmez)
+    // Eklenen odalarda kaplama seçilmemişse odanın kendi görünüşü kalır (defaultCover; sahip olmak gerekmez)
     const floor = cover(layout.floor, 'zemin') ?? (isRoom(space) ? undefined : 'zemin:ahsap');
     const wall = cover(layout.wall, 'duvar') ?? (isRoom(space) ? undefined : 'duvar:krem');
     if (floor) out.floor = floor;
@@ -839,8 +920,9 @@ export const DEFAULT_ROOM: SpaceLayout = {
 };
 
 /** Kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez) */
-export function defaultCover(space: SpaceId, slot: 'floor' | 'wall'): string {
-  if (isRoom(space)) return roomById(space)[slot];
+export function defaultCover(space: SpaceId, slot: 'floor' | 'wall', ctx: Pick<WorldCtx, 'rooms'>): string {
+  const r = isRoom(space) ? roomOf(space, ctx) : undefined;
+  if (r) return kindById(r.kind)[slot];
   return slot === 'floor' ? 'zemin:ahsap' : 'duvar:krem';
 }
 

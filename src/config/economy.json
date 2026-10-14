@@ -157,8 +157,7 @@
               "kind": "door",
               "x": 11,
               "y": 5,
-              "edge": "e",
-              "to": "kitchen"
+              "edge": "e"
             },
             {
               "kind": "window",
@@ -257,8 +256,7 @@
               "kind": "door",
               "x": 13,
               "y": 5,
-              "edge": "e",
-              "to": "kitchen"
+              "edge": "e"
             },
             {
               "kind": "window",
@@ -371,8 +369,7 @@
               "kind": "door",
               "x": 15,
               "y": 5,
-              "edge": "e",
-              "to": "kitchen"
+              "edge": "e"
             },
             {
               "kind": "window",
@@ -505,8 +502,7 @@
               "kind": "door",
               "x": 17,
               "y": 5,
-              "edge": "e",
-              "to": "kitchen"
+              "edge": "e"
             },
             {
               "kind": "window",
@@ -646,8 +642,7 @@
               "kind": "door",
               "x": 19,
               "y": 5,
-              "edge": "e",
-              "to": "kitchen"
+              "edge": "e"
             },
             {
               "kind": "window",
@@ -777,124 +772,356 @@
         "id": "kitchen",
         "name": "Mutfak",
         "icon": "🍳",
-        "streak": 3,
-        "w": 8,
         "floor": "zemin:dama",
         "wall": "duvar:nane",
-        "desc": "Ocak, tezgâh ve buzdolabıyla kendi mutfağın.",
-        "fixed": [
-          {
-            "kind": "door",
-            "x": 0,
-            "y": 5,
-            "edge": "w",
-            "to": "room"
-          },
-          {
-            "kind": "door",
-            "x": 7,
-            "y": 5,
-            "edge": "e",
-            "to": "bedroom"
-          },
-          {
-            "kind": "window",
-            "x": 3,
-            "y": -1,
-            "w": 2
-          }
-        ]
+        "desc": "Ocak, tezgâh ve buzdolabıyla kendi mutfağın."
       },
       {
         "id": "bedroom",
         "name": "Yatak odası",
         "icon": "🛏️",
-        "streak": 7,
-        "w": 9,
         "floor": "zemin:mavi-hali",
         "wall": "duvar:pembe",
-        "desc": "Rahat bir yatak odası.",
-        "fixed": [
-          {
-            "kind": "door",
-            "x": 0,
-            "y": 5,
-            "edge": "w",
-            "to": "kitchen"
-          },
-          {
-            "kind": "door",
-            "x": 8,
-            "y": 5,
-            "edge": "e",
-            "to": "bath"
-          },
-          {
-            "kind": "window",
-            "x": 3,
-            "y": -1,
-            "w": 2
-          }
-        ]
+        "desc": "Rahat bir yatak odası."
       },
       {
         "id": "bath",
         "name": "Banyo",
         "icon": "🛁",
-        "streak": 14,
-        "w": 6,
         "floor": "zemin:mermer",
         "wall": "duvar:gok",
-        "desc": "Küvet, lavabo ve ayna için banyo.",
-        "fixed": [
-          {
-            "kind": "door",
-            "x": 0,
-            "y": 5,
-            "edge": "w",
-            "to": "bedroom"
-          },
-          {
-            "kind": "door",
-            "x": 5,
-            "y": 5,
-            "edge": "e",
-            "to": "playroom"
-          },
-          {
-            "kind": "window",
-            "x": 2,
-            "y": -1,
-            "w": 2
-          }
-        ]
+        "desc": "Küvet, lavabo ve ayna için banyo."
       },
       {
         "id": "playroom",
         "name": "Oyun odası",
         "icon": "🎮",
-        "streak": 30,
-        "w": 10,
         "floor": "zemin:cim",
         "wall": "duvar:puantiye",
-        "desc": "Oyunlar ve eğlence için kocaman bir oda.",
-        "fixed": [
-          {
-            "kind": "door",
-            "x": 0,
-            "y": 5,
-            "edge": "w",
-            "to": "bath"
-          },
-          {
-            "kind": "window",
-            "x": 4,
-            "y": -1,
-            "w": 2
-          }
-        ]
+        "desc": "Oyunlar ve eğlence için kocaman bir oda."
+      },
+      {
+        "id": "study",
+        "name": "Çalışma odası",
+        "icon": "📚",
+        "floor": "zemin:acik-parke",
+        "wall": "duvar:lambri",
+        "desc": "Masan, kitapların ve sessizlik."
+      },
+      {
+        "id": "living",
+        "name": "Salon",
+        "icon": "🛋️",
+        "floor": "zemin:koyu-parke",
+        "wall": "duvar:krem",
+        "desc": "Koltuklar, televizyon ve misafirler için."
+      },
+      {
+        "id": "free",
+        "name": "Benim odam",
+        "icon": "✨",
+        "floor": "zemin:ahsap",
+        "wall": "duvar:krem",
+        "desc": "Ne olacağına sen karar ver."
       }
     ],
+    "roomShapes": [
+      {
+        "id": "kare",
+        "name": "Kare",
+        "sizes": {
+          "s": {
+            "w": 6,
+            "h": 6
+          },
+          "m": {
+            "w": 8,
+            "h": 8
+          },
+          "l": {
+            "w": 10,
+            "h": 10
+          }
+        }
+      },
+      {
+        "id": "genis",
+        "name": "Geniş",
+        "sizes": {
+          "s": {
+            "w": 9,
+            "h": 6
+          },
+          "m": {
+            "w": 12,
+            "h": 7
+          },
+          "l": {
+            "w": 15,
+            "h": 8
+          }
+        }
+      },
+      {
+        "id": "derin",
+        "name": "Derin",
+        "sizes": {
+          "s": {
+            "w": 6,
+            "h": 8
+          },
+          "m": {
+            "w": 7,
+            "h": 9
+          },
+          "l": {
+            "w": 8,
+            "h": 10
+          }
+        }
+      },
+      {
+        "id": "koridor",
+        "name": "Koridor",
+        "sizes": {
+          "s": {
+            "w": 12,
+            "h": 6
+          },
+          "m": {
+            "w": 16,
+            "h": 6
+          },
+          "l": {
+            "w": 20,
+            "h": 6
+          }
+        }
+      },
+      {
+        "id": "l",
+        "name": "L",
+        "sizes": {
+          "s": {
+            "w": 8,
+            "h": 8,
+            "cut": [
+              [
+                4,
+                6,
+                4,
+                2
+              ]
+            ]
+          },
+          "m": {
+            "w": 10,
+            "h": 9,
+            "cut": [
+              [
+                5,
+                6,
+                5,
+                3
+              ]
+            ]
+          },
+          "l": {
+            "w": 12,
+            "h": 10,
+            "cut": [
+              [
+                6,
+                6,
+                6,
+                4
+              ]
+            ]
+          }
+        }
+      },
+      {
+        "id": "basamak",
+        "name": "Basamak",
+        "sizes": {
+          "s": {
+            "w": 8,
+            "h": 9,
+            "cut": [
+              [
+                6,
+                6,
+                2,
+                1
+              ],
+              [
+                4,
+                7,
+                4,
+                1
+              ],
+              [
+                2,
+                8,
+                6,
+                1
+              ]
+            ]
+          },
+          "m": {
+            "w": 10,
+            "h": 10,
+            "cut": [
+              [
+                7,
+                6,
+                3,
+                2
+              ],
+              [
+                4,
+                8,
+                6,
+                2
+              ]
+            ]
+          },
+          "l": {
+            "w": 12,
+            "h": 10,
+            "cut": [
+              [
+                9,
+                6,
+                3,
+                1
+              ],
+              [
+                7,
+                7,
+                5,
+                1
+              ],
+              [
+                5,
+                8,
+                7,
+                1
+              ],
+              [
+                3,
+                9,
+                9,
+                1
+              ]
+            ]
+          }
+        }
+      },
+      {
+        "id": "centik",
+        "name": "Çentik",
+        "sizes": {
+          "s": {
+            "w": 8,
+            "h": 8,
+            "cut": [
+              [
+                3,
+                6,
+                2,
+                2
+              ]
+            ]
+          },
+          "m": {
+            "w": 10,
+            "h": 9,
+            "cut": [
+              [
+                3,
+                6,
+                4,
+                3
+              ]
+            ]
+          },
+          "l": {
+            "w": 12,
+            "h": 10,
+            "cut": [
+              [
+                4,
+                6,
+                4,
+                4
+              ]
+            ]
+          }
+        }
+      },
+      {
+        "id": "tarak",
+        "name": "Tarak",
+        "sizes": {
+          "s": {
+            "w": 9,
+            "h": 8,
+            "cut": [
+              [
+                2,
+                6,
+                2,
+                2
+              ],
+              [
+                5,
+                6,
+                2,
+                2
+              ]
+            ]
+          },
+          "m": {
+            "w": 11,
+            "h": 9,
+            "cut": [
+              [
+                2,
+                6,
+                2,
+                3
+              ],
+              [
+                7,
+                6,
+                2,
+                3
+              ]
+            ]
+          },
+          "l": {
+            "w": 13,
+            "h": 10,
+            "cut": [
+              [
+                3,
+                6,
+                2,
+                4
+              ],
+              [
+                8,
+                6,
+                2,
+                4
+              ]
+            ]
+          }
+        }
+      }
+    ],
+    "maxRooms": 12,
     "library": {
       "perShelf": 12
     },

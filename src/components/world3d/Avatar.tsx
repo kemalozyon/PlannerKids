@@ -2,12 +2,14 @@
 // koşar (yol ~4 sn sürsün). Sahne "istek üzerine" çizildiğinden (frameloop="demand") yürürken her karede yeni bir
 // kare ister. Karo değişince haber verir (bulunduğu alan, kamera, kayıtlı konum).
 // Poz (otur, yat, sallan): karakter eşyanın üstüne geçer; yatarken gövde yatar, salıncakta sarkaç gibi sallanır.
-import { useFrame, useThree } from '@react-three/fiber';
+// Hareket (karakter menüsü: dans, el salla) dururken oynar; yürümeye başlayınca biter.
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useRef, type MutableRefObject } from 'react';
 import type { Group } from 'three';
 import type { AvatarLook } from '../../lib/avatar';
 import type { Pose } from '../../lib/world';
 import AvatarModel, { HIP_Y, type AvatarAnim } from '../avatar/AvatarModel';
+import { isTap } from './light';
 import { swingAngle, SWING_ROPE } from './Proc';
 
 /** Karakterin yeri (dünya koordinatı, karo merkezleri) ve kalan yolu */
@@ -22,6 +24,8 @@ export interface Walker {
   speed?: number;
   /** Eşyanın üstünde: otur, yat, sallan (dünya konumu); kalkınca `back` karosuna iner */
   pose?: { kind: Pose; x: number; z: number; y: number; face: number; back: { x: number; z: number } } | null;
+  /** Dururken oynayan hareket; `until` (saat, sn) gelince biter, yoksa durdurulana kadar sürer */
+  emote?: { kind: 'dance' | 'wave'; until?: number } | null;
 }
 
 /** Pozu çizer (dünya görünümü ve gezinti): dış grup eşyanın üstünde, iç grup yatarken yatar, salıncakta sallanır */
@@ -48,7 +52,20 @@ const RUN_FROM = 5;
 /** Yolun hızı: kısa yolda yürür, uzun yolda koşar (en fazla ~4 sn sürsün) */
 export const pathSpeed = (tiles: number) => Math.min(12, Math.max(WALK_SPEED, tiles / 4));
 
-export default function Avatar({ look, walker, onTile, holding }: { look: AvatarLook; walker: MutableRefObject<Walker>; onTile?: (x: number, y: number) => void; holding?: string | null }) {
+export default function Avatar({
+  look,
+  walker,
+  onTile,
+  holding,
+  onTap,
+}: {
+  look: AvatarLook;
+  walker: MutableRefObject<Walker>;
+  onTile?: (x: number, y: number) => void;
+  holding?: string | null;
+  /** Karaktere dokunuldu (karakter menüsü) */
+  onTap?: () => void;
+}) {
   const tile = useRef('');
   const group = useRef<Group>(null);
   const inner = useRef<Group>(null);
@@ -71,6 +88,7 @@ export default function Avatar({ look, walker, onTile, holding }: { look: Avatar
     n.position.set(0, 0, 0);
     n.rotation.set(0, 0, 0);
     const next = w.path[0];
+    if (next) w.emote = null;
     if (next) {
       const dx = next.x - w.x;
       const dz = next.z - w.z;
@@ -91,7 +109,11 @@ export default function Avatar({ look, walker, onTile, holding }: { look: Avatar
       anim.current.state = speed >= RUN_FROM ? 'run' : 'walk';
       invalidate();
     } else {
-      anim.current.state = 'idle';
+      const E = w.emote;
+      if (E && E.until == null) E.until = E.kind === 'wave' ? clock.elapsedTime + 2.5 : undefined;
+      if (E && E.until != null && clock.elapsedTime > E.until) w.emote = null;
+      anim.current.state = w.emote?.kind ?? 'idle';
+      if (w.emote) invalidate();
       if (w.onArrive) {
         const f = w.onArrive;
         w.onArrive = null;
@@ -109,7 +131,17 @@ export default function Avatar({ look, walker, onTile, holding }: { look: Avatar
   });
 
   return (
-    <group ref={group}>
+    <group
+      ref={group}
+      onClick={
+        onTap &&
+        ((e: ThreeEvent<MouseEvent>) => {
+          if (!isTap(e)) return;
+          e.stopPropagation();
+          onTap();
+        })
+      }
+    >
       <group ref={inner}>
         <AvatarModel look={look} anim={anim} holding={holding} />
       </group>
