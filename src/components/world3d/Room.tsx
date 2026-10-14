@@ -29,9 +29,14 @@ export interface RoomProps {
   onBook?: (b: Book) => void;
   /** Pencereden görünen dış dünya (art.ts → windowTexture: gerçek saate göre) */
   view?: Texture;
+  /** Sol duvar (batıdaki odayla bölme) alçalsın: karakter batıdaki odadayken içerisi görünsün */
+  lowLeft?: boolean;
 }
 
-export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view }: RoomProps) {
+/** Alçalan bölme duvarının yüksekliği */
+const LOW_WALL = 0.32;
+
+export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view, lowLeft }: RoomProps) {
   const c1 = floor?.color ?? '#c89a6a';
   const c2 = floor?.color2 ?? c1;
   const wc = wall?.color ?? '#f3e6cf';
@@ -48,7 +53,7 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
   const gapsLeft = fixed.filter((f) => f.kind === 'door' && f.edge === 'w' && f.x === 0).map((f) => f.y);
   // Eski tip (kenarsız) kapılar duvara çizilir; kenarlı kapılardan yalnızca açıklık olanlar kasa ister
   const doors = fixed.filter((f) => f.kind === 'door' && !f.edge);
-  const openings = fixed.filter((f) => f.kind === 'door' && ((f.edge === 'n' && f.y === 0) || (f.edge === 'w' && f.x === 0)));
+  const openings = fixed.filter((f) => f.kind === 'door' && ((f.edge === 'n' && f.y === 0) || (f.edge === 'w' && f.x === 0 && !lowLeft)));
   const windows = fixed.filter((f) => f.kind === 'window');
   const shelves = fixed.filter((f) => f.kind === 'shelf');
   return (
@@ -64,12 +69,14 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
       </mesh>
       {/* Arka duvar (z = 0) ve sol duvar (x = 0), kapı açıklıklarıyla parça parça */}
       <WallStrip len={w} gaps={gapsBack} side="back" wall={wall} c1={wc} c2={wc2} />
-      <WallStrip len={h} gaps={gapsLeft} side="left" wall={wall} c1={wc} c2={wc2} />
+      <group scale-y={lowLeft ? LOW_WALL / WALL_H : 1}>
+        <WallStrip len={h} gaps={gapsLeft} side="left" wall={wall} c1={wc} c2={wc2} />
+      </group>
       <mesh position={[w / 2 - T / 2, WALL_H + 0.03, -T / 2]}>
         <boxGeometry args={[w + T * 2, 0.06, T + 0.04]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>
-      <mesh position={[-T / 2, WALL_H + 0.03, h / 2]}>
+      <mesh position={[-T / 2, (lowLeft ? LOW_WALL : WALL_H) + 0.03, h / 2]}>
         <boxGeometry args={[T + 0.04, 0.06, h]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>

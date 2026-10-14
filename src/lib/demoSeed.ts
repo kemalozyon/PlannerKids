@@ -97,7 +97,7 @@ function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | '
     return { id: `lg-${o.id}`, currency: 'crystal' as const, kind: 'buy' as const, ref: o.id, amount: -(a.kind === 'buy' ? a.price : 0), note: o.item_id, created_at: t };
   });
   // Yeni eşyaları (şömine, TV, salıncak) denemek için aile hediyesi
-  ledger.push({ id: 'lg-hediye', currency: 'crystal', kind: 'gift', ref: 'demo', amount: 240, note: 'Demo hediyesi', created_at: t });
+  ledger.push({ id: 'lg-hediye', currency: 'crystal', kind: 'gift', ref: 'demo', amount: 2400, note: 'Demo hediyesi', created_at: t });
   return {
     owned,
     ledger,

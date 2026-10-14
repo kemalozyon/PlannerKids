@@ -2,7 +2,7 @@
 // - Model eşyalar (Kenney): karo ayak izinin ortasına oturtulur, items.json'daki ölçekle büyütülür; kumaş/lamba
 //   renkleri `tint` ile boyanır, `glow` malzemesi ışık saçar.
 // - Duvar eşyaları: arka duvarda (y = -1) ya da sol duvarda (x = -1), sırtı duvara yaslı.
-// - Kodla çizilenler: posterler/tablolar (art), kitaplık, salıncak ve şömine (proc).
+// - Kodla çizilenler: posterler/tablolar (art), kitaplık, salıncak, şömine ve Habbo tarzı set parçaları (proc).
 // - İşlevli eşyalar (use): ışık açıkken parlar (yakındakiler gerçek ışık saçar), ateş yanar, TV açıkken ekranda
 //   çalışma istatistiği ya da bu ayın ormanı görünür.
 // - Küçük eşya bir yüzeyin üstündeyse (masa, sehpa) o yüzeyin yüksekliğine kalkar (OnSurface).
@@ -11,13 +11,15 @@ import { useGLTF } from '@react-three/drei';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Box3, Color, Mesh, MeshStandardMaterial, Object3D, Vector3, type Material, type Texture } from 'three';
-import type { Item } from '../../lib/catalog';
+import { has, type Item } from '../../lib/catalog';
 import type { Book } from '../../lib/types';
 import { footSize, wallSlots } from '../../lib/world';
 import { modelUrl } from '../forest3d/models';
 import { ART_HEIGHT, artTexture, clockTexture } from './art';
 import { Bookcase } from './Books';
+import { WALL_ART } from './WallArts';
 import { Fireplace, Flame, Swing } from './Proc';
+import { pieceTop, SetPiece } from './Sets';
 
 /** Duvar eşyalarının orta yüksekliği */
 const WALL_Y = 1.45;
@@ -25,9 +27,11 @@ const WALL_Y = 1.45;
 /** Model + boya için hazırlanmış şablon ve ayak izine oturtma bilgisi (bir kez hesaplanır) */
 const templates = new Map<string, { obj: Object3D; center: Vector3; minY: number; maxY: number; minZ: number; size: Vector3 }>();
 
-function paint(m: Material, item: Item, on: boolean): Material {
+/** Malzemeyi boya: tint, açıkken ışık saçan malzeme; seçili renk (CHANGE_COLOR) ışık saçanın ya da kumaşın yerine */
+function paint(m: Material, item: Item, on: boolean, pick?: string): Material {
   if (!(m instanceof MeshStandardMaterial)) return m;
-  const color = item.tint?.[m.name];
+  const target = item.glow ?? Object.keys(item.tint ?? {})[0];
+  const color = pick && m.name === target ? pick : item.tint?.[m.name];
   const glow = on && item.glow === m.name;
   if (!color && !glow) return m;
   const out = m.clone();
@@ -39,11 +43,11 @@ function paint(m: Material, item: Item, on: boolean): Material {
   return out;
 }
 
-/** Eşyanın şablonu; ışık kapalıyken parlamayan ayrı bir şablon */
-function useTemplate(item: Item, on = true) {
+/** Eşyanın şablonu; ışık kapalıyken parlamayan ve her renk için ayrı bir şablon */
+function useTemplate(item: Item, on = true, pick?: string) {
   const { scene } = useGLTF(modelUrl(item.model!));
   return useMemo(() => {
-    const k = `${item.id}:${on ? 1 : 0}`;
+    const k = `${item.id}:${on ? 1 : 0}:${pick ?? ''}`;
     let t = templates.get(k);
     if (!t) {
       const obj = scene.clone(true);
@@ -51,7 +55,7 @@ function useTemplate(item: Item, on = true) {
         if (o instanceof Mesh) {
           o.castShadow = true;
           o.receiveShadow = true;
-          o.material = Array.isArray(o.material) ? o.material.map((m) => paint(m, item, on)) : paint(o.material, item, on);
+          o.material = Array.isArray(o.material) ? o.material.map((m) => paint(m, item, on, pick)) : paint(o.material, item, on, pick);
         }
       });
       const box = new Box3().setFromObject(obj);
@@ -61,7 +65,7 @@ function useTemplate(item: Item, on = true) {
       if (!templates.has(item.id)) templates.set(item.id, t);
     }
     return t;
-  }, [scene, item, on]);
+  }, [scene, item, on, pick]);
 }
 
 const GHOST = {
@@ -89,6 +93,7 @@ export function footCenter(item: Item, x: number, y: number, rot: number): [numb
 /** Bir yüzeyin (masa, sehpa…) üst yüksekliği */
 export function surfaceTop(item: Item): number {
   if (item.proc === 'bookcase') return 1.7;
+  if (item.proc === 'set') return pieceTop(item);
   const t = templates.get(item.id);
   return t ? (t.maxY - t.minY) * (item.scale ?? 1) : 0.6;
 }
@@ -115,8 +120,12 @@ export interface ItemModelProps {
   /** Kitaplıktaki kitaplar */
   books?: Book[];
   onBook?: (b: Book) => void;
-  /** Işık/TV/ateş açık mı (verilmezse lamba açık, TV ve ateş kapalı) */
+  /** TOGGLE açık mı (verilmezse lamba açık, TV/ateş/hareket kapalı) */
   on?: boolean;
+  /** OPEN_CLOSE / GATE açık mı */
+  open?: boolean;
+  /** CHANGE_COLOR: seçili renk */
+  color?: string;
   /** Açık lamba gerçek bir ışık da saçsın (sahnede sınırlı sayıda) */
   lit?: boolean;
   /** Açık TV'nin ekranı */
@@ -132,12 +141,20 @@ export function ItemModel(p: ItemModelProps) {
   if (item.placement === 'wall') return <WallItem {...p} />;
   const [cx, cz] = footCenter(item, p.x, p.y, p.rot);
   const [fw, fh] = footSize(item, 0);
-  const on = p.on ?? item.use === 'light';
+  const on = p.on ?? (has(item, 'TOGGLE') && item.fx === 'light');
   const inner =
     item.proc === 'bookcase' ? (
       <group position={[0, 0, -(item.h ?? 1) / 2 + 0.41]}>
         {p.ghost ? <GhostBox w={fw} h={1.7} d={0.36} ok={p.ghost === 'ok'} /> : <Bookcase w={fw} books={p.books ?? []} onBook={p.onBook} />}
       </group>
+    ) : item.proc === 'set' ? (
+      p.ghost ? (
+        <group position={[0, 0, fh / 2 - 0.05]}>
+          <GhostBox w={fw - 0.1} h={Math.max(0.3, pieceTop(item))} d={fh - 0.1} ok={p.ghost === 'ok'} />
+        </group>
+      ) : (
+        <SetPiece item={item} on={on} lit={!!p.lit} open={!!p.open} color={p.color} />
+      )
     ) : item.proc === 'swing' || item.proc === 'fireplace' ? (
       p.ghost ? (
         <group position={[0, 0, fh / 2 - 0.05]}>
@@ -154,25 +171,32 @@ export function ItemModel(p: ItemModelProps) {
         </group>
       )
     ) : (
-      <FloorModel item={item} ghost={p.ghost} on={on} lit={!!p.lit} screen={p.screen ?? null} />
+      <FloorModel item={item} ghost={p.ghost} on={on} lit={!!p.lit} screen={p.screen ?? null} color={p.color} />
     );
   return (
     <group position={[cx, p.lift ?? 0, cz]} rotation-y={(-p.rot * Math.PI) / 180} onPointerDown={p.onPointerDown} onClick={p.onClick}>
-      {inner}
+      {/* Açık kapı (GATE) menteşesinden döner */}
+      {has(item, 'GATE') && item.model && p.open ? (
+        <group position={[-fw / 2, 0, 0]} rotation-y={1.35}>
+          <group position={[fw / 2, 0, 0]}>{inner}</group>
+        </group>
+      ) : (
+        inner
+      )}
     </group>
   );
 }
 
-function FloorModel({ item, ghost, on, lit, screen }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null }) {
-  const t = useTemplate(item, ghost ? true : on);
+function FloorModel({ item, ghost, on, lit, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null; color?: string }) {
+  const t = useTemplate(item, ghost ? true : on, color);
   const obj = useMemo(() => ghostify(t.obj.clone(true), ghost), [t, ghost]);
   const s = item.scale ?? 1;
   const top = (t.maxY - t.minY) * s;
   return (
     <group>
       <primitive object={obj} scale={s} position={[-t.center.x * s, -t.minY * s + 0.01, -t.center.z * s]} />
-      {!ghost && on && item.use === 'light' && lit && <pointLight position={[0, top * 0.85, 0.15]} color="#ffd9a0" intensity={2.6} distance={4.5} decay={1.5} />}
-      {!ghost && on && item.use === 'fire' && <Flame y={0.06} scale={0.9} light />}
+      {!ghost && on && item.fx === 'light' && lit && <pointLight position={[0, top * 0.85, 0.15]} color={color ?? '#ffd9a0'} intensity={2.6} distance={4.5} decay={1.5} />}
+      {!ghost && on && item.fx === 'fire' && <Flame y={0.06} scale={0.9} light />}
       {!ghost && on && screen && <Screen item={item} size={t.size} s={s} z={(t.size.z * s) / 2} y={t.size.y * s * (item.screen?.[2] ?? 0.6)} map={screen} />}
     </group>
   );
@@ -206,26 +230,30 @@ function WallItem(p: ItemModelProps) {
   const pos: [number, number, number] = back ? [p.x + along, WALL_Y, 0.02 + (p.lift ?? 0)] : [0.02 + (p.lift ?? 0), WALL_Y, p.y + along];
   return (
     <group position={pos} rotation-y={back ? 0 : Math.PI / 2} onPointerDown={p.onPointerDown} onClick={p.onClick}>
-      {item.model ? <WallModel item={item} ghost={p.ghost} on={p.on ?? item.use === 'light'} lit={!!p.lit} screen={p.screen ?? null} /> : <WallArt item={item} ghost={p.ghost} on={p.on ?? true} />}
+      {item.model ? (
+        <WallModel item={item} ghost={p.ghost} on={p.on ?? item.fx === 'light'} lit={!!p.lit} screen={p.screen ?? null} color={p.color} />
+      ) : (
+        <WallArt item={item} ghost={p.ghost} on={p.on ?? true} color={p.color} />
+      )}
     </group>
   );
 }
 
-function WallModel({ item, ghost, on, lit, screen }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null }) {
-  const t = useTemplate(item, ghost ? true : on);
+function WallModel({ item, ghost, on, lit, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null; color?: string }) {
+  const t = useTemplate(item, ghost ? true : on, color);
   const obj = useMemo(() => ghostify(t.obj.clone(true), ghost), [t, ghost]);
   const s = item.scale ?? 1;
   return (
     <group>
       <primitive object={obj} scale={s} position={[-t.center.x * s, -t.center.y * s, -t.minZ * s]} />
-      {!ghost && on && item.use === 'light' && lit && <pointLight position={[0, 0, 0.5]} color="#ffd9a0" intensity={2.2} distance={4} decay={1.5} />}
+      {!ghost && on && item.fx === 'light' && lit && <pointLight position={[0, 0, 0.5]} color={color ?? '#ffd9a0'} intensity={2.2} distance={4} decay={1.5} />}
       {!ghost && on && screen && <Screen item={item} size={t.size} s={s} z={t.size.z * s} y={t.size.y * s * ((item.screen?.[2] ?? 0.5) - 0.5)} map={screen} />}
     </group>
   );
 }
 
 /** Kodla çizilen resim ya da süs: çerçeveli tuval, saat, raf, ışık zinciri */
-function WallArt({ item, ghost, on }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean }) {
+function WallArt({ item, ghost, on, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; color?: string }) {
   const n = item.w ?? 1;
   const w = n - 0.16;
   const h = ART_HEIGHT;
@@ -239,6 +267,8 @@ function WallArt({ item, ghost, on }: { item: Item; ghost?: 'ok' | 'bad'; on: bo
   if (item.art === 'saat') return <WallClock />;
   if (item.art === 'raf') return <WallShelf w={w} />;
   if (item.art === 'isiklar') return <StringLights w={n - 0.1} on={on} />;
+  const Extra = WALL_ART[item.art ?? ''];
+  if (Extra) return <Extra w={w} n={n} on={on} color={color ?? item.palette?.[0] ?? item.colors?.[0] ?? '#ff4fa3'} />;
   return <Framed art={item.art!} w={w} h={h} n={n} />;
 }
 

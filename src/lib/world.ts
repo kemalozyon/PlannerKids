@@ -7,12 +7,12 @@
 // Alanlar tek bir bağlı dünyada yan yana durur (worldPlan.ts): kütüphane | oda, önünde bahçe, doğuda orman yolu
 // ve ay bahçeleri. Arazi toplam saatle yerinde büyür (aşama, saklanmaz). Her gün bir ağaç: çalışılan her gün o
 // ayın bahçesinde kendi yerine (takvim düzeni) bir ağaç dikilir.
-import { itemById, type Item } from './catalog';
-import { CFG, type FixedTile, type HomeSpace, type MapDef, type MonthSpace, type SpaceId, type SpeciesDef, type StageDef } from './config';
+import { has, itemById, poseOf, type Item } from './catalog';
+import { CFG, type FixedTile, type HomeSpace, type MapDef, type MonthSpace, type RoomDef, type RoomId, type SpaceId, type SpeciesDef, type StageDef } from './config';
 import { rng } from './rng';
 import type { Abandoned, StudyLog } from './types';
 
-export type { SpaceId, HomeSpace, MonthSpace };
+export type { SpaceId, HomeSpace, MonthSpace, RoomId, RoomDef };
 const W = CFG.world;
 
 export interface Tile {
@@ -20,11 +20,25 @@ export interface Tile {
   y: number;
 }
 
+/**
+ * Yerleştirilmiş bir eşya (örnek): tanımı items.json'da (`item`), burada yeri, yönü ve kendi durumu. Durum alanları
+ * yalnızca eşyanın ilgili davranışı varsa bulunur (stateProblem); yoksa tanımın varsayılanı geçerlidir.
+ */
 export interface PlacedItem {
   item: string;
   x: number;
   y: number;
   rot: number;
+  /** TOGGLE: açık mı (yoksa ışık açık, TV/ateş/hareket kapalı) */
+  on?: boolean;
+  /** OPEN_CLOSE / GATE: açık mı (yoksa kapak kapalı, bahçe kapısı açık) */
+  open?: boolean;
+  /** CHANGE_COLOR: palette sırası */
+  color?: number;
+  /** STORAGE: içine konan eşyalar (envanterden sayılır) */
+  stored?: string[];
+  /** INTERACT_PET: mama konan gün (YYYY-MM-DD) */
+  fed?: string;
 }
 
 /** Bir alanın durumu (Postgres'te user_spaces.layout jsonb) */
@@ -40,6 +54,8 @@ export interface WorldCtx {
   map: string;
   /** Bugün (YYYY-MM-DD): aylık bahçelerin kilidi */
   today: string;
+  /** En iyi seri (gün): seriyle açılan odalar (sunucuda world_ctx.best) */
+  best: number;
 }
 
 export const key = (x: number, y: number) => `${x},${y}`;
@@ -63,11 +79,21 @@ export function mapsOf(totalMinutes: number) {
   };
 }
 
+// ---------- Seriyle açılan odalar ----------
+export const ROOMS: RoomDef[] = W.rooms;
+export const isRoom = (s: string): s is RoomId => ROOMS.some((r) => r.id === s);
+export const roomById = (id: RoomId): RoomDef => ROOMS.find((r) => r.id === id)!;
+/** En iyi seriyle açılan odalar ve sıradaki (bir kez açılan oda kalıcıdır) */
+export function roomsOf(best: number) {
+  return { unlocked: ROOMS.filter((r) => best >= r.streak), next: ROOMS.find((r) => best < r.streak) ?? null };
+}
+
 // ---------- Alanlar ----------
 export const isMonthSpace = (s: string): s is MonthSpace => /^m:\d{4}-\d{2}$/.test(s);
 export const monthSpace = (month: string): MonthSpace => `m:${month}`;
-export const isHome = (s: string): s is HomeSpace => s === 'room' || s === 'library' || s === 'garden';
-export const isIndoor = (s: SpaceId) => s === 'room' || s === 'library';
+export const isHome = (s: string): s is HomeSpace => s === 'room' || s === 'library' || s === 'garden' || isRoom(s);
+/** Evin içi: oda, kütüphane ve seriyle açılan odalar */
+export const isIndoor = (s: string) => s === 'room' || s === 'library' || isRoom(s);
 export const isOutdoor = (s: SpaceId) => s === 'garden' || isMonthSpace(s);
 
 const shiftMonth = (month: string, n: number) => {
@@ -106,6 +132,7 @@ export function plotOf(month: string, day: number): Tile {
 
 export function spaceSize(space: SpaceId, ctx: WorldCtx): { w: number; h: number } {
   if (isMonthSpace(space)) return { w: W.monthGarden.w, h: W.monthGarden.h };
+  if (isRoom(space)) return { w: roomById(space).w, h: mapById(ctx.map).room.h };
   const s = mapById(ctx.map)[space];
   return { w: s.w, h: s.h };
 }
@@ -117,6 +144,7 @@ export function fixedDefs(space: SpaceId, ctx: WorldCtx): FixedTile[] {
     const plots: FixedTile[] = Array.from({ length: daysIn(month) }, (_, i) => ({ kind: 'plot', ...plotOf(month, i + 1), day: i + 1 }));
     return [...plots, { kind: 'gate', ...W.monthGarden.gate, edge: 's', to: 'garden' }];
   }
+  if (isRoom(space)) return roomById(space).fixed;
   return mapById(ctx.map)[space].fixed;
 }
 
@@ -199,15 +227,15 @@ function surfaceTiles(items: PlacedItem[], skip = -1): Set<string> {
   const out = new Set<string>();
   items.forEach((p, i) => {
     const it = itemById(p.item);
-    if (i !== skip && it?.surface && it.placement !== 'wall') footprint(it, p.x, p.y, p.rot).forEach((t) => out.add(key(t.x, t.y)));
+    if (i !== skip && it && has(it, 'STACKABLE') && it.placement !== 'wall') footprint(it, p.x, p.y, p.rot).forEach((t) => out.add(key(t.x, t.y)));
   });
   return out;
 }
 
 function layerOf(it: Item, tiles: Tile[], surfaces: Set<string>): Layer | null {
   if (it.placement === 'wall') return 'duvar';
-  if (it.walk) return 'zemin';
-  if (!it.small) return 'esya';
+  if (has(it, 'WALK_THROUGH')) return 'zemin';
+  if (!has(it, 'ON_SURFACE')) return 'esya';
   const on = tiles.filter((t) => surfaces.has(key(t.x, t.y))).length;
   return on === 0 ? 'esya' : on === tiles.length ? 'ust' : null;
 }
@@ -228,6 +256,8 @@ const emptyTaken = (): Taken => ({ zemin: new Set(), esya: new Set(), ust: new S
 function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken, surfaces: Set<string>): string | { layer: Layer; tiles: Tile[] } {
   const it = itemById(p.item);
   if (!it || !it.placement) return 'Bu eşya yerleştirilemez';
+  const bad = stateProblem(it, p);
+  if (bad) return bad;
   if (!fitsSpace(it, space)) return it.placement === 'wall' ? 'Duvar süsü yalnızca odalara asılır' : isOutdoor(space) ? 'Bu eşya içeride durur' : 'Bu eşya dışarıda durur';
   if (![p.x, p.y, p.rot].every(Number.isInteger)) return 'Yerleşim geçersiz';
   const { w, h } = spaceSize(space, ctx);
@@ -255,7 +285,43 @@ function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken
   return { layer, tiles };
 }
 
+// ---------- Eşyanın kendi durumu ----------
+const PLACED_KEYS = new Set(['item', 'x', 'y', 'rot', 'on', 'open', 'color', 'stored', 'fed']);
+
+/** İçine konabilir mi: yerleştirilebilen, kendisi depo olmayan eşya (kaplama, kıyafet, canlı konmaz) */
+export const storable = (s: Item | undefined): s is Item => !!s && !!s.placement && !has(s, 'STORAGE');
+
+/** Durum alanları eşyanın davranışına uyuyor mu (save_space ile aynı) */
+export function stateProblem(it: Item, p: PlacedItem): string | null {
+  for (const k of Object.keys(p)) if (!PLACED_KEYS.has(k)) return 'Yerleşim geçersiz';
+  if (p.on !== undefined && (typeof p.on !== 'boolean' || !has(it, 'TOGGLE'))) return 'Bu eşya açılıp kapanmaz';
+  if (p.open !== undefined && (typeof p.open !== 'boolean' || !(has(it, 'OPEN_CLOSE') || has(it, 'GATE')))) return 'Bu eşya açılmaz';
+  if (p.color !== undefined && (!has(it, 'CHANGE_COLOR') || !Number.isInteger(p.color) || p.color < 0 || p.color >= (it.palette?.length ?? 0))) return 'Bu renk yok';
+  if (p.fed !== undefined && (!has(it, 'INTERACT_PET') || typeof p.fed !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(p.fed))) return 'Yerleşim geçersiz';
+  if (p.stored !== undefined) {
+    if (!has(it, 'STORAGE') || !Array.isArray(p.stored)) return 'Bu eşyanın içine bir şey konmaz';
+    if (p.stored.length > (it.capacity ?? 0)) return `${it.name} doldu`;
+    if (!p.stored.every((id) => typeof id === 'string' && storable(itemById(id)))) return 'Bu eşya içine konmaz';
+  }
+  return null;
+}
+
+/** Yerleşimdeki eşya adetleri: yerleştirilenler ve depolara konanlar (envanterden düşülür) */
+export function itemCounts(layout: SpaceLayout | undefined): Map<string, number> {
+  const out = new Map<string, number>();
+  const add = (id: string) => out.set(id, (out.get(id) ?? 0) + 1);
+  for (const p of layout?.items ?? []) {
+    add(p.item);
+    if (Array.isArray(p.stored)) p.stored.forEach(add);
+  }
+  return out;
+}
+
 function monthProblem(space: SpaceId, ctx: WorldCtx): string | null {
+  if (isRoom(space)) {
+    const r = roomById(space);
+    return ctx.best >= r.streak ? null : `${r.name} ${r.streak} günlük seriyle açılır`;
+  }
   if (!isMonthSpace(space)) return null;
   const st = monthState(space.slice(2), ctx.today);
   return st === 'out' ? 'Bu ayın bahçesi yok' : st === 'locked' ? 'Bu ayın bahçesi henüz açılmadı' : null;
@@ -283,15 +349,15 @@ export function layoutProblem(
   }
   const surfaces = surfaceTiles(layout.items);
   const taken = emptyTaken();
-  const used = new Map<string, number>();
   for (const [index, p] of layout.items.entries()) {
     const r = placeProblem(space, ctx, p, taken, surfaces);
     if (typeof r === 'string') return { message: r, index };
     r.tiles.forEach((t) => taken[r.layer].add(key(t.x, t.y)));
-    used.set(p.item, (used.get(p.item) ?? 0) + 1);
   }
-  for (const [id, n] of used) {
-    if (n + usedElsewhere(id) > ownedCount(itemById(id)!)) return { message: `${itemById(id)!.name} envanterinde yok`, index: layout.items.findIndex((p) => p.item === id) };
+  for (const [id, n] of itemCounts(layout)) {
+    if (n + usedElsewhere(id) > ownedCount(itemById(id)!)) {
+      return { message: `${itemById(id)!.name} envanterinde yok`, index: layout.items.findIndex((p) => p.item === id || !!p.stored?.includes(id)) };
+    }
   }
   return null;
 }
@@ -316,26 +382,59 @@ export function canPlaceAt(space: SpaceId, layout: SpaceLayout, ctx: WorldCtx, p
 export function onTopOf(layout: SpaceLayout, index: number): number[] {
   const base = layout.items[index];
   const it = base && itemById(base.item);
-  if (!it?.surface) return [];
+  if (!it || !has(it, 'STACKABLE')) return [];
   const mine = new Set(footprint(it, base.x, base.y, base.rot).map((t) => key(t.x, t.y)));
   const rest = surfaceTiles(layout.items, index);
   return layout.items.flatMap((p, i) => {
     const s = itemById(p.item);
-    if (i === index || !s?.small) return [];
+    if (i === index || !s || !has(s, 'ON_SURFACE')) return [];
     const tiles = footprint(s, p.x, p.y, p.rot);
     // Bu yüzeyin üstündeyse (başka bir yüzey tek başına taşımıyorsa) onunla gider
     return tiles.some((t) => mine.has(key(t.x, t.y))) && !tiles.every((t) => rest.has(key(t.x, t.y))) ? [i] : [];
   });
 }
 
+/** Eşyayı yerleşimden çıkar (envantere döner); üstündeki küçük eşyalar da onunla döner */
+export function removeItemAt(layout: SpaceLayout, index: number): SpaceLayout {
+  const tops = onTopOf(layout, index);
+  return { ...layout, items: layout.items.filter((_, i) => i !== index && !tops.includes(i)) };
+}
+
+/** Eşyanın sıradaki yönü (items.json → rotations) */
+export function nextRot(item: Pick<Item, 'rotations'>, rot: number): number {
+  const r = item.rotations ?? [0];
+  return r[(r.indexOf(rot) + 1) % r.length];
+}
+
+/** Eşyayı yerinde döndür; döndürünce sığmıyorsa null */
+export function rotateItemAt(space: SpaceId, layout: SpaceLayout, index: number, ctx: WorldCtx): SpaceLayout | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it || it.placement === 'wall') return null;
+  const q = { ...p, rot: nextRot(it, p.rot) };
+  // Üstündekiler sınamada yok sayılır (yüzeyleri olmadan yerde sayılırlardı); döndükten sonra yerlerinde kalırlar
+  return canPlaceAt(space, removeItemAt(layout, index), ctx, q) ? { ...layout, items: layout.items.map((x, i) => (i === index ? q : x)) } : null;
+}
+
+/** Eşyayı aynı alanda başka bir karoya taşı (üstündekiler envantere döner); konamıyorsa null */
+export function moveItemTo(space: SpaceId, layout: SpaceLayout, index: number, to: Tile, rot: number, ctx: WorldCtx): SpaceLayout | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it) return null;
+  const base = removeItemAt(layout, index);
+  // Durumu (açık, renk, içindekiler) onunla gider
+  const q: PlacedItem = { ...p, x: to.x, y: to.y, rot: it.placement === 'wall' ? wallRot(to.x, to.y) : rot };
+  return canPlaceAt(space, base, ctx, q) ? { ...base, items: [...base.items, q] } : null;
+}
+
 /** Küçük eşyanın yüksekliği: bir yüzeyin üstündeyse o yüzeyin sırası */
 export function supportOf(layout: SpaceLayout, p: PlacedItem, ignore = -1): number | null {
   const it = itemById(p.item);
-  if (!it?.small) return null;
+  if (!it || !has(it, 'ON_SURFACE')) return null;
   const tiles = footprint(it, p.x, p.y, p.rot);
   for (const [i, q] of layout.items.entries()) {
     const s = itemById(q.item);
-    if (i === ignore || !s?.surface) continue;
+    if (i === ignore || !s || !has(s, 'STACKABLE')) continue;
     const under = new Set(footprint(s, q.x, q.y, q.rot).map((t) => key(t.x, t.y)));
     if (tiles.some((t) => under.has(key(t.x, t.y)))) return i;
   }
@@ -358,13 +457,20 @@ export function sanitizeLayout(
   const taken = emptyTaken();
   const used = new Map<string, number>();
   const keep: PlacedItem[] = [];
-  for (const p of items) {
-    const it = itemById(p.item);
+  const take = (id: string, it: Item) => {
+    const n = (used.get(id) ?? 0) + 1;
+    if (n + usedElsewhere(id) > ownedCount(it)) return false;
+    used.set(id, n);
+    return true;
+  };
+  for (const raw of items) {
+    const it = itemById(raw?.item);
+    if (!it) continue;
+    // Uymayan durum alanları atılır, eşya kalır; içindekilerden sahip olunmayanlar envantere döner
+    const p = cleanState(it, raw);
     const r = placeProblem(space, ctx, p, taken, surfaces);
-    if (!it || typeof r === 'string') continue;
-    const n = (used.get(p.item) ?? 0) + 1;
-    if (n + usedElsewhere(p.item) > ownedCount(it)) continue;
-    used.set(p.item, n);
+    if (typeof r === 'string' || !take(p.item, it)) continue;
+    if (p.stored) p.stored = p.stored.filter((id) => take(id, itemById(id)!));
     r.tiles.forEach((t) => taken[r.layer].add(key(t.x, t.y)));
     keep.push(p);
   }
@@ -374,10 +480,28 @@ export function sanitizeLayout(
   };
   const out: SpaceLayout = { items: keep };
   if (isIndoor(space)) {
-    out.floor = cover(layout.floor, 'zemin') ?? 'zemin:ahsap';
-    out.wall = cover(layout.wall, 'duvar') ?? 'duvar:krem';
+    // Seriyle açılan odalarda kaplama seçilmemişse odanın kendi görünüşü kalır (defaultCover; sahip olmak gerekmez)
+    const floor = cover(layout.floor, 'zemin') ?? (isRoom(space) ? undefined : 'zemin:ahsap');
+    const wall = cover(layout.wall, 'duvar') ?? (isRoom(space) ? undefined : 'duvar:krem');
+    if (floor) out.floor = floor;
+    if (wall) out.wall = wall;
   }
   return { layout: out, dropped: items.length - keep.length };
+}
+
+/** Yalnızca eşyanın davranışına uyan durum alanlarını bırakır */
+function cleanState(it: Item, p: PlacedItem): PlacedItem {
+  const out: PlacedItem = { item: p.item, x: p.x, y: p.y, rot: p.rot };
+  for (const k of ['on', 'open', 'color', 'fed'] as const) {
+    if (p[k] === undefined) continue;
+    const q = { ...out, [k]: p[k] };
+    if (!stateProblem(it, q)) Object.assign(out, { [k]: p[k] });
+  }
+  if (has(it, 'STORAGE') && Array.isArray(p.stored)) {
+    const s = p.stored.filter((id) => typeof id === 'string' && storable(itemById(id))).slice(0, it.capacity ?? 0);
+    if (s.length) out.stored = s;
+  }
+  return out;
 }
 
 // ---------- Eşyayı kullanmak: otur, yat, sallan, aç-kapa ----------
@@ -392,7 +516,7 @@ const FRONT: Record<number, Tile> = { 0: { x: 0, y: 1 }, 90: { x: -1, y: 0 }, 18
  * yatağın başında (eşyanın arkası), bu yüzden orta nokta biraz öne kayar.
  */
 export function seatOf(item: Item, p: PlacedItem): { kind: Pose; x: number; z: number; y: number; face: number } | null {
-  const kind = item.use === 'sit' || item.use === 'lie' || item.use === 'swing' ? item.use : null;
+  const kind = poseOf(item);
   if (!kind) return null;
   const [w, h] = footSize(item, p.rot);
   const face = p.rot ? (-p.rot * Math.PI) / 180 : 0;
@@ -421,28 +545,100 @@ export function approachTile(item: Item, p: PlacedItem, w: number, h: number, bl
   const back = { x: -f.x, y: -f.y };
   const left = { x: f.y, y: -f.x };
   const right = { x: -f.y, y: f.x };
-  const order = item.use === 'lie' ? [left, right, f, back] : [f, left, right, back];
+  const order = has(item, 'LAY') ? [left, right, f, back] : [f, left, right, back];
   for (const d of order) for (const t of side(d)) if (free(t)) return t;
   return null;
 }
 
-/** Aç/kapa durumunun anahtarı: alan + eşya + yer (eşya taşınınca varsayılana döner) */
+/** Eşyanın yerdeki kimliği: alan + eşya + yer (oturulan eşya, TV kanalı, yakınlık) */
 export const powerKey = (space: SpaceId, p: PlacedItem) => `${space}|${p.item}@${p.x},${p.y}`;
 
-/** Açık mı: ışık varsayılan açık (bugünkü görünüş), TV ve ateş kapalı */
-export function isOn(item: Item, k: string, power: Record<string, boolean>): boolean {
-  if (item.use !== 'light' && item.use !== 'tv' && item.use !== 'fire') return false;
-  return power[k] ?? item.use === 'light';
+/** Açık mı: durum yoksa ışık açık (bugünkü görünüş), TV/ateş/hareket kapalı */
+export const isOn = (item: Item, p: PlacedItem): boolean => has(item, 'TOGGLE') && (p.on ?? item.fx === 'light');
+/** Kapağı/kapısı açık mı: durum yoksa kapak kapalı, bahçe kapısı açık (eskiden hep geçilirdi) */
+export const isOpen = (item: Item, p: PlacedItem): boolean => (has(item, 'OPEN_CLOSE') || has(item, 'GATE')) && (p.open ?? has(item, 'GATE'));
+/** Seçili renk (CHANGE_COLOR); yoksa undefined */
+export const colorOf = (item: Item, p: PlacedItem): string | undefined => (has(item, 'CHANGE_COLOR') ? item.palette?.[p.color ?? 0] : undefined);
+
+/** Eşyanın eylemleri (seçenek çubuğundaki "Kullan" düğmeleri) */
+export type ActionId = 'sit' | 'lie' | 'swing' | 'stand' | 'toggle' | 'open' | 'color' | 'storage' | 'dispense' | 'sound' | 'feed' | 'books';
+export interface ItemAction {
+  id: ActionId;
+  label: string;
 }
 
+export const DISPENSE_LABEL: Record<string, string> = {
+  kahve: '☕ Kahve al',
+  dondurma: '🍦 Dondurma al',
+  'meyve-suyu': '🧃 Meyve suyu al',
+  'patlamis-misir': '🍿 Mısır al',
+  kurabiye: '🍪 Kurabiye al',
+  su: '💧 Su al',
+};
+
+/** Davranışlardan eylem düğmeleri; dünya görünümü ve gezinti aynı listeyi gösterir */
+export function itemActions(item: Item, p: PlacedItem, o: { posed: boolean; today: string }): ItemAction[] {
+  const out: ItemAction[] = [];
+  const pose = poseOf(item);
+  if (pose) out.push(o.posed ? { id: 'stand', label: '🧍 Kalk' } : { id: pose, label: pose === 'sit' ? '🪑 Otur' : pose === 'lie' ? '🛏️ Yat' : '🎠 Sallan' });
+  if (has(item, 'TOGGLE')) {
+    const on = isOn(item, p);
+    const label =
+      item.fx === 'fire' ? (on ? '🔥 Söndür' : '🔥 Yak') : item.fx === 'tv' ? (on ? '📺 Kapat' : '📺 Aç') : item.fx === 'anim' ? (on ? '⏹️ Durdur' : '▶️ Çalıştır') : on ? '💡 Kapat' : '💡 Aç';
+    out.push({ id: 'toggle', label });
+  }
+  if (has(item, 'GATE')) out.push({ id: 'open', label: isOpen(item, p) ? '🚧 Kapıyı kapat' : '🚪 Kapıyı aç' });
+  else if (has(item, 'OPEN_CLOSE')) out.push({ id: 'open', label: isOpen(item, p) ? '🔒 Kapağı kapat' : '🔓 Kapağı aç' });
+  if (has(item, 'CHANGE_COLOR') && (item.palette?.length ?? 0) > 1) out.push({ id: 'color', label: '🎨 Renk' });
+  if (has(item, 'STORAGE')) out.push({ id: 'storage', label: `📦 İçi ${p.stored?.length ?? 0}/${item.capacity ?? 0}` });
+  if (has(item, 'DISPENSE')) out.push({ id: 'dispense', label: DISPENSE_LABEL[item.dispense ?? ''] ?? '🎁 Al' });
+  if (has(item, 'PLAY_SOUND')) out.push({ id: 'sound', label: '🎵 Çal' });
+  if (has(item, 'INTERACT_PET') && p.fed !== o.today) out.push({ id: 'feed', label: '🥣 Mama koy' });
+  if (has(item, 'BOOKS')) out.push({ id: 'books', label: '📚 Rafları aç' });
+  return out;
+}
+
+/** Durumu değiştiren eylemin sonucu (aç-kapa, kapak, renk, mama); durum değiştirmeyen eylemde null */
+export function applyAction(item: Item, p: PlacedItem, id: ActionId, today: string): PlacedItem | null {
+  if (id === 'toggle' && has(item, 'TOGGLE')) return { ...p, on: !isOn(item, p) };
+  if (id === 'open' && (has(item, 'OPEN_CLOSE') || has(item, 'GATE'))) return { ...p, open: !isOpen(item, p) };
+  if (id === 'color' && item.palette?.length) return { ...p, color: ((p.color ?? 0) + 1) % item.palette.length };
+  if (id === 'feed' && has(item, 'INTERACT_PET')) return { ...p, fed: today };
+  return null;
+}
+
+/** Depoya bir eşya koy (kapasite ve tür kontrolü; sahiplik çağıranda); olmazsa null */
+export function storeAt(layout: SpaceLayout, index: number, id: string): SpaceLayout | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it || !has(it, 'STORAGE') || !storable(itemById(id)) || (p.stored?.length ?? 0) >= (it.capacity ?? 0)) return null;
+  return { ...layout, items: layout.items.map((q, i) => (i === index ? { ...q, stored: [...(q.stored ?? []), id] } : q)) };
+}
+
+/** Depodan k. eşyayı çıkar (envantere döner) */
+export function takeOutAt(layout: SpaceLayout, index: number, k: number): SpaceLayout {
+  return {
+    ...layout,
+    items: layout.items.map((q, i) => {
+      if (i !== index || !q.stored) return q;
+      const stored = q.stored.filter((_, j) => j !== k);
+      const { stored: _s, ...rest } = q;
+      return stored.length ? { ...rest, stored } : rest;
+    }),
+  };
+}
+
+/** Yerinde döndürülebilir mi (birden çok yönü olan yer eşyası) */
+export const canRotate = (item: Item) => item.placement !== 'wall' && (item.rotations?.length ?? 1) > 1;
+
 // ---------- Yürüme ----------
-/** Alanın yürünemeyen karoları: ev, su, raf, ekim yerleri ve zemin katmanında olmayan eşyalar */
+/** Alanın yürünemeyen karoları: ev, su, raf, ekim yerleri ve zemin katmanında olmayan eşyalar (açık kapı geçilir) */
 export function blockedTiles(space: SpaceId, layout: SpaceLayout, ctx: WorldCtx): Set<string> {
   const out = new Set<string>();
   for (const [k, f] of fixedTiles(space, ctx)) if (solid(f)) out.add(k);
   for (const p of layout.items) {
     const it = itemById(p.item);
-    if (it && !it.walk && it.placement !== 'wall') footprint(it, p.x, p.y, p.rot).forEach((t) => out.add(key(t.x, t.y)));
+    if (it && !has(it, 'WALK_THROUGH') && it.placement !== 'wall' && !(has(it, 'GATE') && isOpen(it, p))) footprint(it, p.x, p.y, p.rot).forEach((t) => out.add(key(t.x, t.y)));
   }
   return out;
 }
@@ -641,6 +837,12 @@ export const DEFAULT_ROOM: SpaceLayout = {
     { item: 'hali:dikdortgen', x: 4, y: 4, rot: 0 },
   ],
 };
+
+/** Kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez) */
+export function defaultCover(space: SpaceId, slot: 'floor' | 'wall'): string {
+  if (isRoom(space)) return roomById(space)[slot];
+  return slot === 'floor' ? 'zemin:ahsap' : 'duvar:krem';
+}
 
 export const emptyLayout = (space: SpaceId): SpaceLayout =>
   space === 'room' ? structuredClone(DEFAULT_ROOM) : space === 'library' ? { floor: 'zemin:ahsap', wall: 'duvar:krem', items: [] } : { items: [] };

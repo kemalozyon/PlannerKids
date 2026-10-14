@@ -15,7 +15,6 @@ import Profile from './pages/Profile';
 import WeekPlan from './pages/WeekPlan';
 import Rewards from './pages/Rewards';
 import ParentPanel from './pages/ParentPanel';
-import Shop from './pages/Shop';
 import Collection from './pages/Collection';
 import { ReadingProvider } from './lib/ReadingContext';
 import Celebrations from './components/Celebrations';
@@ -24,14 +23,18 @@ import { GameProvider, useGame } from './lib/GameContext';
 import { SessionProvider, useSession } from './lib/SessionContext';
 import { formatClock } from './lib/useTimer';
 import { TOUR_EVENT, type TourMode } from './lib/tour';
+import { openShop, placeNow, SHOP_EVENT } from './lib/shop';
+import { STUDIO_EVENT, studioWanted } from './lib/thumbs';
 
 const Tour = lazy(() => import('./components/Tour'));
+const ShopWindow = lazy(() => import('./pages/Shop'));
+const ThumbStudio = lazy(() => import('./components/ThumbStudio'));
 import { IconBack, IconBook, IconCalendar, IconForest, IconToday, IconUser } from './components/Icons';
 
 /** Alt menüdeki sekmeler */
 type MainTab = 'today' | 'forest' | 'library' | 'history' | 'profile';
 /** Bir sekmenin içinden açılan alt sayfalar */
-type SubPage = 'plan' | 'rewards' | 'parent' | 'courses' | 'shop' | 'collection';
+type SubPage = 'plan' | 'rewards' | 'parent' | 'courses' | 'collection';
 type Tab = MainTab | SubPage;
 
 const TABS: { id: MainTab; label: string; icon: () => ReactNode }[] = [
@@ -48,7 +51,6 @@ const SUB: Record<SubPage, { title: string; parent: MainTab }> = {
   rewards: { title: 'Ödül hedeflerim', parent: 'profile' },
   parent: { title: 'Aile paneli', parent: 'profile' },
   courses: { title: 'Dersler', parent: 'profile' },
-  shop: { title: 'Dükkân', parent: 'forest' },
   collection: { title: 'Koleksiyon defteri', parent: 'profile' },
 };
 
@@ -56,6 +58,8 @@ const ALL: Tab[] = [...TABS.map((t) => t.id), ...(Object.keys(SUB) as SubPage[])
 
 function readTab(): Tab {
   const h = location.hash.slice(1);
+  // Dükkân bir pencere: "#shop" Dünyam'ın üstünde açılır
+  if (h === 'shop') return 'forest';
   return (ALL.includes(h as Tab) ? h : 'today') as Tab;
 }
 
@@ -104,10 +108,32 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
     return () => window.removeEventListener(TOUR_EVENT, on);
   }, []);
 
+  // Dükkân penceresi (her sayfanın üstünde) ve eşya resimlerini çizen gizli sahne
+  const [shop, setShop] = useState(() => location.hash === '#shop');
+  const [studio, setStudio] = useState(false);
   useEffect(() => {
-    const onHash = () => setTab(readTab());
+    const on = () => setShop(true);
+    const st = () => setStudio(true);
+    if (studioWanted()) setStudio(true);
+    window.addEventListener(SHOP_EVENT, on);
+    window.addEventListener(STUDIO_EVENT, st);
+    return () => {
+      window.removeEventListener(SHOP_EVENT, on);
+      window.removeEventListener(STUDIO_EVENT, st);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      setShop(location.hash === '#shop');
+      setTab(readTab());
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  const closeShop = useCallback(() => {
+    setShop(false);
+    if (location.hash === '#shop') history.replaceState(null, '', '#forest');
   }, []);
 
   const go = useCallback((t: Tab) => {
@@ -142,7 +168,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
           sub={isSub(tab) ? tab : null}
           onBack={() => isSub(tab) && go(SUB[tab].parent)}
           onForest={() => go('forest')}
-          onShop={() => go('shop')}
+          onShop={openShop}
           onToday={tab === 'today' ? null : () => go('today')}
         />
         {demo && (
@@ -178,14 +204,14 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               goForest={() => go('forest')}
               goPlan={() => go('plan')}
               goRewards={() => go('rewards')}
-              goShop={() => go('shop')}
+              goShop={openShop}
               reloadCourses={reloadCourses}
               goLibrary={() => go('library')}
               demo={!!demo}
             />
           ) : tab === 'forest' ? (
             <GameLock goToday={() => go('today')}>
-              <World courses={courses} goShop={() => go('shop')} />
+              <World courses={courses} goShop={openShop} />
             </GameLock>
           ) : tab === 'library' ? (
             <Library onShelf={goShelf} />
@@ -197,10 +223,6 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <WeekPlan courses={courses} goToday={() => go('today')} goCourses={() => go('courses')} />
           ) : tab === 'rewards' ? (
             <Rewards />
-          ) : tab === 'shop' ? (
-            <GameLock goToday={() => go('today')}>
-              <Shop goCollection={() => go('collection')} />
-            </GameLock>
           ) : tab === 'collection' ? (
             <GameLock goToday={() => go('today')}>
               <Collection goWorld={() => go('forest')} />
@@ -221,6 +243,27 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
         </nav>
         <Celebrations />
         <IdlePrompt />
+        {shop && (
+          <Suspense fallback={null}>
+            <ShopWindow
+              onClose={closeShop}
+              goCollection={() => {
+                closeShop();
+                go('collection');
+              }}
+              onPlace={(id) => {
+                closeShop();
+                placeNow(id);
+                if (tab !== 'forest') go('forest');
+              }}
+            />
+          </Suspense>
+        )}
+        {studio && (
+          <Suspense fallback={null}>
+            <ThumbStudio />
+          </Suspense>
+        )}
         {tour && (
           <Suspense fallback={null}>
             <Tour mode={tour} onClose={() => setTour(null)} />

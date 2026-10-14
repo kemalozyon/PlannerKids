@@ -2,7 +2,8 @@
 // yürünemeyen karolara (ağaç, ev, su, tepe, eşya) giremez, kenarlarından kayarak geçer.
 import { STARS_PER_DAY } from './economy';
 import { rng } from './rng';
-import { key, type Step } from './world';
+import type { Item } from './catalog';
+import { footSize, key, type Step, type Tile } from './world';
 
 /** Karakterin yarıçapı (karo = 1) */
 export const PLAYER_R = 0.25;
@@ -67,6 +68,28 @@ export function moveDir(ix: number, iy: number, yaw: number): [number, number] {
     dz /= m;
   }
   return [dx, dz];
+}
+
+/**
+ * Gezintide elde taşınan eşyanın konacağı yer (alanın yerel karosu): karakterin baktığı yöne (dört yönden en
+ * yakını) bitişik ayak izi, yanlamasına ortalı. `face` karakterin rotation.y'si (ileri = sin, cos). Duvar eşyası
+ * yalnızca arka (kuzey) ya da sol (batı) duvarın dibinde duvara bakarken asılır (y = -1 / x = -1); yoksa null.
+ */
+export function carrySpot(item: Pick<Item, 'w' | 'h' | 'placement'>, rot: number, px: number, pz: number, face: number, origin: Tile): Tile | null {
+  const fx = Math.sin(face);
+  const fz = Math.cos(face);
+  const [dx, dz] = Math.abs(fx) > Math.abs(fz) ? [Math.sign(fx), 0] : [0, Math.sign(fz) || 1];
+  const tx = Math.floor(px) - origin.x;
+  const ty = Math.floor(pz) - origin.y;
+  if (item.placement === 'wall') {
+    const along = Math.floor(((item.w ?? 1) - 1) / 2);
+    if (dz === -1 && ty === 0) return { x: tx - along, y: -1 };
+    if (dx === -1 && tx === 0) return { x: -1, y: ty - along };
+    return null;
+  }
+  const [w, h] = footSize(item, rot);
+  if (dz) return { x: tx - Math.floor((w - 1) / 2), y: dz > 0 ? ty + 1 : ty - h };
+  return { x: dx > 0 ? tx + 1 : tx - w, y: ty - Math.floor((h - 1) / 2) };
 }
 
 /** Konuma en yakın şey (en fazla max uzaklıkta) */

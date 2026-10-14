@@ -26,3 +26,9 @@ tabloya ekle. CC0 olmayan bir model eklenecekse lisansını ve atıf metnini bur
   durur, ön yüze girmez.
 - Kitap kapakları çalışma anında Open Library'den gelir (https://openlibrary.org, kapaklar
   https://covers.openlibrary.org); depoda saklanmaz.
+
+## Kodla çizilen eşya setleri
+
+Pura, Mode, Kulübe, Plasto/Area, Banyo, Mutfak ve bitki setleri (`src/components/world3d/Sets.tsx`) bu projede kodla
+çizildi. Habbo'nun eşya çizimleri kullanılmadı ya da kopyalanmadı; yalnızca genel tarzından (tıknaz biçimler, canlı
+renkler, koyu kontur) ilham alındı.

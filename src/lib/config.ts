@@ -65,7 +65,7 @@ export interface FixedTile {
   w?: number;
   h?: number;
   /** Kapının götürdüğü yer */
-  to?: 'room' | 'library' | 'garden' | 'forest';
+  to?: 'room' | 'library' | 'garden' | 'forest' | RoomId;
   /** Kapının açıldığı kenar: n kuzey (y−1), s güney (y+1), e doğu (x+1), w batı (x−1) */
   edge?: 'n' | 's' | 'e' | 'w';
   /** Ekim yerinin günü (aylık bahçe) */
@@ -74,9 +74,27 @@ export interface FixedTile {
 
 /** Ay bahçesi: m:YYYY-MM */
 export type MonthSpace = `m:${string}`;
-/** Evin alanları (haritaya göre) ve aylık ağaç bahçeleri */
-export type SpaceId = 'room' | 'library' | 'garden' | MonthSpace;
-export type HomeSpace = 'room' | 'library' | 'garden';
+/** Seriyle açılan odalar (evin doğusunda, odadan sonra sırayla) */
+export type RoomId = 'kitchen' | 'bedroom' | 'bath' | 'playroom';
+/** Evin alanları (haritaya göre), seriyle açılan odalar ve aylık ağaç bahçeleri */
+export type SpaceId = 'room' | 'library' | 'garden' | RoomId | MonthSpace;
+export type HomeSpace = 'room' | 'library' | 'garden' | RoomId;
+
+/**
+ * Seriyle açılan oda: en iyi seri `streak` güne ulaşınca bir kez açılır, kalıcıdır. Derinliği haritanın odasıyla
+ * aynı (aşamayla güneye büyür), eni sabit. floor/wall: kaplama seçilmemişken görünen (sahip olmak gerekmez).
+ */
+export interface RoomDef {
+  id: RoomId;
+  name: string;
+  icon: string;
+  streak: number;
+  w: number;
+  floor: string;
+  wall: string;
+  desc: string;
+  fixed: FixedTile[];
+}
 
 export interface SpaceDef {
   w: number;
@@ -125,6 +143,7 @@ export interface SpeciesDef {
 
 export interface WorldConfig {
   maps: MapDef[];
+  rooms: RoomDef[];
   /** Kitaplık görünümünde (ShelfView) raf başına kitap */
   library: { perShelf: number };
   season: { from: string; to: string };
@@ -136,7 +155,40 @@ export interface WorldConfig {
   creatures: { id: string; name: string; icon: string; trees: number; model?: string; fly?: boolean }[];
 }
 
-export type ItemUse = 'sit' | 'lie' | 'swing' | 'light' | 'tv' | 'fire';
+/**
+ * Eşya davranışları (birleştirilebilir; her yeni eşya için kod yazılmaz, items.json'da seçilir):
+ * SIT/LAY/SWING poz · TOGGLE aç-kapa (fx: ne açılır) · OPEN_CLOSE kapak · GATE kapalıyken geçilmez · WALK_THROUGH
+ * zemin katmanı, üstünden yürünür · STACKABLE üstüne küçük eşya konur · ON_SURFACE yüzeye konabilir · STORAGE içine
+ * eşya konur · DISPENSE eline bir şey verir · PLAY_ANIMATION hareketli · PLAY_SOUND melodi · CHANGE_COLOR renk ·
+ * INTERACT_PET canlılar toplanır · BOOKS kitaplık rafları. Yürümeyi engellemek varsayılandır.
+ */
+export const BEHAVIORS = [
+  'SIT',
+  'LAY',
+  'SWING',
+  'TOGGLE',
+  'OPEN_CLOSE',
+  'GATE',
+  'WALK_THROUGH',
+  'STACKABLE',
+  'ON_SURFACE',
+  'STORAGE',
+  'DISPENSE',
+  'PLAY_ANIMATION',
+  'PLAY_SOUND',
+  'CHANGE_COLOR',
+  'INTERACT_PET',
+  'BOOKS',
+] as const;
+export type Behavior = (typeof BEHAVIORS)[number];
+/** TOGGLE açılınca ne olur: ışık saçar, TV ekranı, ateş yanar, hareket (anim) */
+export type Fx = 'light' | 'tv' | 'fire' | 'anim';
+/** DISPENSE: karakterin eline verilen */
+export const DISPENSE = ['kahve', 'dondurma', 'meyve-suyu', 'patlamis-misir', 'kurabiye', 'su'] as const;
+export type Dispense = (typeof DISPENSE)[number];
+/** PLAY_SOUND: çalınan melodi */
+export const SOUNDS = ['piyano', 'muzik-kutusu', 'davul', 'zil', 'gitar'] as const;
+export type Sound = (typeof SOUNDS)[number];
 
 /** items.json'daki ham eşya tanımı */
 export interface ItemDef {
@@ -155,7 +207,6 @@ export interface ItemDef {
   model?: string;
   scale?: number;
   r?: number;
-  walk?: boolean;
   fly?: boolean;
   pitch?: number;
   /** Karo ölçüsü ve yerleşim (yerleştirilebilen eşyalar) */
@@ -167,20 +218,26 @@ export interface ItemDef {
   tint?: Record<string, string>;
   /** Bu malzeme ışık saçar (lamba) */
   glow?: string;
-  /** Dokununca açılan pencere (kitaplık) */
-  opens?: 'shelf';
   /** Alt kategori (dükkân ve envanter) */
   sub?: string;
-  /** Üstüne küçük eşya konabilir (masa, sehpa, tezgâh) */
-  surface?: boolean;
-  /** Yere ya da bir yüzeyin üstüne konabilir (laptop, masa lambası) */
-  small?: boolean;
+  /** Ne yapar (bkz. BEHAVIORS) ve davranışların ayarları */
+  behaviors?: Behavior[];
+  fx?: Fx;
+  /** STORAGE: içine konabilecek eşya sayısı */
+  capacity?: number;
+  dispense?: Dispense;
+  /** PLAY_ANIMATION: parçanın hareketi (Sets.tsx) */
+  anim?: string;
+  sound?: Sound;
+  /** CHANGE_COLOR: sırayla geçilen renkler (ilki varsayılan) */
+  palette?: string[];
   /** Kodla çizilen resim (duvar süsü) */
   art?: string;
-  /** Kodla çizilen eşya (kitaplık, salıncak, şömine) */
-  proc?: 'bookcase' | 'swing' | 'fireplace';
-  /** Ne işe yarar: otur, yat, sallan; ışık, TV, ateş aç-kapa */
-  use?: ItemUse;
+  /** Kodla çizilen eşya (kitaplık, salıncak, şömine; set: Habbo tarzı set parçası, bkz. world3d/Sets.tsx) */
+  proc?: 'bookcase' | 'swing' | 'fireplace' | 'set';
+  /** Set parçasının biçimi (sofa, chair, table, fridge…) ve renkleri [ana, ikinci, üçüncü] */
+  piece?: string;
+  colors?: string[];
   /** Oturma/yatma yüksekliği (birim) */
   seat?: number;
   /** TV ekranı: modelin genişliğine, yüksekliğine ve orta yüksekliğine oran */

@@ -179,7 +179,7 @@ export default function FocusMode({
             }}
           />
         </section>
-        <p className="muted small center">Seansı bitirince bugünün ağacı büyür ve 💎 Elmas kazanırsın. Yarıda bırakırsan (o gün başka çalışma yoksa) kuru ağaç kalır.</p>
+        <p className="muted small center">Seansı bitirince bugünün ağacı büyür ve çalıştığın her dakikaya 1 💎 Elmas kazanırsın. Yarıda bırakırsan (o gün başka çalışma yoksa) kuru ağaç kalır.</p>
       </div>
     </div>
   );

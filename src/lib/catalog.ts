@@ -3,10 +3,10 @@
 // (toplam saat, ağaç sayısı, seri, plan, ders altını, seviye) alınır; sandık eşyaları ve canlılar satın alınamaz.
 // Tanımlar src/config/items.json'da; sunucu fiyatı ve karo ölçüsünü item_defs tablosundan okur.
 
-import { CFG, ITEM_DEFS, type ItemDef, type ItemUse } from './config';
+import { CFG, ITEM_DEFS, type Behavior, type Dispense, type Fx, type ItemDef, type Sound } from './config';
 import type { Currency } from './types';
 
-export type { Currency };
+export type { Behavior, Currency };
 export type Category = 'mobilya' | 'isik' | 'bitki' | 'hali' | 'duvarsus' | 'zemin' | 'duvar' | 'dis' | 'kiyafet' | 'evcil' | 'diger';
 export type Slot = NonNullable<ItemDef['slot']>;
 export type Rarity = 'yaygin' | 'nadir' | 'efsanevi';
@@ -33,8 +33,6 @@ export interface Item {
   scale?: number;
   /** Adada kapladığı yer (yarıçap); yerleştirme ve çarpışma için */
   r?: number;
-  /** Üzerinden yürünebilir (yol, platform): çarpışmaya girmez */
-  walk?: boolean;
   /** Uçan hayvan */
   fly?: boolean;
   /** Hayvanın sesi (perde) */
@@ -48,17 +46,23 @@ export interface Item {
   placement?: 'indoor' | 'outdoor' | 'both' | 'wall';
   tint?: Record<string, string>;
   glow?: string;
-  opens?: 'shelf';
   desc?: string;
   color?: string;
   color2?: string;
   stars?: boolean;
   sub?: string;
-  surface?: boolean;
-  small?: boolean;
+  /** Ne yapar (config.ts → BEHAVIORS); hiç yoksa boş dizi. Sormak için has() */
+  behaviors: Behavior[];
+  fx?: Fx;
+  capacity?: number;
+  dispense?: Dispense;
+  anim?: string;
+  sound?: Sound;
+  palette?: string[];
   art?: string;
-  proc?: 'bookcase' | 'swing' | 'fireplace';
-  use?: ItemUse;
+  proc?: 'bookcase' | 'swing' | 'fireplace' | 'set';
+  piece?: string;
+  colors?: string[];
   seat?: number;
   screen?: [number, number, number];
   pattern?: string;
@@ -78,8 +82,14 @@ function toItem(d: ItemDef): Item {
           ? { kind: 'chest' }
           : { kind: 'free' };
   const { price: _p, unlock: _u, chest: _c, ...rest } = d;
-  return { ...rest, category: d.category as Category, rarity: d.rarity as Rarity, acquire };
+  return { ...rest, behaviors: d.behaviors ?? [], category: d.category as Category, rarity: d.rarity as Rarity, acquire };
 }
+
+/** Eşyanın bu davranışı var mı */
+export const has = (it: Pick<Item, 'behaviors'> | undefined, b: Behavior): boolean => !!it?.behaviors.includes(b);
+/** Karakteri oturtan/yatıran/sallayan davranışı (yoksa null) */
+export const poseOf = (it: Pick<Item, 'behaviors'>): 'sit' | 'lie' | 'swing' | null =>
+  has(it, 'SIT') ? 'sit' : has(it, 'LAY') ? 'lie' : has(it, 'SWING') ? 'swing' : null;
 
 export const ITEMS: Item[] = ITEM_DEFS.map(toItem);
 
@@ -109,6 +119,19 @@ export const SUBS: Record<string, string> = {
   banyo: '🛁 Banyo',
   elektronik: '📺 Elektronik',
   oyuncak: '🧸 Oyuncak',
+  pura: '🩵 Pura seti',
+  mode: '🖤 Mode seti',
+  kulube: '🪵 Kulübe seti',
+  plasto: '🌈 Plasto ve Area',
+  pastel: '🩷 Pastel seti',
+  orman: '🌲 Orman seti',
+  kraliyet: '👑 Kraliyet seti',
+  neon: '🟣 Neon seti',
+  depo: '📦 Depolama',
+  eglence: '🎮 Eğlence',
+  mimari: '🏛️ Mimari',
+  su: '⛲ Su',
+  hayvan: '🐾 Evcil köşe',
   cit: '🚧 Çit',
   yol: '🪨 Yol',
   cicek: '🌼 Çiçek',
@@ -137,6 +160,29 @@ export function groupTitle(g: string): string {
   const cat = CATEGORIES.find((c) => c.cats.includes(g as Category));
   return SUBS[g] ?? (cat ? `${cat.icon} ${cat.name}` : g);
 }
+
+/** Davranışların dükkânda görünen kısa adları */
+const BEHAVIOR_TEXT: Partial<Record<Behavior, (i: Item) => string>> = {
+  SIT: () => '🪑 oturulur',
+  LAY: () => '🛏️ uzanılır',
+  SWING: () => '🎠 sallanılır',
+  TOGGLE: (i) => (i.fx === 'fire' ? '🔥 yakılır' : i.fx === 'tv' ? '📺 açılır' : i.fx === 'anim' ? '▶️ çalışır' : '💡 açılıp kapanır'),
+  OPEN_CLOSE: () => '🔓 kapağı açılır',
+  GATE: () => '🚪 kapı gibi açılıp kapanır',
+  WALK_THROUGH: () => '👣 üstünden yürünür',
+  STACKABLE: () => '🍽️ üstüne eşya konur',
+  ON_SURFACE: () => '💻 masaya konabilir',
+  STORAGE: (i) => `📦 içine ${i.capacity ?? 0} eşya sığar`,
+  DISPENSE: () => '🎁 eline ikram verir',
+  PLAY_ANIMATION: () => '✨ hareket eder',
+  PLAY_SOUND: () => '🎵 çalınır',
+  CHANGE_COLOR: (i) => `🎨 ${i.palette?.length ?? 0} renk`,
+  INTERACT_PET: () => '🐾 canlılar yanına gelir',
+  BOOKS: () => '📚 kitapların dizilir',
+};
+
+/** Eşya ne yapar (dükkân): "oturulur · açılıp kapanır" */
+export const behaviorText = (i: Item): string => i.behaviors.map((b) => BEHAVIOR_TEXT[b]?.(i)).filter(Boolean).join(' · ');
 
 /** Eşyanın gruplandığı alt başlık (yoksa kategori) */
 export const groupOf = (i: Item): string => i.sub ?? (i.category === 'zemin' || i.category === 'duvar' ? i.category : i.slot ?? i.category);

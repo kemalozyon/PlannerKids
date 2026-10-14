@@ -1,14 +1,20 @@
 // Dünyam: tek bağlı dünya (worldPlan.ts). Ev (kütüphane | oda), önündeki bahçe, orman yolu ve aylık ağaç
 // bahçeleri yan yana; karakter kapılardan yürüyerek geçer, eve girince çatı kalkar. Çalıştıkça dünya büyür: her
-// çalışılan gün bir ağaç, toplam saatle arazi yerinde genişler (eşyalar yerinde kalır). Elmasla alınan eşyalar
-// Habbo gibi kare kare yerleşir; "Düzenle" karakterin bulunduğu alanı düzenler. Oynarken bir eşyaya dokununca
-// kullanma çubuğu açılır: otur, yat, sallan, ışığı/TV'yi/ateşi aç-kapa, TV kanalı; taşı, döndür, kaldır (hemen
-// kaydedilir). Aç/kapa durumu bu cihazda saklanır (ct-power-v1).
+// çalışılan gün bir ağaç, toplam saatle arazi yerinde genişler (eşyalar yerinde kalır).
+// Bir eşyaya dokununca karakter yanına yürür, varınca seçenekler açılır: eşyanın davranışlarından eylemler
+// (world.ts → itemActions: otur, yat, aç-kapa, kapak, renk, depo, al, çal, mama, raflar), Taşı (eşya elde, karoya
+// dokununca konur), Döndür, Kaldır (envantere). "🎒 Envanter" bulunduğun alanın çekmecesini açar: Elmasla alınan
+// eşyalar Habbo gibi kare kare yerleşir, zemin/duvar seçilir. Kaydet tuşu yok: her değişiklik (eşyanın durumu da)
+// hemen görünür ve kaydedilir (GameContext → saveSpace). ⛶ dünyayı tam ekran açar. "Yakından gez" (Explore) aynı
+// eşya işlerini kullanır.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { TvData } from '../components/world3d/art';
+import type { ItemRef } from '../components/world3d/WorldView';
+import StorageSheet from '../components/StorageSheet';
 import ShelfView, { BookCard } from '../components/ShelfView';
+import { ItemIcon } from '../components/ItemCard';
 import DaySheet from '../components/DaySheet';
-import { CATEGORIES, groupOf, itemById, ITEMS, SUBS, type Item } from '../lib/catalog';
+import { CATEGORIES, groupOf, has, itemById, ITEMS, SUBS, type Item } from '../lib/catalog';
 import { CFG } from '../lib/config';
 import { dayPhase } from '../lib/dayPhase';
 import { addDays, formatMinutes, toLocalDate, weekStart } from '../lib/date';
@@ -19,25 +25,42 @@ import { perksOf } from '../lib/level';
 import { useReading } from '../lib/ReadingContext';
 import { useSession } from '../lib/SessionContext';
 import { setSoundOn, sfx, soundOn } from '../lib/sfx';
+import { PLACE_EVENT, takePlace } from '../lib/shop';
 import { VIEW_EVENT } from '../lib/tour';
 import type { Book, Course } from '../lib/types';
 import { hasWebGL } from '../lib/webgl';
 import {
+  applyAction,
   canPlaceAt,
+  canRotate,
   daysIn,
+  defaultCover,
+  isIndoor,
+  isRoom,
+  roomById,
   emptyLayout,
   fitsSpace,
   footprint,
   isOn,
+  itemActions,
+  itemCounts,
   isMonthSpace,
   mapById,
   monthSpace,
   monthState,
+  moveItemTo,
+  nextRot,
   onTopOf,
   powerKey,
+  removeItemAt,
+  rotateItemAt,
   sanitizeLayout,
+  storable,
+  storeAt,
+  takeOutAt,
   seasonMonths,
   wallRot,
+  type ActionId,
   type DayTree,
   type PlacedItem,
   type SpaceId,
@@ -51,7 +74,8 @@ const WorldView = lazy(() => import('../components/world3d/WorldView'));
 const Explore = lazy(() => import('../components/forest3d/Explore'));
 
 const POS_KEY = 'ct-world-pos-v1';
-const POWER_KEY = 'ct-power-v1';
+/** Eldeki ikram (DISPENSE) bu kadar sonra biter */
+const HOLD_MS = 40_000;
 const GFX_KEY = 'ct-gfx-v1';
 const GROWN_KEY = 'ct-grown-v2';
 
@@ -83,7 +107,31 @@ function startTile(plan: WorldPlan, shelf: boolean): Tile {
   return entryOf(plan, 'room')!;
 }
 
-const AREA_NAME: Record<string, string> = { room: 'Odanı', library: 'Kütüphaneni', garden: 'Bahçeni' };
+/** Tarayıcının tam ekranı (iPhone'da yok: yalnızca sayfa içi kaplama) */
+const enterFullscreen = () => {
+  try {
+    void document.documentElement.requestFullscreen?.()?.catch(() => {});
+  } catch {
+    /* yok say */
+  }
+};
+const exitFullscreen = () => {
+  try {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  } catch {
+    /* yok say */
+  }
+};
+
+const PLACE_NAME: Record<string, string> = {
+  room: 'Odan',
+  library: 'Kütüphanen',
+  garden: 'Bahçen',
+  kitchen: 'Mutfağın',
+  bedroom: 'Yatak odan',
+  bath: 'Banyon',
+  playroom: 'Oyun odan',
+};
 
 export default function World({ courses, goShop }: { courses: Course[]; goShop: () => void }) {
   const { stats, saveSpace, collectStar } = useGame();
@@ -106,7 +154,7 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const [startShelf] = useState(shelf);
   const [here, setHere] = useState<RegionId | null>(null);
   const [goal, setGoal] = useState<{ to: RegionId; n: number } | null>(null);
-  const [big, setBig] = useState(false);
+  const [full, setFull] = useState(false);
   const [shadows, setShadows] = useState(() => read(GFX_KEY) === 'on' || (read(GFX_KEY) == null && !matchMedia('(pointer: coarse)').matches));
   const [sound, setSound] = useState(soundOn);
   const [tree, setTree] = useState<DayTree | null>(null);
@@ -114,29 +162,22 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const [toast, setToast] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
-  // Düzenleme (karakterin bulunduğu alan)
-  const [editSpace, setEditSpace] = useState<SpaceId | null>(null);
-  const [draft, setDraft] = useState<SpaceLayout | null>(null);
+  // Yerleştirme: envanterin açık olduğu alan; taşınan eşyanın alanı (taslak: eşya çıkarılmış hâli); elde tutulan
+  const [inv, setInv] = useState<SpaceId | null>(null);
+  const [moving, setMoving] = useState<{ space: SpaceId; layout: SpaceLayout } | null>(null);
   const [held, setHeld] = useState<{ item: string; rot: number; from?: PlacedItem } | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [editMsg, setEditMsg] = useState<{ text: string; error?: boolean } | null>(null);
-  const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('hepsi');
   const [grown, setGrown] = useState<string[]>(() => JSON.parse(read(GROWN_KEY) ?? '[]') as string[]);
-  // Oynarken: seçili eşya, otur/yat isteği, oturulan eşya, aç/kapa, TV kanalları, oyunda taşıma
-  const [using, setUsing] = useState<{ space: SpaceId; index: number } | null>(null);
+  // Oynarken: seçenekleri açık eşya, otur/yat isteği, oturulan eşya, aç/kapa, TV kanalları
+  const [using, setUsing] = useState<ItemRef | null>(null);
   const [action, setAction] = useState<{ space: SpaceId; index: number; n: number; stand?: boolean } | null>(null);
-  const [posedAt, setPosedAt] = useState<{ space: SpaceId; index: number } | null>(null);
-  const [power, setPower] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(read(POWER_KEY) ?? '{}') as Record<string, boolean>;
-    } catch {
-      return {};
-    }
-  });
+  const [posedAt, setPosedAt] = useState<ItemRef | null>(null);
+  /** Depo penceresi açık eşya; karakterin elindeki ikram (DISPENSE) */
+  const [storage, setStorage] = useState<ItemRef | null>(null);
+  const [holding, setHolding] = useState<string | null>(null);
   const [channels, setChannels] = useState<Record<string, number>>({});
-  const [quick, setQuick] = useState(false);
   const pos = useRef<Tile | null>(null);
+  const placeRef = useRef<(id: string) => void>(() => {});
 
   useEffect(() => {
     const id = setInterval(() => setPhase(dayPhase(new Date().getHours())), 60_000);
@@ -147,29 +188,58 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
     const on = (e: Event) => {
       const d = (e as CustomEvent<string>).detail;
       const to: RegionId = d === 'outdoor' || d === 'forest' || d === 'month' ? monthSpace(months.includes(thisMonth) ? thisMonth : months[0]) : d === 'library' || d === 'garden' ? d : 'room';
-      setDraft(null);
-      setEditSpace(null);
+      setInv(null);
+      setMoving(null);
+      setHeld(null);
       setGoal((g) => ({ to, n: (g?.n ?? 0) + 1 }));
     };
     window.addEventListener(VIEW_EVENT, on);
     return () => window.removeEventListener(VIEW_EVENT, on);
   }, [months, thisMonth]);
-  // Esc: elde tutulanı bırak
+  // Dükkândan "Hemen yerleştir" (sayfa açıkken olay, açılırken bekleyen istek)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && setHeld((h) => (h?.from ? h : null));
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
+    const on = (e: Event) => {
+      takePlace();
+      placeRef.current((e as CustomEvent<string>).detail);
+    };
+    window.addEventListener(PLACE_EVENT, on);
+    return () => window.removeEventListener(PLACE_EVENT, on);
   }, []);
+  const statsReady = !!stats;
+  useEffect(() => {
+    if (!statsReady) return;
+    const id = takePlace();
+    if (id) placeRef.current(id);
+  }, [statsReady]);
+  useEffect(() => {
+    if (!holding) return;
+    const id = setTimeout(() => setHolding(null), HOLD_MS);
+    return () => clearTimeout(id);
+  }, [holding]);
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(id);
   }, [toast]);
+  // Tam ekran: sayfa kaymaz; tarayıcının tam ekranından (Esc, geri) çıkılınca kaplama da kapanır
+  useEffect(() => {
+    if (!full) return;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const on = () => !document.fullscreenElement && setFull(false);
+    document.addEventListener('fullscreenchange', on);
+    return () => {
+      document.removeEventListener('fullscreenchange', on);
+      document.body.style.overflow = overflow;
+      exitFullscreen();
+    };
+  }, [full]);
 
-  const ctx: WorldCtx = useMemo(() => ({ map: stats?.world.map ?? CFG.world.maps[0].id, today }), [stats?.world.map, today]);
+  const best = stats?.bestStreak ?? 0;
+  const ctx: WorldCtx = useMemo(() => ({ map: stats?.world.map ?? CFG.world.maps[0].id, today, best }), [stats?.world.map, today, best]);
   const plan = useMemo(() => worldPlan(ctx, months), [ctx, months]);
   const [start] = useState(() => startTile(plan, startShelf));
-  // Sahne yüklenmeden de bulunduğun alan bilinsin (sekme, Düzenle)
+  // Sahne yüklenmeden de bulunduğun alan bilinsin (sekme, envanter)
   useEffect(() => setHere((h) => h ?? regionAt(plan, start)?.id ?? null), []); // eslint-disable-line react-hooks/exhaustive-deps
   const mapDef = mapById(ctx.map);
   const doneBooks = useMemo(
@@ -180,18 +250,27 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
   const owned = (it: Item) => (stats ? ownedCount(it, stats.owned, stats.unlock) : 0);
   // Bütün alanlar (kaydedilmemiş oda başlangıç eşyalarıyla); her alan kendi kuralıyla ayıklanır
   const allSpaces = useMemo<Partial<Record<string, SpaceLayout>>>(() => ({ room: emptyLayout('room'), ...stats?.spaces }), [stats?.spaces]);
-  const usedIn = (l: SpaceLayout | undefined, id: string) => l?.items.filter((p) => p.item === id).length ?? 0;
+  // Yerleştirilenler ve depolara konanlar
+  const usedIn = (l: SpaceLayout | undefined, id: string) => itemCounts(l).get(id) ?? 0;
   const usedElsewhere = (space: string) => (id: string) => Object.entries(allSpaces).reduce((n, [s, l]) => (s === space ? n : n + usedIn(l, id)), 0);
+  // Değişmeyen alanın nesnesi aynı kalır: dünya yalnızca değişen alanı yeniden çizer
+  const prevLayouts = useRef<Partial<Record<SpaceId, SpaceLayout>>>({});
   const layouts = useMemo(() => {
     const out: Partial<Record<SpaceId, SpaceLayout>> = {};
     if (!stats) return out;
     for (const r of plan.regions) {
       if (r.id === 'trail' || r.locked) continue;
-      out[r.id] = sanitizeLayout(r.id, stats.spaces[r.id] ?? emptyLayout(r.id), ctx, owned, usedElsewhere(r.id)).layout;
+      const l = sanitizeLayout(r.id, stats.spaces[r.id] ?? emptyLayout(r.id), ctx, owned, usedElsewhere(r.id)).layout;
+      const old = prevLayouts.current[r.id];
+      out[r.id] = old && JSON.stringify(old) === JSON.stringify(l) ? old : l;
     }
+    prevLayouts.current = out;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, stats, ctx, allSpaces]);
+  }, [plan, stats?.spaces, stats?.owned, stats?.unlock, ctx, allSpaces]);
+  const invLayout = inv ? layouts[inv] : undefined;
+  // Sahnedeki yerleştirme katmanı: taşınan eşyanın taslağı ya da envanterin alanı
+  const edit = useMemo(() => moving ?? (inv ? { space: inv, layout: invLayout ?? emptyLayout(inv) } : null), [moving, inv, invLayout]);
   // TV: bugünün ve haftanın çalışması, seri, toplam saat; bu ayın ormanı
   const tv = useMemo<TvData>(() => {
     const ws = weekStart(today);
@@ -211,20 +290,36 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
         }),
       },
     };
-  }, [stats, today, thisMonth]);
+    // stats'ın tamamı değil: eşya kaydı (spaces) TV'yi ve dünyayı yeniden çizdirmesin
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats?.forest, stats?.todayMinutes, stats?.dayTotals, stats?.streak, stats?.trustedMinutes, today, thisMonth]);
+  // Bulunduğun alan yerleştirilebilir mi (yolda ya da kilitli bahçede değil)
+  const hereSpace = here && here !== 'trail' && !plan.regions.find((r) => r.id === here)?.locked ? (here as SpaceId) : null;
+  // Envanter açıkken karakter başka bir alana geçerse envanter de oraya geçer
+  useEffect(() => {
+    if (!inv || held || hereSpace === inv) return;
+    setInv(hereSpace);
+    setTab('hepsi');
+  }, [hereSpace]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Esc: elde tutulanı bırak (taşınan eşya yerinde kalır), yoksa tam ekrandan çık
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || exploring) return;
+      if (held) {
+        setHeld(null);
+        setMoving(null);
+      } else if (full) setFull(false);
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [held, full, exploring]);
   if (!stats) return <div className="splash">Yükleniyor…</div>;
 
-  const space: SpaceId | null = editSpace;
-  const editing = draft != null && space != null;
-  const fullEdit = editing && !quick;
-  const layout = editing ? draft : null;
-  // Bulunduğun alan düzenlenebilir mi (yolda ya da kilitli bahçede değil)
-  const hereSpace = here && here !== 'trail' && !plan.regions.find((r) => r.id === here)?.locked ? (here as SpaceId) : null;
   const hereMonth = hereSpace && isMonthSpace(hereSpace) ? hereSpace.slice(2) : null;
   // Bugünün ağacı yeni dikildiyse ya da büyüdüyse bir kez büyüme animasyonu (bu ayın bahçesindeyken)
   const todayTree = stats.forest.find((t) => t.date === today && !t.dry);
   const growKey = todayTree ? `${todayTree.id}:${todayTree.stageIndex}` : null;
-  const growId = !editing && hereMonth === thisMonth && growKey && !grown.includes(growKey) ? todayTree!.id : null;
+  const growId = !edit && hereMonth === thisMonth && growKey && !grown.includes(growKey) ? todayTree!.id : null;
   const markGrown = () => {
     if (!growKey) return;
     const next = [...grown, growKey].slice(-40);
@@ -232,205 +327,182 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
     write(GROWN_KEY, JSON.stringify(next));
   };
   const goTo = (to: RegionId) => {
-    if (editing) return;
+    if (held) return;
     setUsing(null);
     const r = plan.regions.find((x) => x.id === to);
     if (r?.locked && isMonthSpace(to)) setToast(`🔒 ${formatMonth(to.slice(2))} bahçesi 1 ${formatMonth(to.slice(2))} günü açılır.`);
+    if (isRoom(to) && stats.bestStreak < roomById(to).streak) {
+      const d = roomById(to);
+      return setToast(`🔒 ${d.icon} ${d.name} ${d.streak} günlük seriyle açılır. En iyi serin: ${stats.bestStreak} gün.`);
+    }
     setGoal((g) => ({ to, n: (g?.n ?? 0) + 1 }));
   };
 
+  // ---------- Kayıt ----------
+  const layoutOf = (sp: SpaceId) => layouts[sp] ?? emptyLayout(sp);
+  const closeEdit = () => {
+    setInv(null);
+    setMoving(null);
+    setHeld(null);
+  };
+  /** Hemen görünür ve kaydedilir; sunucu reddederse kayıtlı hâl döner */
+  const persist = (sp: SpaceId, next: SpaceLayout) => {
+    saveSpace(sp, next).catch((e: Error) => {
+      closeEdit();
+      setToast(`Kaydedilemedi: ${e.message}`);
+    });
+  };
+
   // ---------- Envanter ----------
-  const available = (it: Item, l: SpaceLayout | null = layout) => (space ? owned(it) - usedElsewhere(space)(it.id) - usedIn(l ?? undefined, it.id) : 0);
-  const inventory = space
-    ? ITEMS.filter((it) => !!it.placement && fitsSpace(it, space))
-        .map((it) => ({ it, n: available(it) }))
+  const usedAll = (id: string) => Object.values(allSpaces).reduce((n, l) => n + usedIn(l, id), 0);
+  const free = (it: Item) => owned(it) - usedAll(it.id);
+  const inventory = inv
+    ? ITEMS.filter((it) => !!it.placement && fitsSpace(it, inv))
+        .map((it) => ({ it, n: free(it) }))
         .filter((x) => x.n > 0)
     : [];
   const invTabs = CATEGORIES.filter((c) => inventory.some((x) => c.cats.includes(x.it.category)));
   const shown = tab === 'hepsi' ? inventory : inventory.filter((x) => CATEGORIES.find((c) => c.id === tab)?.cats.includes(x.it.category));
   const coverings = (cat: 'zemin' | 'duvar') => ITEMS.filter((it) => it.category === cat && owned(it) > 0);
-
-  const startEdit = () => {
-    if (!hereSpace) return;
-    const s = sanitizeLayout(hereSpace, stats.spaces[hereSpace] ?? emptyLayout(hereSpace), ctx, owned, usedElsewhere(hereSpace));
-    setEditSpace(hereSpace);
-    setDraft(structuredClone(s.layout));
-    setSelected(null);
+  const openInv = (sp: SpaceId) => {
+    setInv(sp);
+    setMoving(null);
     setHeld(null);
+    setUsing(null);
     setTab('hepsi');
-    setEditMsg(s.dropped ? { text: `${s.dropped} eşya buraya sığmadı, envantere döndü.` } : null);
-  };
-  const cancelEdit = () => {
-    setDraft(null);
-    setEditSpace(null);
-    setHeld(null);
-    setSelected(null);
-    setEditMsg(null);
-    setQuick(false);
-  };
-  const save = async () => {
-    if (!draft || !space) return;
-    setSaving(true);
-    setEditMsg(null);
-    try {
-      await saveSpace(space, draft);
-      sfx.place();
-      cancelEdit();
-    } catch (e) {
-      setEditMsg({ text: (e as Error).message, error: true });
-    } finally {
-      setSaving(false);
-    }
-  };
-  const drop = (t: Tile) => {
-    if (!held || !draft || !space) return;
-    const it = itemById(held.item);
-    if (!it) return;
-    const rot = it.placement === 'wall' ? wallRot(t.x, t.y) : held.rot;
-    const p: PlacedItem = { item: held.item, x: t.x, y: t.y, rot };
-    if (quick) return quickDrop(p);
-    if (canPlaceAt(space, draft, ctx, p)) {
-      const next = { ...draft, items: [...draft.items, p] };
-      setDraft(next);
-      sfx.place();
-      // Habbo gibi: aynı eşyadan daha varsa elde kalır (çit, yol döşemek kolay)
-      if (!held.from && available(it, next) > 0 && it.repeat) {
-        setEditMsg({ text: `${it.name} kondu · bir tane daha koymak için başka karoya dokun` });
-        return;
-      }
-      setSelected(next.items.length - 1);
-      setHeld(null);
-      setEditMsg(null);
-    } else if (held.from) {
-      // Geçersiz yere bırakılan eşya eski yerine döner
-      setDraft({ ...draft, items: [...draft.items, held.from] });
-      setSelected(draft.items.length);
-      setHeld(null);
-      setEditMsg({ text: 'Buraya konamaz, eski yerine döndü.', error: true });
-    } else setEditMsg({ text: it.placement === 'wall' ? 'Buraya asılamaz: duvarın bu kısmı dolu ya da pencere/kapı var.' : 'Buraya konamaz: karo dolu ya da alanın dışında.', error: true });
-  };
-  /** Eşyayı yerinden kaldır (taşımak için); üstündeki küçük eşyalar envantere döner */
-  const pick = (i: number) => {
-    if (!draft) return;
-    const p = draft.items[i];
-    const tops = onTopOf(draft, i);
-    setDraft({ ...draft, items: draft.items.filter((_, k) => k !== i && !tops.includes(k)) });
-    setHeld({ item: p.item, rot: p.rot, from: p });
-    setSelected(null);
-    setEditMsg(tops.length ? { text: `Üstündeki ${tops.length} eşya envantere döndü.` } : null);
   };
   /** Envanterden bir eşyayı eline al */
-  const hold = (it: Item) => {
-    setHeld({ item: it.id, rot: it.rotations?.[0] ?? 0 });
-    setSelected(null);
-    setEditMsg({ text: it.placement === 'wall' ? 'Asmak istediğin duvara dokun' : 'Koymak istediğin karoya dokun' });
+  const hold = (it: Item) => setHeld({ item: it.id, rot: it.rotations?.[0] ?? 0 });
+  /** Karakterin durduğu karoya eşya konmaz (yürünür halı/yol hariç) */
+  const onAvatar = (sp: SpaceId, it: Item, p: PlacedItem) => {
+    const r = regionOf(plan, sp);
+    const me = pos.current && r ? { x: pos.current.x - r.x, y: pos.current.y - r.y } : null;
+    return !!me && it.placement !== 'wall' && !has(it, 'WALK_THROUGH') && footprint(it, p.x, p.y, p.rot).some((t) => t.x === me.x && t.y === me.y);
   };
-  const rotations = (id: string) => itemById(id)?.rotations ?? [0];
-  const nextRot = (id: string, rot: number) => {
-    const r = rotations(id);
-    return r[(r.indexOf(rot) + 1) % r.length];
-  };
-  const rotate = () => {
-    if (held) return setHeld({ ...held, rot: nextRot(held.item, held.rot) });
-    if (selected == null || !draft || !space) return;
-    const p = draft.items[selected];
-    const q = { ...p, rot: nextRot(p.item, p.rot) };
-    if (canPlaceAt(space, draft, ctx, q, selected)) {
-      setDraft({ ...draft, items: draft.items.map((x, k) => (k === selected ? q : x)) });
-      setEditMsg(null);
-    } else setEditMsg({ text: 'Döndürünce sığmıyor.', error: true });
-  };
-  const stash = () => {
-    if (held) {
+  const drop = (t: Tile) => {
+    if (!held || !edit) return;
+    const sp = edit.space;
+    const it = itemById(held.item);
+    if (!it) return;
+    const p: PlacedItem = { item: held.item, x: t.x, y: t.y, rot: it.placement === 'wall' ? wallRot(t.x, t.y) : held.rot };
+    if (onAvatar(sp, it, p)) return setToast('Karakterin orada duruyor, başka bir karo seç.');
+    if (!canPlaceAt(sp, edit.layout, ctx, p)) {
+      return setToast(it.placement === 'wall' ? 'Buraya asılamaz: duvarın bu kısmı dolu ya da pencere/kapı var.' : 'Buraya konamaz: karo dolu ya da alanın dışında.');
+    }
+    sfx.place();
+    persist(sp, { ...edit.layout, items: [...edit.layout.items, p] });
+    if (held.from) {
+      setMoving(null);
       setHeld(null);
-      setEditMsg(null);
+    } else if (!it.repeat || free(it) <= 1) setHeld(null); // Habbo gibi: çit, yol elde kalır
+  };
+  /** Dükkândan "Hemen yerleştir": bulunduğun alanın envanteri eşya elde açılır */
+  const placeFromShop = (id: string) => {
+    const it = itemById(id);
+    if (!it || !hereSpace) return setToast('Eşyanı yerleştirmek için evine ya da bahçene git, sonra 🎒 Envanter.');
+    if (!fitsSpace(it, hereSpace)) return setToast(it.placement === 'outdoor' ? `${it.name} dışarıya konur: bahçene git, sonra 🎒 Envanter.` : `${it.name} evin içine konur: odana git, sonra 🎒 Envanter.`);
+    if (free(it) <= 0) return setToast(`Bütün ${it.name} eşyaların yerleştirilmiş. Taşımak için üstüne dokun.`);
+    openInv(hereSpace);
+    hold(it);
+  };
+  placeRef.current = placeFromShop;
+
+  // ---------- Eşya işleri (kuşbakışı ve gezinti): kullan, taşı, döndür, kaldır ----------
+  const placedAt = (r: ItemRef) => layoutOf(r.space).items[r.index] as PlacedItem | undefined;
+  /** Eşyanın eylemi (pozlar hariç: onları kuşbakışında WorldView, gezintide Explore yapar) */
+  const doAction = (r: ItemRef, id: ActionId) => {
+    const p = placedAt(r);
+    const it = p && itemById(p.item);
+    if (!p || !it) return;
+    const next = applyAction(it, p, id, today);
+    if (next) {
+      const l = layoutOf(r.space);
+      persist(r.space, { ...l, items: l.items.map((q, i) => (i === r.index ? next : q)) });
+      if (id === 'open') sfx.door();
+      else sfx.pop();
+      if (id === 'feed') setToast('🥣 Mama kondu: canlılar bugün yanına gelecek.');
       return;
     }
-    if (selected == null || !draft) return;
-    const tops = onTopOf(draft, selected);
-    setDraft({ ...draft, items: draft.items.filter((_, k) => k !== selected && !tops.includes(k)) });
-    setSelected(null);
-  };
-
-  // ---------- Oyunda: kullan, taşı, döndür, kaldır (hemen kaydedilir) ----------
-  const usedItem = using ? layouts[using.space]?.items[using.index] : undefined;
-  const useDef = usedItem ? itemById(usedItem.item) : undefined;
-  const useKey = using && usedItem ? powerKey(using.space, usedItem) : '';
-  const useOn = useDef && using ? isOn(useDef, useKey, power) : false;
-  const posedHere = !!posedAt && !!using && posedAt.space === using.space && posedAt.index === using.index;
-  /** Kayıtlı yerleşimi değiştirip hemen kaydet; olmazsa eski hâli kalır */
-  const commit = async (sp: SpaceId, next: SpaceLayout, ok: string | null = null) => {
-    try {
-      await saveSpace(sp, next);
-      sfx.place();
-      if (ok) setToast(ok);
-    } catch (e) {
-      setToast((e as Error).message);
+    if (id === 'books') setShelf(true);
+    else if (id === 'storage') setStorage(r);
+    else if (id === 'sound') sfx.melody(it.sound ?? 'piyano');
+    else if (id === 'dispense' && it.dispense) {
+      setHolding(it.dispense);
+      sfx.pop();
     }
   };
-  const togglePower = () => {
-    if (!useDef || !useKey) return;
-    const next = { ...power, [useKey]: !useOn };
-    setPower(next);
-    write(POWER_KEY, JSON.stringify(next));
+  const nextChannel = (r: ItemRef) => {
+    const p = placedAt(r);
+    if (!p) return;
+    const k = powerKey(r.space, p);
+    setChannels((c) => ({ ...c, [k]: ((c[k] ?? 0) + 1) % 2 }));
     sfx.pop();
   };
-  const nextChannel = () => {
-    setChannels((c) => ({ ...c, [useKey]: ((c[useKey] ?? 0) + 1) % 2 }));
+  const rotateItem = (r: ItemRef): string | null => {
+    const next = rotateItemAt(r.space, layoutOf(r.space), r.index, ctx);
+    if (!next) return 'Döndürünce sığmıyor.';
+    persist(r.space, next);
     sfx.pop();
+    return null;
   };
-  const poseAction = (stand = false) => using && setAction((a) => ({ ...using, n: (a?.n ?? 0) + 1, stand }));
-  /** Oyunda taşı: eşya kayıtlı yerinden kalkar, elde imleçle gezer */
-  const quickPick = () => {
-    if (!using || !usedItem) return;
-    const base = layouts[using.space] ?? emptyLayout(using.space);
-    const tops = onTopOf(base, using.index);
-    setEditSpace(using.space);
-    setDraft({ ...base, items: base.items.filter((_, k) => k !== using.index && !tops.includes(k)) });
-    setHeld({ item: usedItem.item, rot: usedItem.rot, from: usedItem });
-    setQuick(true);
+  const removeItem = (r: ItemRef) => {
+    const it = itemById(placedAt(r)?.item ?? '');
+    persist(r.space, removeItemAt(layoutOf(r.space), r.index));
+    sfx.place();
     setUsing(null);
-    setEditMsg(null);
-    if (tops.length) setToast(`Üstündeki ${tops.length} eşya envantere döndü.`);
+    setToast(`${it?.name ?? 'Eşya'} envantere döndü.`);
   };
-  const quickDrop = (p: PlacedItem) => {
-    if (!draft || !space) return;
-    const it = itemById(p.item)!;
-    const r = regionOf(plan, space);
-    const me = pos.current && r ? { x: pos.current.x - r.x, y: pos.current.y - r.y } : null;
-    const onMe = me && it.placement !== 'wall' && !it.walk && footprint(it, p.x, p.y, p.rot).some((t) => t.x === me.x && t.y === me.y);
-    if (onMe) return setToast('Karakterin orada duruyor, başka bir karo seç.');
-    if (!canPlaceAt(space, draft, ctx, p)) return setToast(it.placement === 'wall' ? 'Buraya asılamaz.' : 'Buraya konamaz.');
-    const next = { ...draft, items: [...draft.items, p] };
-    const sp = space;
-    cancelEdit();
-    void commit(sp, next);
+  /** Gezintide taşınan eşyayı bırak (aynı alanda) */
+  const moveItem = (r: ItemRef, to: Tile, rot: number): string | null => {
+    const next = moveItemTo(r.space, layoutOf(r.space), r.index, to, rot, ctx);
+    if (!next) return 'Buraya konamaz.';
+    persist(r.space, next);
+    sfx.place();
+    return null;
   };
-  const quickRotate = () => {
-    if (held && quick) return setHeld({ ...held, rot: nextRot(held.item, held.rot) });
-    if (!using || !usedItem) return;
-    const base = layouts[using.space] ?? emptyLayout(using.space);
-    const q = { ...usedItem, rot: nextRot(usedItem.item, usedItem.rot) };
-    if (!canPlaceAt(using.space, base, ctx, q, using.index)) return setToast('Döndürünce sığmıyor.');
-    void commit(using.space, { ...base, items: base.items.map((x, k) => (k === using.index ? q : x)) });
-  };
-  const quickRemove = () => {
-    if (!using || !useDef) return;
-    const base = layouts[using.space] ?? emptyLayout(using.space);
-    const tops = onTopOf(base, using.index);
-    const sp = using.space;
+  /** Kuşbakışında Taşı: eşya yerinden kalkar, elde imleçle gezer, karoya dokununca konur */
+  const startMove = (r: ItemRef) => {
+    const base = layoutOf(r.space);
+    const p = base.items[r.index];
+    if (!p) return;
+    const tops = onTopOf(base, r.index);
+    setInv(null);
     setUsing(null);
-    void commit(sp, { ...base, items: base.items.filter((_, k) => k !== using.index && !tops.includes(k)) }, `${useDef.name} envantere döndü.`);
+    setMoving({ space: r.space, layout: removeItemAt(base, r.index) });
+    setHeld({ item: p.item, rot: p.rot, from: p });
+    if (tops.length) setToast(`Üstündeki ${tops.length} eşya envantere dönecek.`);
   };
 
-  const selItem = held ? itemById(held.item) : selected != null && draft ? itemById(draft.items[selected]?.item ?? '') : undefined;
+  const usedItem = using ? placedAt(using) : undefined;
+  const useDef = usedItem ? itemById(usedItem.item) : undefined;
+  const useKey = using && usedItem ? powerKey(using.space, usedItem) : '';
+  const useOn = useDef && usedItem ? isOn(useDef, usedItem) : false;
+  const posedHere = !!posedAt && !!using && posedAt.space === using.space && posedAt.index === using.index;
+  const actions = useDef && usedItem ? itemActions(useDef, usedItem, { posed: posedHere, today }) : [];
+  const runAction = (id: ActionId) => {
+    if (!using) return;
+    if (id === 'sit' || id === 'lie' || id === 'swing' || id === 'stand') return setAction((a) => ({ ...using, n: (a?.n ?? 0) + 1, stand: id === 'stand' }));
+    doAction(using, id);
+  };
+  // Depo penceresi: içindekiler ve envanterde boşta duran, içine konabilecek eşyalar
+  const storePlaced = storage ? placedAt(storage) : undefined;
+  const storeDef = storePlaced ? itemById(storePlaced.item) : undefined;
+  const storeCandidates = storeDef
+    ? ITEMS.filter((it) => storable(it) && it.category !== 'diger')
+        .map((it) => ({ it, n: free(it) }))
+        .filter((x) => x.n > 0)
+    : [];
+
+  const heldItem = held ? itemById(held.item) : undefined;
   const maps = stats.maps;
   const nextMap = maps.next;
   const toNext = nextMap ? nextMap.hours * 60 - stats.trustedMinutes : 0;
-  const where = space ? (isMonthSpace(space) ? `${formatMonth(space.slice(2))} bahçeni` : AREA_NAME[space]) : '';
-  const tabOn = (v: 'room' | 'library' | 'garden' | 'month') => (v === 'month' ? !!hereMonth || here === 'trail' : here === v);
+  const placeName = (sp: SpaceId) => (isMonthSpace(sp) ? `${formatMonth(sp.slice(2))} bahçen` : PLACE_NAME[sp]);
+  const tabOn = (v: 'room' | 'library' | 'garden' | 'month') => (v === 'month' ? !!hereMonth || here === 'trail' : v === 'room' ? here === 'room' || (!!here && isRoom(here)) : here === v);
+  const atHome = !!here && (here === 'room' || isRoom(here));
   const chipMonth = hereMonth ?? (months.includes(thisMonth) ? thisMonth : months.at(-1)!);
   const monthTrees = stats.forest.filter((t) => t.month === chipMonth);
+  const idle = !using && !inv && !held;
 
   const fallback = (
     <section className="card">
@@ -453,268 +525,263 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
 
   return (
     <div className="stack world-page">
-      <div className="world-tabs" role="tablist" aria-label="Dünyamda nereye gideyim">
-        {(
-          [
-            ['room', '🏠 Odam'],
-            ['library', '📚 Kütüphane'],
-            ['garden', `${mapDef.icon} Bahçe`],
-            ['month', '🌳 Ağaç bahçeleri'],
-          ] as ['room' | 'library' | 'garden' | 'month', string][]
-        ).map(([v, label]) => (
-          <button
-            key={v}
-            role="tab"
-            aria-selected={tabOn(v)}
-            className={tabOn(v) ? 'on' : ''}
-            onClick={() => goTo(v === 'month' ? monthSpace(chipMonth) : v)}
-            disabled={editing}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {(hereMonth || here === 'trail') && !editing && (
-        <div className="month-bar" role="group" aria-label="Ay bahçesine git">
-          <div className="month-chips">
-            {months.map((m) => {
-              const st = monthState(m, today);
-              const n = stats.forest.filter((t) => t.month === m && !t.dry).length;
-              return (
-                <button key={m} className={`chip${m === hereMonth ? ' on' : ''}${st !== 'open' ? ' locked' : ''}`} aria-pressed={m === hereMonth} onClick={() => goTo(monthSpace(m))}>
-                  {st !== 'open' ? '🔒 ' : ''}
-                  {formatMonth(m).split(' ')[0].slice(0, 3)}
-                  {st === 'open' && <span className="muted"> {n}</span>}
-                </button>
-              );
-            })}
-          </div>
+      <div className={`world-stage${full ? ' full' : ''}`}>
+        <div className="world-tabs" role="tablist" aria-label="Dünyamda nereye gideyim">
+          {(
+            [
+              ['room', '🏠 Odam'],
+              ['library', '📚 Kütüphane'],
+              ['garden', `${mapDef.icon} Bahçe`],
+              ['month', '🌳 Ağaç bahçeleri'],
+            ] as ['room' | 'library' | 'garden' | 'month', string][]
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={tabOn(v)}
+              className={tabOn(v) ? 'on' : ''}
+              onClick={() => goTo(v === 'month' ? monthSpace(chipMonth) : v)}
+              disabled={!!held}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      )}
 
-      {can3D ? (
-        <div className={`world-wrap${fullEdit ? ' editing' : ''}${big ? ' big' : ''}`} data-tour="world">
-          <Suspense fallback={<div className="world-loading">🏡 Dünyan hazırlanıyor…</div>}>
-            <WorldView
-              key={ctx.map}
-              plan={plan}
-              map={mapDef}
-              layouts={layouts}
-              forest={stats.forest}
-              creatures={stats.creatures}
-              phase={phase}
-              shadows={shadows}
-              look={stats.equipped.look}
-              start={start}
-              goal={goal}
-              growId={growId}
-              onGrown={markGrown}
-              books={doneBooks}
-              reading={readingNow}
-              onBook={(b) => {
-                sfx.pop();
-                setBook(b);
-              }}
-              edit={editing ? { space: space!, layout: draft!, full: !quick } : null}
-              held={held}
-              selected={selected}
-              onPick={pick}
-              onDrop={drop}
-              onSelect={setSelected}
-              onUse={(sp, i) => {
-                sfx.pop();
-                setUsing({ space: sp, index: i });
-              }}
-              using={using}
-              action={action}
-              onPosed={setPosedAt}
-              power={power}
-              channels={channels}
-              tv={tv}
-              onTree={(t) => {
-                sfx.pop();
-                setTree(t);
-              }}
-              onRegion={(id) => {
-                if (id !== here && (id === 'room' || id === 'library' || here === 'room' || here === 'library')) sfx.door();
-                setHere(id);
-              }}
-              onTile={(t) => {
-                pos.current = t;
-                write(POS_KEY, JSON.stringify(t));
-              }}
-              onFloor={() => setUsing(null)}
-            />
-          </Suspense>
-          <div className="world-top" hidden={fullEdit}>
-            {!editing && <span className="world-chip">💎 {stats.crystals}</span>}
-            {!editing && hereMonth && <span className="world-chip">🌳 {monthTrees.filter((t) => !t.dry).length}</span>}
-            <span className="grow" />
-            <button
-              className="world-chip"
-              aria-label={sound ? 'Sesi kapat' : 'Sesi aç'}
-              onClick={() => {
-                setSoundOn(!sound);
-                setSound(!sound);
-              }}
-            >
-              {sound ? '🔊' : '🔇'}
-            </button>
-            <button
-              className={`world-chip${shadows ? ' on' : ''}`}
-              aria-pressed={shadows}
-              title="Gölgeler (telefonda kapalı daha akıcı)"
-              onClick={() => {
-                write(GFX_KEY, shadows ? 'off' : 'on');
-                setShadows(!shadows);
-              }}
-            >
-              🌗
-            </button>
-            <button className={`world-chip${big ? ' on' : ''}`} aria-pressed={big} aria-label={big ? 'Küçült' : 'Büyüt'} onClick={() => setBig(!big)}>
-              ⛶
-            </button>
+        {atHome && !held && (stats.rooms.unlocked.length > 0 || stats.rooms.next) && (
+          <div className="month-bar" role="group" aria-label="Evin odalarına git">
+            <div className="month-chips">
+              <button className={`chip${here === 'room' ? ' on' : ''}`} aria-pressed={here === 'room'} onClick={() => goTo('room')}>
+                🛋️ Odam
+              </button>
+              {[...stats.rooms.unlocked, ...(stats.rooms.next ? [stats.rooms.next] : [])].map((r) => {
+                const open = stats.bestStreak >= r.streak;
+                return (
+                  <button key={r.id} className={`chip${here === r.id ? ' on' : ''}${open ? '' : ' locked'}`} aria-pressed={here === r.id} onClick={() => goTo(r.id)}>
+                    {open ? r.icon : '🔒'} {r.name}
+                    {!open && (
+                      <span className="muted">
+                        {' '}
+                        {stats.bestStreak}/{r.streak}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {toast && (
-            <div className="world-locked" role="status">
-              <span>{toast}</span>
-            </div>
-          )}
-          {!editing && using && useDef && usedItem && (
-            <div className="use-bar" role="toolbar" aria-label={useDef.name}>
-              <span className="grow use-name">
-                {useDef.icon} <strong>{useDef.name}</strong>
-              </span>
-              {(useDef.use === 'sit' || useDef.use === 'lie' || useDef.use === 'swing') &&
-                (posedHere ? (
-                  <button className="btn sm primary" onClick={() => poseAction(true)}>
-                    🧍 Kalk
+        )}
+
+        {(hereMonth || here === 'trail') && !held && (
+          <div className="month-bar" role="group" aria-label="Ay bahçesine git">
+            <div className="month-chips">
+              {months.map((m) => {
+                const st = monthState(m, today);
+                const n = stats.forest.filter((t) => t.month === m && !t.dry).length;
+                return (
+                  <button key={m} className={`chip${m === hereMonth ? ' on' : ''}${st !== 'open' ? ' locked' : ''}`} aria-pressed={m === hereMonth} onClick={() => goTo(monthSpace(m))}>
+                    {st !== 'open' ? '🔒 ' : ''}
+                    {formatMonth(m).split(' ')[0].slice(0, 3)}
+                    {st === 'open' && <span className="muted"> {n}</span>}
                   </button>
-                ) : (
-                  <button className="btn sm primary" onClick={() => poseAction()}>
-                    {useDef.use === 'sit' ? '🪑 Otur' : useDef.use === 'lie' ? '🛏️ Yat' : '🎠 Sallan'}
-                  </button>
-                ))}
-              {useDef.use === 'light' && (
-                <button className="btn sm primary" onClick={togglePower}>
-                  💡 {useOn ? 'Kapat' : 'Aç'}
-                </button>
-              )}
-              {useDef.use === 'fire' && (
-                <button className="btn sm primary" onClick={togglePower}>
-                  🔥 {useOn ? 'Söndür' : 'Yak'}
-                </button>
-              )}
-              {useDef.use === 'tv' && (
-                <button className="btn sm primary" onClick={togglePower}>
-                  📺 {useOn ? 'Kapat' : 'Aç'}
-                </button>
-              )}
-              {useDef.use === 'tv' && useOn && (
-                <button className="btn sm" onClick={nextChannel}>
-                  🔁 {(channels[useKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
-                </button>
-              )}
-              {useDef.opens === 'shelf' && (
-                <button className="btn sm primary" onClick={() => setShelf(true)}>
-                  📚 Rafları aç
-                </button>
-              )}
-              <button className="btn sm" onClick={quickPick} aria-label="Taşı">
-                ✋
-              </button>
-              {(useDef.rotations?.length ?? 1) > 1 && (
-                <button className="btn sm" onClick={quickRotate} aria-label="Döndür">
-                  ↻
-                </button>
-              )}
-              <button className="btn sm" onClick={quickRemove} aria-label="Envantere kaldır">
-                📦
-              </button>
-              <button className="btn sm ghost" onClick={() => setUsing(null)} aria-label="Kapat">
-                ✕
-              </button>
+                );
+              })}
             </div>
-          )}
-          {quick && held && selItem && (
-            <div className="use-bar" role="toolbar">
-              <span className="grow use-name">
-                ✋ <strong>{selItem.name}</strong> <span className="muted small">· {selItem.placement === 'wall' ? 'asmak istediğin duvara' : 'koymak istediğin karoya'} dokun</span>
-              </span>
-              {selItem.placement !== 'wall' && (selItem.rotations?.length ?? 1) > 1 && (
-                <button className="btn sm" onClick={quickRotate} aria-label="Döndür">
-                  ↻
-                </button>
-              )}
-              <button className="btn sm ghost" onClick={cancelEdit}>
-                ✕ Vazgeç
-              </button>
-            </div>
-          )}
-          {!editing && !using && (
-            <div className="world-actions" data-tour="edit">
-              <button className="btn" onClick={startEdit} disabled={!hereSpace} title={hereSpace ? undefined : 'Düzenlemek için bir alana gir'}>
-                ✏️ Düzenle
-              </button>
-              <button className="btn" onClick={goShop}>
-                🛍️ Dükkân
-              </button>
+          </div>
+        )}
+
+        {can3D ? (
+          <div className="world-wrap" data-tour="world">
+            <Suspense fallback={<div className="world-loading">🏡 Dünyan hazırlanıyor…</div>}>
+              <WorldView
+                key={ctx.map}
+                plan={plan}
+                map={mapDef}
+                layouts={layouts}
+                forest={stats.forest}
+                creatures={stats.creatures}
+                phase={phase}
+                shadows={shadows}
+                look={stats.equipped.look}
+                start={start}
+                goal={goal}
+                growId={growId}
+                onGrown={markGrown}
+                books={doneBooks}
+                reading={readingNow}
+                onBook={(b) => {
+                  sfx.pop();
+                  setBook(b);
+                }}
+                edit={edit}
+                held={held}
+                onDrop={drop}
+                onAim={() => {
+                  setUsing(null);
+                  setInv(null);
+                }}
+                onUse={(sp, i) => {
+                  sfx.pop();
+                  setUsing({ space: sp, index: i });
+                }}
+                using={using}
+                action={action}
+                onPosed={setPosedAt}
+                holding={holding}
+                channels={channels}
+                tv={tv}
+                onTree={(t) => {
+                  sfx.pop();
+                  setTree(t);
+                }}
+                onRegion={(id) => {
+                  if (id !== here && ((!!id && isIndoor(id)) || (!!here && isIndoor(here)))) sfx.door();
+                  setHere(id);
+                }}
+                onTile={(t) => {
+                  pos.current = t;
+                  write(POS_KEY, JSON.stringify(t));
+                }}
+                onFloor={() => setUsing(null)}
+              />
+            </Suspense>
+            <div className="world-top">
+              <span className="world-chip">💎 {stats.crystals}</span>
+              {hereMonth && <span className="world-chip">🌳 {monthTrees.filter((t) => !t.dry).length}</span>}
+              <span className="grow" />
               <button
-                className="btn"
+                className="world-chip"
+                aria-label={sound ? 'Sesi kapat' : 'Sesi aç'}
                 onClick={() => {
-                  if (ses.running) ses.pause('game').catch(() => {});
-                  setExploring(true);
+                  setSoundOn(!sound);
+                  setSound(!sound);
                 }}
               >
-                🚶 Yakından gez
+                {sound ? '🔊' : '🔇'}
+              </button>
+              <button
+                className={`world-chip${shadows ? ' on' : ''}`}
+                aria-pressed={shadows}
+                title="Gölgeler (telefonda kapalı daha akıcı)"
+                onClick={() => {
+                  write(GFX_KEY, shadows ? 'off' : 'on');
+                  setShadows(!shadows);
+                }}
+              >
+                🌗
+              </button>
+              <button
+                className={`world-chip${full ? ' on' : ''}`}
+                aria-pressed={full}
+                aria-label={full ? 'Tam ekrandan çık' : 'Tam ekran'}
+                onClick={() => {
+                  if (full) setFull(false);
+                  else {
+                    setFull(true);
+                    enterFullscreen();
+                  }
+                }}
+              >
+                {full ? '✕' : '⛶'}
               </button>
             </div>
-          )}
-          {fullEdit && (
-            <>
-              <div className="edit-bar">
-                <strong className="grow">✏️ {where} düzenle</strong>
-                <button className="btn sm" onClick={cancelEdit} disabled={saving}>
-                  Vazgeç
+            {toast && (
+              <div className="world-locked" role="status">
+                <span>{toast}</span>
+              </div>
+            )}
+            {using && useDef && usedItem && !held && (
+              <div className="use-bar" role="toolbar" aria-label={useDef.name}>
+                <span className="use-name">
+                  {useDef.icon} <strong>{useDef.name}</strong>
+                </span>
+                {actions.length ? (
+                  actions.map((a, k) => (
+                    <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runAction(a.id)}>
+                      {a.label}
+                    </button>
+                  ))
+                ) : (
+                  <button className="btn sm primary" disabled>
+                    ▶ Kullan
+                  </button>
+                )}
+                <button className="btn sm" onClick={() => startMove(using)}>
+                  ✋ Taşı
                 </button>
-                <button className="btn sm primary" onClick={save} disabled={saving || !!held}>
-                  {saving ? 'Kaydediliyor…' : 'Kaydet'}
+                <button
+                  className="btn sm"
+                  disabled={!canRotate(useDef)}
+                  onClick={() => {
+                    const err = rotateItem(using);
+                    if (err) setToast(err);
+                  }}
+                >
+                  ↻ Döndür
+                </button>
+                <button className="btn sm" onClick={() => removeItem(using)}>
+                  📦 Kaldır
+                </button>
+                {useDef.fx === 'tv' && useOn && (
+                  <button className="btn sm" onClick={() => nextChannel(using)}>
+                    🔁 {(channels[useKey] ?? 0) === 0 ? 'Ormanım' : 'Çalışmam'}
+                  </button>
+                )}
+                <button className="btn sm ghost" onClick={() => setUsing(null)} aria-label="Kapat">
+                  ✕
                 </button>
               </div>
-              <div className="edit-drawer" role="region" aria-label="Envanter">
-                {(held || selItem) && (
-                  <div className="edit-tools">
-                    <span className="grow">
-                      {selItem?.icon} <strong>{selItem?.name}</strong>
-                      {held && !held.from && selItem && <span className="muted small"> · elinde</span>}
-                    </span>
-                    {selItem && (selItem.rotations?.length ?? 1) > 1 && (
-                      <button className="btn sm" onClick={rotate} aria-label="Döndür">
-                        ↻ Döndür
-                      </button>
-                    )}
-                    {!held && selected != null && (
-                      <button className="btn sm" onClick={() => pick(selected)}>
-                        ✋ Taşı
-                      </button>
-                    )}
-                    <button className="btn sm ghost" onClick={stash}>
-                      {held && !held.from ? '✕ Bırak' : '📦 Envantere'}
-                    </button>
-                  </div>
+            )}
+            {held?.from && heldItem && (
+              <div className="use-bar" role="toolbar">
+                <span className="use-name">
+                  ✋ <strong>{heldItem.name}</strong> <span className="muted small">· {heldItem.placement === 'wall' ? 'asmak istediğin duvara' : 'koymak istediğin karoya'} dokun</span>
+                </span>
+                {canRotate(heldItem) && (
+                  <button className="btn sm" onClick={() => setHeld({ ...held, rot: nextRot(heldItem, held.rot) })}>
+                    ↻ Döndür
+                  </button>
                 )}
-                <p className={`edit-msg small ${editMsg?.error ? 'error-ink' : 'muted'}`}>
-                  {editMsg?.text ?? (selected != null ? 'Eşyayı sürükleyerek de taşıyabilirsin' : 'Bir eşyaya dokun: seç · sürükle: taşı · aşağıdan yeni eşya seç')}
-                </p>
-                {(space === 'room' || space === 'library') && layout && (
+                <button className="btn sm ghost" onClick={closeEdit}>
+                  ✕ Vazgeç
+                </button>
+              </div>
+            )}
+            {inv && (
+              <div className="edit-drawer" role="region" aria-label="Envanter">
+                <div className="edit-tools">
+                  {held && heldItem ? (
+                    <>
+                      <span className="grow">
+                        {heldItem.icon} <strong>{heldItem.name}</strong>{' '}
+                        <span className="muted small">· {heldItem.placement === 'wall' ? 'asmak istediğin duvara' : 'koymak istediğin karoya'} dokun</span>
+                      </span>
+                      {canRotate(heldItem) && (
+                        <button className="btn sm" onClick={() => setHeld({ ...held, rot: nextRot(heldItem, held.rot) })} aria-label="Döndür">
+                          ↻
+                        </button>
+                      )}
+                      <button className="btn sm ghost" onClick={() => setHeld(null)}>
+                        Bırak
+                      </button>
+                    </>
+                  ) : (
+                    <span className="grow">
+                      🎒 <strong>{placeName(inv)}</strong> <span className="muted small">· bir eşya seç, sonra karoya dokun</span>
+                    </span>
+                  )}
+                  <button className="btn sm ghost" onClick={closeEdit} aria-label="Envanteri kapat">
+                    ✕
+                  </button>
+                </div>
+                {isIndoor(inv) && invLayout && (
                   <div className="cover-row">
                     {(['zemin', 'duvar'] as const).map((cat) => (
                       <span key={cat} className="cover-group">
                         <span className="muted small">{cat === 'zemin' ? 'Zemin' : 'Duvar'}</span>
                         {coverings(cat).map((it) => {
                           const slot = cat === 'zemin' ? 'floor' : 'wall';
-                          const on = (layout[slot] ?? (cat === 'zemin' ? 'zemin:ahsap' : 'duvar:krem')) === it.id;
+                          const on = (invLayout[slot] ?? defaultCover(inv, slot)) === it.id;
                           return (
                             <button
                               key={it.id}
@@ -723,7 +790,7 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                               aria-label={it.name}
                               aria-pressed={on}
                               style={{ background: it.color2 ? `linear-gradient(135deg, ${it.color} 50%, ${it.color2} 50%)` : it.color }}
-                              onClick={() => setDraft({ ...layout, [slot]: it.id })}
+                              onClick={() => persist(inv, { ...invLayout, [slot]: it.id })}
                             />
                           );
                         })}
@@ -743,21 +810,16 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                 <div className="inventory">
                   {inventory.length === 0 ? (
                     <p className="muted small">
-                      Envanterin boş. <button className="link" onClick={goShop}>Dükkândan</button> eşya alabilirsin.
+                      Burada koyabileceğin eşya yok. <button className="link" onClick={goShop}>Dükkândan</button> alabilirsin.
                     </p>
                   ) : (
                     shown
                       .sort((a, b) => groupOf(a.it).localeCompare(groupOf(b.it)))
                       .map(({ it, n }) => (
-                        <button
-                          key={it.id}
-                          className={`inv-item${held?.item === it.id && !held.from ? ' on' : ''}`}
-                          title={it.sub ? SUBS[it.sub] : undefined}
-                          // Basınca eline alınır: farede sahneye sürükleyip bırakılır, dokunmatikte sonra karoya dokunulur
-                          onPointerDown={() => hold(it)}
-                          onClick={() => hold(it)}
-                        >
-                          <span aria-hidden>{it.icon}</span>
+                        <button key={it.id} className={`inv-item${held?.item === it.id ? ' on' : ''}`} title={it.sub ? SUBS[it.sub] : undefined} onClick={() => hold(it)}>
+                          <span aria-hidden>
+                            <ItemIcon item={it} />
+                          </span>
                           <span className="inv-name">{it.name}</span>
                           {n > 1 && n < 1000 && <span className="inv-n">×{n}</span>}
                         </button>
@@ -765,13 +827,36 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
                   )}
                 </div>
               </div>
-            </>
-          )}
-          {!editing && !using && <span className="world-hint">Bir yere dokun, yürüsün · bir eşyaya dokun, kullan</span>}
-        </div>
-      ) : (
-        fallback
-      )}
+            )}
+            {idle && (
+              <div className="world-actions">
+                <button
+                  className="btn"
+                  data-tour="edit"
+                  onClick={() => (hereSpace ? openInv(hereSpace) : setToast('Eşya koymak için evine ya da bir bahçeye gir.'))}
+                >
+                  🎒 Envanter
+                </button>
+                <button className="btn" onClick={goShop}>
+                  🛍️ Dükkân
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    if (ses.running) ses.pause('game').catch(() => {});
+                    setExploring(true);
+                  }}
+                >
+                  🚶 Yakından gez
+                </button>
+              </div>
+            )}
+            {idle && <span className="world-hint">Bir yere dokun, yürüsün · bir eşyaya dokun: kullan, taşı, döndür, kaldır</span>}
+          </div>
+        ) : (
+          fallback
+        )}
+      </div>
 
       <section className="card lands" data-tour="lands">
         <div className="card-head">
@@ -805,6 +890,16 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
           ))}
         </div>
         <p className="small">
+          {stats.rooms.next ? (
+            <>
+              Evinde yeni oda: {stats.rooms.next.icon} <strong>{stats.rooms.next.name}</strong> {stats.rooms.next.streak} günlük seriyle açılır (en iyi serin {stats.bestStreak} gün). Açılan
+              oda kalıcıdır.
+            </>
+          ) : (
+            <>Evinin bütün odalarını açtın! 🏠</>
+          )}
+        </p>
+        <p className="small">
           Bahçelerine gelenler: {stats.creatures.length ? stats.creatures.map((c) => c.icon).join(' ') : <span className="muted">2 gün çalışınca ilk kelebekler gelir.</span>}
         </p>
       </section>
@@ -813,6 +908,24 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
 
       {shelf && <ShelfView books={reading.books} onClose={() => setShelf(false)} />}
       {book && <BookCard book={book} onClose={() => setBook(null)} />}
+      {storage && storeDef && storePlaced && (
+        <StorageSheet
+          item={storeDef}
+          stored={storePlaced.stored ?? []}
+          candidates={storeCandidates}
+          onPut={(id) => {
+            const next = storeAt(layoutOf(storage.space), storage.index, id);
+            if (!next) return setToast(`${storeDef.name} doldu.`);
+            persist(storage.space, next);
+            sfx.pop();
+          }}
+          onTake={(k) => {
+            persist(storage.space, takeOutAt(layoutOf(storage.space), storage.index, k));
+            sfx.pop();
+          }}
+          onClose={() => setStorage(null)}
+        />
+      )}
 
       {exploring && (
         <div className="explore-host">
@@ -831,11 +944,18 @@ export default function World({ courses, goShop }: { courses: Course[]; goShop: 
               onStar={collectStar}
               onTree={(t) => setTree(t)}
               onClose={() => setExploring(false)}
-              paused={!!tree}
-              power={power}
+              paused={!!tree || shelf || !!book || !!storage}
+              holding={holding}
+              channels={channels}
               tv={tv}
               books={doneBooks}
               reading={readingNow}
+              onAction={doAction}
+              onChannel={nextChannel}
+              onRotate={rotateItem}
+              onRemove={removeItem}
+              onMove={moveItem}
+              toast={toast}
             />
           </Suspense>
         </div>

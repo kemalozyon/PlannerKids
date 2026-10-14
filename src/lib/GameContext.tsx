@@ -16,7 +16,8 @@ interface GameCtx {
   /** Gezintide yıldız topla (günün i. yıldızı) */
   collectStar: (i: number) => Promise<void>;
   equip: (e: Equipped) => Promise<void>;
-  /** Odanın/bahçenin yerleşimini kaydet (sunucu doğrular; geçersizse hata fırlatır) */
+  /** Odanın/bahçenin yerleşimini kaydet: hemen görünür, sunucuya sırayla gider (sunucu doğrular; reddederse kayıtlı
+   *  hâl geri yüklenir ve hata fırlatılır) */
   saveSpace: (space: SpaceId, layout: SpaceLayout) => Promise<void>;
   /** Yeni haritaya taşın (evin dekoru baştan yapılır) */
   celebrations: (Celebration & { key: number })[];
@@ -55,6 +56,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setCelebrations((cs) => [...cs, { ...c, key: ++seq.current }]);
   }, []);
 
+  /** Henüz sunucuya ulaşmamış yerleşimler: arada gelen tam yükleme onları eski hâliyle ezmesin */
+  const unsaved = useRef(new Map<SpaceId, SpaceLayout>());
   const refresh = useCallback(async () => {
     const today = toLocalDate();
     const [logs, reflections, doneTasks, plans, abandoned, ledger0, owned, equipped, books, courses, spaces] = await Promise.all([
@@ -95,7 +98,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       equipped,
       books,
       courses,
-      spaces: Object.fromEntries(spaces.map((s) => [s.space, s.layout])),
+      spaces: { ...Object.fromEntries(spaces.map((s) => [s.space, s.layout])), ...Object.fromEntries(unsaved.current) },
     });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);
@@ -116,6 +119,39 @@ export function GameProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  // Yerleşim kaydı: hemen görünür (bütün veri yeniden yüklenmez); sunucuya sırayla gider, alan başına yalnızca son
+  // hâl. Sunucu reddederse kayıtlı hâl geri yüklenir ve bekleyenlerin hepsi hata alır.
+  const saveQ = useRef<{ next: Map<SpaceId, SpaceLayout>; run: Promise<void> | null }>({ next: new Map(), run: null });
+  const saveSpace = useCallback(
+    (space: SpaceId, layout: SpaceLayout) => {
+      const patch = (s: GameStats | null) => s && { ...s, spaces: { ...s.spaces, [space]: layout } };
+      prev.current = patch(prev.current);
+      setStats(patch);
+      const q = saveQ.current;
+      unsaved.current.set(space, layout);
+      q.next.set(space, layout);
+      q.run ??= (async () => {
+        try {
+          while (q.next.size) {
+            const [s, l] = q.next.entries().next().value!;
+            q.next.delete(s);
+            await api.saveSpace(s, l);
+            if (unsaved.current.get(s) === l) unsaved.current.delete(s);
+          }
+          q.run = null;
+        } catch (e) {
+          q.next.clear();
+          unsaved.current.clear();
+          q.run = null;
+          await refresh();
+          throw e;
+        }
+      })();
+      return q.run;
+    },
+    [api, refresh],
+  );
+
   const dismiss = useCallback((key: number) => setCelebrations((cs) => cs.filter((c) => c.key !== key)), []);
 
   return (
@@ -130,7 +166,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         openChest: after((week: string, id: string) => api.openChest(week, id)),
         collectStar: after((i: number) => api.collectStar(toLocalDate(), i)),
         equip: after((e: Equipped) => api.saveEquipped(e)),
-        saveSpace: after((space: SpaceId, layout: SpaceLayout) => api.saveSpace(space, layout)),
+        saveSpace,
       }}
     >
       {children}

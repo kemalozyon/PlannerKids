@@ -33,7 +33,7 @@ export function dayTotalsOf(logs: StudyLog[]): Map<string, number> {
   return m;
 }
 
-/** Günün dakikasından Elmas: kademeler azalan getiriyle (ilk saat 10 dk = 1, sonra 20, sonra 30), en fazla dailyCap */
+/** Günün dakikasından Elmas: kademeler (bugün her dakikaya 1; azalan getiri de kurulabilir), en fazla dailyCap */
 export function studyElmas(minutes: number, study = E.study): number {
   let prev = 0;
   let total = 0;
@@ -102,6 +102,13 @@ function bonusBooks(books: Book[], today: string): Book[] {
     perWeek.set(w, n);
     return n <= E.book.perWeek;
   });
+}
+
+/** En iyi seri (güvenilir kayıtlardan; seriyle açılan odalar için, sunucuda economy_best_streak) */
+export function bestStreakOf(logs: StudyLog[], owned: OwnedItem[], today: string): number {
+  const totals = dayTotalsOf(logs);
+  const first = [...totals.keys()].filter((d) => d <= today && (totals.get(d) ?? 0) > 0).sort()[0] ?? null;
+  return computeStreak((d) => totals.get(d) ?? 0, first, today, freezeDates(owned)).best;
 }
 
 /** Kayıtların hak ettirdiği bütün Elmas kazançları (geçmiş dahil). Hediye ve yıldızlar burada yok. */

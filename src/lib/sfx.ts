@@ -90,4 +90,22 @@ export const sfx = {
   sad() {
     tone(392, 300, 0.35, 0, 'triangle', 0.1);
   },
+  /** Çalgı eşyaları (PLAY_SOUND): kısa bir ezgi */
+  melody(kind: string) {
+    const m = MELODIES[kind] ?? MELODIES.piyano;
+    let at = 0;
+    for (const [f, d] of m.notes) {
+      if (f) tone(f, kind === 'davul' ? f * 0.5 : f, d * 0.95, at, m.wave, m.vol);
+      at += d;
+    }
+  },
+};
+
+// Notalar (Hz): C5 523, D5 587, E5 659, F5 698, G5 784, A5 880; 0 = es
+const MELODIES: Record<string, { wave: OscillatorType; vol: number; notes: [number, number][] }> = {
+  piyano: { wave: 'triangle', vol: 0.16, notes: [[523, 0.18], [659, 0.18], [784, 0.18], [659, 0.18], [698, 0.18], [587, 0.18], [523, 0.36]] },
+  'muzik-kutusu': { wave: 'sine', vol: 0.14, notes: [[1047, 0.15], [1319, 0.15], [1568, 0.15], [1319, 0.15], [1175, 0.15], [988, 0.15], [1047, 0.3]] },
+  davul: { wave: 'square', vol: 0.08, notes: [[140, 0.16], [0, 0.08], [140, 0.12], [220, 0.16], [140, 0.16], [0, 0.08], [220, 0.24]] },
+  zil: { wave: 'sine', vol: 0.15, notes: [[1568, 0.3], [1319, 0.3], [1047, 0.5]] },
+  gitar: { wave: 'sawtooth', vol: 0.06, notes: [[330, 0.2], [392, 0.2], [494, 0.2], [392, 0.2], [440, 0.4]] },
 };

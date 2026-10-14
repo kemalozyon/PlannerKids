@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { RARITY, type Item } from '../lib/catalog';
 import { CHEST_DAYS, CHEST_MINUTES, chestPrize, type ChestState, type QuestState } from '../lib/economy';
 import { useGame } from '../lib/GameContext';
+import { ItemIcon } from './ItemCard';
 import Sheet from './Sheet';
 
 export default function Quests({ goShop }: { goShop: () => void }) {
@@ -99,7 +100,7 @@ function ChestSheet({ chest, onClose }: { chest: ChestState; onClose: () => void
       {prize ? (
         <div className="chest-open">
           <div className="chest-prize" aria-hidden>
-            {prize.icon}
+            <ItemIcon item={prize} className="big" />
           </div>
           <h2>{prize.name}!</h2>
           <span className="rarity-tag" style={{ ['--rarity' as string]: RARITY[prize.rarity].color }}>

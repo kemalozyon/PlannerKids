@@ -414,6 +414,47 @@ export function patternTexture(pattern: string | undefined, c1: string, c2: stri
         const off = y % 2 ? w / 4 : 0;
         for (let x = off; x < w; x += w / 2) g.fillRect(x, y * bh, 2, bh);
       }
+    } else if (p === 'tiles') {
+      g.fillStyle = c2;
+      for (let i = 0; i <= 4; i++) {
+        g.fillRect((i * w) / 4 - 1, 0, 2, h);
+        g.fillRect(0, (i * h) / 4 - 1, w, 2);
+      }
+    } else if (p === 'sand') {
+      for (let i = 0; i < 90; i++) circle(g, r() * w, r() * h, 1 + r() * 1.2, c2);
+    } else if (p === 'grass') {
+      g.strokeStyle = c2;
+      g.lineWidth = 2;
+      for (let i = 0; i < 40; i++) {
+        const x = r() * w;
+        const y = r() * h;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + (r() - 0.5) * 4, y - 5 - r() * 4);
+        g.stroke();
+      }
+    } else if (p === 'waves') {
+      g.strokeStyle = c2;
+      g.lineWidth = 4;
+      for (let y = h / 8; y < h; y += h / 4) {
+        g.beginPath();
+        for (let x = 0; x <= w; x += 4) g.lineTo(x, y + Math.sin((x / w) * Math.PI * 4) * 6);
+        g.stroke();
+      }
+    } else if (p === 'hearts') {
+      g.fillStyle = c2;
+      for (let y = 0; y < 4 * (h / w); y++)
+        for (let x = 0; x < 3; x++) {
+          const cx = (x + (y % 2) * 0.5 + 0.25) * (w / 3);
+          const cy = (y + 0.5) * (w / 4);
+          circle(g, cx - 4, cy, 5, c2);
+          circle(g, cx + 4, cy, 5, c2);
+          g.beginPath();
+          g.moveTo(cx - 9, cy + 1);
+          g.lineTo(cx, cy + 11);
+          g.lineTo(cx + 9, cy + 1);
+          g.fill();
+        }
     } else if (p === 'panel') {
       g.fillStyle = c2;
       g.fillRect(0, h * 0.55, w, h * 0.45);

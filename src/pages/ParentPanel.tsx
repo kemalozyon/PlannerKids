@@ -517,7 +517,11 @@ function PinChange({ family, onChange }: { family: FamilySettings; onChange: (f:
 /** Aile panelindeki kural özeti (config'ten) */
 function economyRules(): string {
   const e = CFG.elmas;
-  const tiers = e.study.tiers.map((t, i) => `${i ? e.study.tiers[i - 1].upTo : 0}–${t.upTo}. dk ${t.minutesPer} dk = 1 💎`).join(', ');
+  const t = e.study.tiers;
+  const tiers =
+    t.length === 1 && t[0].minutesPer === 1
+      ? 'her çalışma dakikasına 1 💎'
+      : t.map((x, i) => `${i ? t[i - 1].upTo : 0}–${x.upTo}. dk ${x.minutesPer} dk = 1 💎`).join(', ');
   return (
     `Elmas yalnızca sayaçla ölçülen çalışmadan kazanılır; süreyi sunucu tutar, sekme değişince ya da uzun süre dokunulmayınca sayaç durur. ` +
     `Elle yazılan süre kayda geçer ama Elmas vermez. Günlük: ${tiers}, en çok ${e.study.dailyCap} 💎. ` +

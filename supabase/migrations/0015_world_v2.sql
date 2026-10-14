@@ -47,7 +47,9 @@ language sql stable as $$
 $$;
 
 -- Alanın ölçüsü: evin alanları haritadan, aylık bahçe sabit
+-- Eski (0012) ve yeni imza: dosya yeniden çalıştırılabilsin
 drop function if exists public.world_size(text, integer);
+drop function if exists public.world_size(text, text);
 create function public.world_size(p_space text, p_map text, out w integer, out h integer)
 language sql stable as $$
   select (s ->> 'w')::integer, (s ->> 'h')::integer from (
@@ -57,6 +59,7 @@ $$;
 
 -- Zemindeki sabit karolar: haritanın tanımları (kapı, ev, raf…) ya da ayın ekim yerleri ve bahçe kapısı
 drop function if exists public.world_fixed(text, integer, integer);
+drop function if exists public.world_fixed(text, text);
 create function public.world_fixed(p_space text, p_map text) returns table (x integer, y integer)
 language sql stable as $$
   with c as (select public.economy_cfg() -> 'world' w),

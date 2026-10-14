@@ -7,7 +7,9 @@
 --   hesaplanır (src/lib/worldPlan.ts). world_fixed, world_wall_blocked ve save_space değişmedi.
 -- Sonra 0018_config.sql'i çalıştır (yeni aşamalar ve eşyalar).
 
-create or replace function public.world_ctx(uid uuid, out minutes integer, out books integer, out trees integer, out map text)
+-- Önceki tanım (0012 ya da 0015) hangisiyse silinir; dosya yeniden çalıştırılabilir
+drop function if exists public.world_ctx(uuid);
+create function public.world_ctx(uid uuid, out minutes integer, out books integer, out trees integer, out map text)
 language sql stable as $$
   with t as (
     select coalesce(sum(duration_minutes), 0)::integer mins from public.study_logs where user_id = uid and source <> 'manual'

@@ -25,6 +25,7 @@ import { itemById, type Item, type Slot } from '../../lib/catalog';
 import { buyCheck, owns, unlockHint } from '../../lib/economy';
 import { useGame } from '../../lib/GameContext';
 import { sfx } from '../../lib/sfx';
+import { ItemIcon } from '../ItemCard';
 import AvatarPreview from './AvatarPreview';
 
 type Tab = 'govde' | 'yuz' | Slot | 'aksesuar';
@@ -85,7 +86,9 @@ export default function AvatarEditor({ onClose }: { onClose: () => void }) {
             const a = i.acquire;
             return (
               <button key={i.id} className={`ae-part${cur === i.id ? ' on' : ''}${mine ? '' : ' locked'}`} aria-pressed={cur === i.id} onClick={() => setLook(wear(look, i))}>
-                <span aria-hidden>{i.icon}</span>
+                <span aria-hidden>
+                  <ItemIcon item={i} className="sm" />
+                </span>
                 <span>{i.name}</span>
                 {!mine && <span className="ae-price">{a.kind === 'buy' ? `💎 ${a.price}` : '🔒'}</span>}
               </button>

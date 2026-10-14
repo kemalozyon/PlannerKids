@@ -1,3 +1,4 @@
+import { openShop } from '../lib/shop';
 import { IconChevron } from '../components/Icons';
 import { CFG } from '../lib/config';
 import { startTour } from '../lib/tour';
@@ -14,9 +15,9 @@ import type { Equipped } from '../lib/types';
 const AvatarPreview = lazy(() => import('../components/avatar/AvatarPreview'));
 const AvatarEditor = lazy(() => import('../components/avatar/AvatarEditor'));
 
-type Target = 'parent' | 'rewards' | 'courses' | 'shop' | 'collection';
+type Target = 'parent' | 'rewards' | 'courses' | 'collection';
 
-const LINKS: { id: Target; icon: string; title: string; desc: string }[] = [
+const LINKS: { id: Target | 'shop'; icon: string; title: string; desc: string }[] = [
   { id: 'shop', icon: '🛍️', title: 'Dükkân', desc: 'Elmasla mobilya, bahçe süsü ve kıyafet al' },
   { id: 'collection', icon: '📒', title: 'Koleksiyon defteri', desc: 'Topladığın eşyalar ve ağaç bahçelerin' },
   { id: 'rewards', icon: '🎁', title: 'Ödül hedeflerim', desc: 'Ailenle koyduğunuz gerçek ödüller' },
@@ -47,7 +48,7 @@ export default function Profile({
 
       <section className="card link-list">
         {LINKS.map((l) => (
-          <button key={l.id} className="link-row" onClick={() => go(l.id)}>
+          <button key={l.id} className="link-row" onClick={() => (l.id === 'shop' ? openShop() : go(l.id))}>
             <span className="link-icon" aria-hidden>
               {l.icon}
             </span>
@@ -224,6 +225,7 @@ function LookCard() {
 }
 
 const STREAK_TIERS = CFG.elmas.streak.tiers;
+const ROOMS = CFG.world.rooms;
 
 /** Rozetler ve kademeli serinin kuralı */
 function BadgesCard() {
@@ -265,6 +267,9 @@ function BadgesCard() {
         Hafta içi bir günü kaçırırsan serin sıfırlanmaz, bir kademe düşer ({STREAK_TIERS.map((t) => t.days).join(' → ')} gün).
         Kademen yükseldikçe her gün fazladan Elmas kazanırsın.{' '}
         {stats.streakTier > 0 && <span className="pill">Kademe {stats.streakTier}: günde +{STREAK_TIERS[stats.streakTier - 1].bonus} 💎</span>}
+        <br />
+        <strong>Evinde yeni odalar:</strong> en iyi serin{' '}
+        {ROOMS.map((r) => `${r.streak} güne ulaşınca ${r.icon} ${r.name}`).join(', ')} açılır. Açılan oda seri düşse de senin kalır.
       </div>
     </section>
   );

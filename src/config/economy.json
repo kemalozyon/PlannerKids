@@ -14,51 +14,43 @@
     "study": {
       "tiers": [
         {
-          "upTo": 60,
-          "minutesPer": 10
-        },
-        {
-          "upTo": 120,
-          "minutesPer": 20
-        },
-        {
-          "upTo": 180,
-          "minutesPer": 30
+          "upTo": 300,
+          "minutesPer": 1
         }
       ],
-      "dailyCap": 12
+      "dailyCap": 300
     },
     "streak": {
       "minMinutes": 20,
       "tiers": [
         {
           "days": 3,
-          "bonus": 1
+          "bonus": 10
         },
         {
           "days": 7,
-          "bonus": 2
+          "bonus": 20
         },
         {
           "days": 14,
-          "bonus": 3
+          "bonus": 30
         },
         {
           "days": 30,
-          "bonus": 4
+          "bonus": 40
         }
       ]
     },
     "reflection": {
-      "bonus": 1,
+      "bonus": 10,
       "minNote": 10
     },
-    "plan": 3,
+    "plan": 30,
     "book": {
-      "bonus": 5,
+      "bonus": 50,
       "perWeek": 2
     },
-    "giftMax": 50,
+    "giftMax": 500,
     "quests": [
       {
         "id": "day30",
@@ -66,7 +58,7 @@
         "title": "Bugün 30 dk çalış",
         "icon": "⏱️",
         "target": 30,
-        "reward": 2
+        "reward": 20
       },
       {
         "id": "week5days",
@@ -74,7 +66,7 @@
         "title": "Bu hafta 5 gün çalış",
         "icon": "📅",
         "target": 5,
-        "reward": 5
+        "reward": 50
       },
       {
         "id": "week3plans",
@@ -82,7 +74,7 @@
         "title": "Bu hafta 3 günün planını bitir",
         "icon": "📋",
         "target": 3,
-        "reward": 5
+        "reward": 50
       },
       {
         "id": "week3courses",
@@ -90,7 +82,7 @@
         "title": "Bu hafta 3 farklı derse çalış",
         "icon": "🎨",
         "target": 3,
-        "reward": 3
+        "reward": 30
       },
       {
         "id": "weekBook",
@@ -98,7 +90,7 @@
         "title": "Bu hafta bir kitap bitir",
         "icon": "📚",
         "target": 1,
-        "reward": 5
+        "reward": 50
       }
     ]
   },
@@ -160,6 +152,13 @@
               "y": 5,
               "edge": "w",
               "to": "library"
+            },
+            {
+              "kind": "door",
+              "x": 11,
+              "y": 5,
+              "edge": "e",
+              "to": "kitchen"
             },
             {
               "kind": "window",
@@ -253,6 +252,13 @@
               "y": 5,
               "edge": "w",
               "to": "library"
+            },
+            {
+              "kind": "door",
+              "x": 13,
+              "y": 5,
+              "edge": "e",
+              "to": "kitchen"
             },
             {
               "kind": "window",
@@ -360,6 +366,13 @@
               "y": 5,
               "edge": "w",
               "to": "library"
+            },
+            {
+              "kind": "door",
+              "x": 15,
+              "y": 5,
+              "edge": "e",
+              "to": "kitchen"
             },
             {
               "kind": "window",
@@ -487,6 +500,13 @@
               "y": 5,
               "edge": "w",
               "to": "library"
+            },
+            {
+              "kind": "door",
+              "x": 17,
+              "y": 5,
+              "edge": "e",
+              "to": "kitchen"
             },
             {
               "kind": "window",
@@ -623,6 +643,13 @@
               "to": "library"
             },
             {
+              "kind": "door",
+              "x": 19,
+              "y": 5,
+              "edge": "e",
+              "to": "kitchen"
+            },
+            {
               "kind": "window",
               "x": 6,
               "y": -1,
@@ -743,6 +770,129 @@
             }
           ]
         }
+      }
+    ],
+    "rooms": [
+      {
+        "id": "kitchen",
+        "name": "Mutfak",
+        "icon": "🍳",
+        "streak": 3,
+        "w": 8,
+        "floor": "zemin:dama",
+        "wall": "duvar:nane",
+        "desc": "Ocak, tezgâh ve buzdolabıyla kendi mutfağın.",
+        "fixed": [
+          {
+            "kind": "door",
+            "x": 0,
+            "y": 5,
+            "edge": "w",
+            "to": "room"
+          },
+          {
+            "kind": "door",
+            "x": 7,
+            "y": 5,
+            "edge": "e",
+            "to": "bedroom"
+          },
+          {
+            "kind": "window",
+            "x": 3,
+            "y": -1,
+            "w": 2
+          }
+        ]
+      },
+      {
+        "id": "bedroom",
+        "name": "Yatak odası",
+        "icon": "🛏️",
+        "streak": 7,
+        "w": 9,
+        "floor": "zemin:mavi-hali",
+        "wall": "duvar:pembe",
+        "desc": "Rahat bir yatak odası.",
+        "fixed": [
+          {
+            "kind": "door",
+            "x": 0,
+            "y": 5,
+            "edge": "w",
+            "to": "kitchen"
+          },
+          {
+            "kind": "door",
+            "x": 8,
+            "y": 5,
+            "edge": "e",
+            "to": "bath"
+          },
+          {
+            "kind": "window",
+            "x": 3,
+            "y": -1,
+            "w": 2
+          }
+        ]
+      },
+      {
+        "id": "bath",
+        "name": "Banyo",
+        "icon": "🛁",
+        "streak": 14,
+        "w": 6,
+        "floor": "zemin:mermer",
+        "wall": "duvar:gok",
+        "desc": "Küvet, lavabo ve ayna için banyo.",
+        "fixed": [
+          {
+            "kind": "door",
+            "x": 0,
+            "y": 5,
+            "edge": "w",
+            "to": "bedroom"
+          },
+          {
+            "kind": "door",
+            "x": 5,
+            "y": 5,
+            "edge": "e",
+            "to": "playroom"
+          },
+          {
+            "kind": "window",
+            "x": 2,
+            "y": -1,
+            "w": 2
+          }
+        ]
+      },
+      {
+        "id": "playroom",
+        "name": "Oyun odası",
+        "icon": "🎮",
+        "streak": 30,
+        "w": 10,
+        "floor": "zemin:cim",
+        "wall": "duvar:puantiye",
+        "desc": "Oyunlar ve eğlence için kocaman bir oda.",
+        "fixed": [
+          {
+            "kind": "door",
+            "x": 0,
+            "y": 5,
+            "edge": "w",
+            "to": "bath"
+          },
+          {
+            "kind": "window",
+            "x": 4,
+            "y": -1,
+            "w": 2
+          }
+        ]
       }
     ],
     "library": {

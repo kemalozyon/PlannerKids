@@ -4,9 +4,9 @@ import { gatherReportInput } from './reportInput';
 import { itemById } from './catalog';
 import { CFG } from './config';
 import { toLocalDate } from './date';
-import { balances, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
+import { balances, bestStreakOf, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
 import { levelOf } from './level';
-import { dayTrees, isHome, isMonthSpace, layoutProblem, mapFor, type SpaceId, type SpaceLayout } from './world';
+import { dayTrees, isHome, isMonthSpace, itemCounts, layoutProblem, mapFor, type SpaceId, type SpaceLayout } from './world';
 import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
@@ -729,13 +729,16 @@ export function localApi(seed: () => DemoDb): Api {
       const ok = trusted(db.logs);
       const minutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
       // Arazi saatle yerinde büyür (sunucuda world_ctx.map)
-      const ctx = { map: mapFor(minutes).id, today: toLocalDate() };
+      const today = toLocalDate();
+      // Seriyle açılan odalar en iyi seriyle (sunucuda world_ctx.best)
+      const best = bestStreakOf(db.logs, db.owned ?? [], today);
+      const ctx = { map: mapFor(minutes).id, today, best };
       const trees = dayTrees(db.logs, []).length;
-      const progress = { bestStreak: 0, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees };
+      const progress = { bestStreak: best, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees };
       const elsewhere = (id: string) =>
         Object.entries(db.spaces!)
           .filter(([s]) => s !== space)
-          .reduce((n, [, l]) => n + (l?.items.filter((p) => p.item === id).length ?? 0), 0);
+          .reduce((n, [, l]) => n + (itemCounts(l).get(id) ?? 0), 0);
       if (!isHome(space) && !isMonthSpace(space)) throw new Error('Alan geçersiz');
       const bad = layoutProblem(space, layout, ctx, (it) => ownedCount(it, db.owned ?? [], progress), elsewhere);
       if (bad) throw new Error(bad.message);

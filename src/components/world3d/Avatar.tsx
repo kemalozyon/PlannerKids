@@ -24,13 +24,31 @@ export interface Walker {
   pose?: { kind: Pose; x: number; z: number; y: number; face: number; back: { x: number; z: number } } | null;
 }
 
+/** Pozu çizer (dünya görünümü ve gezinti): dış grup eşyanın üstünde, iç grup yatarken yatar, salıncakta sallanır */
+export function applyPose(g: Group, n: Group, P: { kind: Pose; x: number; z: number; y: number; face: number }, time: number) {
+  g.position.set(P.x, P.kind === 'lie' ? P.y + 0.12 : P.y - HIP_Y, P.z);
+  g.rotation.y = P.face;
+  if (P.kind === 'lie') {
+    n.position.set(0, 0, 0.6);
+    n.rotation.set(-Math.PI / 2, 0, 0);
+  } else if (P.kind === 'swing') {
+    // Sarkaç: ip kirişten sarkar, oturak öne arkaya gider
+    const a = swingAngle(time);
+    n.position.set(0, (1 - Math.cos(a)) * SWING_ROPE, Math.sin(a) * SWING_ROPE);
+    n.rotation.set(-a, 0, 0);
+  } else {
+    n.position.set(0, 0, 0);
+    n.rotation.set(0, 0, 0);
+  }
+}
+
 export const WALK_SPEED = 3.6; // karo/sn
 const RUN_FROM = 5;
 
 /** Yolun hızı: kısa yolda yürür, uzun yolda koşar (en fazla ~4 sn sürsün) */
 export const pathSpeed = (tiles: number) => Math.min(12, Math.max(WALK_SPEED, tiles / 4));
 
-export default function Avatar({ look, walker, onTile }: { look: AvatarLook; walker: MutableRefObject<Walker>; onTile?: (x: number, y: number) => void }) {
+export default function Avatar({ look, walker, onTile, holding }: { look: AvatarLook; walker: MutableRefObject<Walker>; onTile?: (x: number, y: number) => void; holding?: string | null }) {
   const tile = useRef('');
   const group = useRef<Group>(null);
   const inner = useRef<Group>(null);
@@ -46,21 +64,8 @@ export default function Avatar({ look, walker, onTile }: { look: AvatarLook; wal
     const P = w.pose;
     if (P && !w.path.length) {
       anim.current.state = P.kind;
-      g.position.set(P.x, P.kind === 'lie' ? P.y + 0.12 : P.y - HIP_Y, P.z);
-      g.rotation.y = P.face;
-      if (P.kind === 'lie') {
-        n.position.set(0, 0, 0.6);
-        n.rotation.set(-Math.PI / 2, 0, 0);
-      } else if (P.kind === 'swing') {
-        // Sarkaç: ip kirişten sarkar, oturak öne arkaya gider
-        const a = swingAngle(clock.elapsedTime);
-        n.position.set(0, (1 - Math.cos(a)) * SWING_ROPE, Math.sin(a) * SWING_ROPE);
-        n.rotation.set(-a, 0, 0);
-        invalidate();
-      } else {
-        n.position.set(0, 0, 0);
-        n.rotation.set(0, 0, 0);
-      }
+      applyPose(g, n, P, clock.elapsedTime);
+      if (P.kind === 'swing') invalidate();
       return;
     }
     n.position.set(0, 0, 0);
@@ -106,7 +111,7 @@ export default function Avatar({ look, walker, onTile }: { look: AvatarLook; wal
   return (
     <group ref={group}>
       <group ref={inner}>
-        <AvatarModel look={look} anim={anim} />
+        <AvatarModel look={look} anim={anim} holding={holding} />
       </group>
     </group>
   );

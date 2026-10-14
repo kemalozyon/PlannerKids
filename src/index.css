@@ -788,7 +788,6 @@ h3 { font-size: 0.95rem; margin: 16px 0 10px; }
 }
 .world-wrap canvas { display: block; }
 .world-wrap.fading { opacity: 0; }
-.world-wrap.editing { box-shadow: inset 0 0 0 3px #ffd84a, 0 8px 24px rgba(30, 60, 90, .15); }
 .world-loading { height: 100%; display: grid; place-items: center; font-weight: 800; color: #2f5c7a; background: linear-gradient(180deg, #f7efe3, #e9dcc6); }
 .world-top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; gap: 6px; align-items: center; pointer-events: none; }
 .world-top > * { pointer-events: auto; }
@@ -811,17 +810,11 @@ button.world-chip { cursor: pointer; }
 .world-hint {
   position: absolute; top: 46px; left: 0; right: 0; text-align: center; font-size: .72rem; pointer-events: none;
   color: rgba(40, 30, 20, .65);
-}.world-wrap.editing { height: clamp(540px, 150vw, 760px); }
-.edit-bar {
-  position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px; padding: 8px 10px;
-  background: rgba(255, 248, 220, .94); color: #1c1d1f; box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
 }
-.edit-bar .btn { padding: 6px 12px; min-height: 0; }
 .edit-drawer {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px 10px; display: grid; gap: 6px;
   background: rgba(255, 255, 255, .95); color: #1c1d1f; border-radius: 18px 18px 0 0; box-shadow: 0 -4px 14px rgba(0, 0, 0, .12);
 }
-.edit-msg { margin: 0; min-height: 1.2em; }
 .edit-drawer .edit-tools { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 12px; background: #fff3c4; }
 .edit-drawer .edit-tools .btn { padding: 5px 10px; min-height: 0; }
 .cover-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -838,6 +831,9 @@ button.world-chip { cursor: pointer; }
 .edit-drawer .inv-item { background: #fff; color: #1c1d1f; border-color: #e6e1d6; }
 .inv-item.on, .edit-drawer .inv-item.on { border-color: #e2b400; background: #fff6cf; color: #1c1d1f; }
 .inv-name { font-size: .7rem; line-height: 1.2; text-align: center; }
+/* Depo eşyasının içi (STORAGE) */
+.storage-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.storage-head { font-size: .95rem; margin: 12px 0 2px; }
 .inv-n { position: absolute; top: 4px; right: 6px; font-size: .68rem; font-weight: 800; color: var(--muted); }
 .lands .pbar { margin: 6px 0 8px; }
 .flat-region { margin: 10px 0; }
@@ -1024,6 +1020,15 @@ button.world-chip { cursor: pointer; }
 .ledger .pos { color: var(--good); }
 .ledger .neg { color: var(--danger); }
 
+/* Gezinti: yakındaki eşyanın seçenekleri ve elde taşıma (joystick'in üstünde) */
+.explore-bar {
+  position: absolute; left: 50%; translate: -50% 0; bottom: calc(166px + env(safe-area-inset-bottom, 0px)); width: min(440px, calc(100% - 24px));
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px; border-radius: 16px;
+  background: rgba(255, 255, 255, .95); color: #1c1d1f; box-shadow: 0 6px 20px rgba(0, 0, 0, .22); animation: toast-in .2s ease;
+}
+.explore-bar .btn { padding: 7px 11px; min-height: 0; font-size: .88rem; }
+.explore-bar .btn:not(.primary) { background: #f3efe6; color: #1c1d1f; }
+.explore-bar .muted { color: #5b5f66; }
 /* Gezinti: eşya çantası, düzenleme, yerleştirme */
 .explore-panel {
   position: absolute; left: 50%; translate: -50% 0; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); width: min(380px, calc(100% - 24px));
@@ -1085,7 +1090,16 @@ button.chip.on { border-color: var(--accent); background: color-mix(in srgb, var
 .month-chips { display: flex; gap: 5px; overflow-x: auto; flex: 1; scrollbar-width: none; padding: 2px; }
 .month-chips .chip { flex: none; }
 .month-chips .chip.locked { color: var(--muted); background: var(--bg); }
-.world-wrap.big { height: min(82vh, 760px); }
+/* Dünyam tam ekran: sekmeler üstte, dünya kalan alanı doldurur */
+.world-stage { display: flex; flex-direction: column; gap: 10px; }
+.world-stage.full {
+  position: fixed; inset: 0; z-index: 30; gap: 6px; background: var(--bg);
+  padding: calc(6px + env(safe-area-inset-top, 0px)) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+}
+.world-stage.full > .world-tabs, .world-stage.full > .month-bar { padding: 0 8px; }
+.world-stage.full > .world-wrap { flex: 1; min-height: 0; height: auto; border-radius: 0; box-shadow: none; }
+.world-stage.full .use-bar, .world-stage.full .world-actions { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+.world-stage.full .edit-drawer { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
 .world-locked {
   position: absolute; left: 50%; top: 56%; transform: translate(-50%, -50%); display: grid; gap: 4px; text-align: center;
   width: min(86%, 320px); padding: 12px 14px; border-radius: 16px; background: rgba(255, 255, 255, .92); color: #1c1d1f;
@@ -1145,3 +1159,51 @@ button.chip.on { border-color: var(--accent); background: color-mix(in srgb, var
 .ae-price { position: absolute; top: 4px; right: 5px; font-size: .65rem; font-weight: 800; color: var(--muted); }
 .ae-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line); display: grid; gap: 6px; background: var(--card); }
 .ae-missing { display: grid; gap: 6px; }
+
+/* ---------- Dükkân penceresi (Habbo kataloğu gibi) ve eşya resimleri ---------- */
+.shop-backdrop {
+  position: fixed; inset: 0; z-index: 45; background: rgba(0, 0, 0, .4);
+  display: flex; align-items: center; justify-content: center; padding: 12px; animation: fade .2s;
+}
+.shop-window {
+  width: 100%; max-width: 640px; height: min(88vh, 820px); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--card); color: var(--text); border-radius: 18px; border: 3px solid #2c5fa8;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35); animation: slide-up .25s cubic-bezier(.2,1,.4,1);
+}
+.shop-titlebar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; color: #fff;
+  background: linear-gradient(180deg, #4b8ae0, #2c5fa8);
+}
+.shop-titlebar .link { color: #fff; }
+.shop-titlebar .icon-btn { color: #fff; }
+.shop-titlebar .small-gem { font-size: 1.05rem; color: #fff; background: rgba(0, 0, 0, .2); padding: 2px 10px; border-radius: 999px; }
+.shop-window > .shop-tabs { padding: 6px 8px 0; margin: 0; }
+.shop-scroll { flex: 1; overflow-y: auto; padding: 8px 10px 14px; display: grid; gap: 10px; align-content: start; }
+.shop-detail {
+  display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: center; padding: 10px 12px;
+  border-bottom: 1px solid var(--line); background: color-mix(in srgb, #4b8ae0 7%, var(--card));
+}
+.shop-detail .item-preview { height: 150px; margin: 0; }
+.shop-detail .item-preview.emoji { font-size: 3.6rem; }
+.shop-detail .shop-info { display: grid; gap: 6px; min-width: 0; }
+.shop-detail .shop-info > p { margin: 0; text-align: left; }
+.shop-detail .shop-info .btn.big { padding: 10px 14px; min-height: 0; font-size: 1rem; }
+.shop-name { margin: 0; font-size: 1.1rem; }
+.shop-locked { flex: 1; display: grid; place-content: center; gap: 12px; text-align: center; padding: 20px; }
+.shop-window .item-grid { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
+.item-card.selected { outline: 3px solid #4b8ae0; outline-offset: -1px; }
+.item-icon { display: grid; place-items: center; height: 64px; }
+.item-thumb { width: 64px; height: 64px; object-fit: contain; display: block; }
+.inv-item .item-thumb { width: 40px; height: 40px; }
+.inv-item > span:first-child { height: 40px; display: grid; place-items: center; }
+.thumb-studio { position: fixed; left: -10000px; top: 0; width: 160px; height: 160px; pointer-events: none; }
+@media (max-width: 480px) {
+  .shop-backdrop { padding: 0; align-items: flex-end; }
+  .shop-window { height: 92vh; border-radius: 20px 20px 0 0; border-width: 3px 0 0; }
+  .shop-detail { grid-template-columns: 110px 1fr; }
+  .shop-detail .item-preview { height: 110px; }
+}
+.item-thumb.big { width: 128px; height: 128px; margin: 0 auto; }
+.item-thumb.sm { width: 36px; height: 36px; }
+.shop-window > .shop-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.shop-window > .shop-tabs button { flex: none; }

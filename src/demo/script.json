@@ -44,7 +44,7 @@
       "view": "room",
       "target": "edit",
       "title": "Odanı düzenle",
-      "text": "Düzenle'ye dokun: eşyalar kare kare yerleşir. Bir eşyaya dokunup seç, sürükleyip taşı ya da döndür. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Gezerken de bir eşyayı taşıyabilirsin."
+      "text": "Envanter'e dokun, bir eşya seç, sonra koymak istediğin kareye dokun. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Bir eşyaya dokununca karakterin yanına gider: kullan, taşı, döndür ya da kaldır."
     },
     {
       "id": "07-orman",

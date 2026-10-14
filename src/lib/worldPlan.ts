@@ -2,7 +2,8 @@
 // (user_spaces, save_space), burada yan yana tek bir dünyaya yerleşir. Saf ve deterministik: 3D sahne,
 // gezinti ve testler aynı planı kullanır; hiçbir şey saklanmaz.
 //
-//   kütüphane | oda          ← arka duvarlar y = 0'da hizalı (library.h = room.h)
+//   kütüphane | oda | mutfak | yatak odası | …   ← arka duvarlar y = 0'da hizalı (hepsi room.h derinliğinde);
+//                                                 seriyle açılan odalar ve sıradaki kilitli oda
 //   bahçe (evin önü)  ──yol──┬── 1. sıra ay bahçeleri (kapıları güneydeki yola açılır)
 //                            ├── 2. sıra ay bahçeleri
 //                            └── 2. yol
@@ -18,6 +19,7 @@ import {
   mapById,
   monthSpace,
   monthState,
+  roomsOf,
   seasonMonths,
   type SpaceId,
   type SpaceLayout,
@@ -71,12 +73,20 @@ export function worldPlan(ctx: WorldCtx, months: string[] = seasonMonths()): Wor
     { id: 'room', x: map.library.w, y: 0, w: map.room.w, h: H },
     { id: 'garden', x: 0, y: H, w: map.garden.w, h: map.garden.h },
   ];
+  // Seriyle açılan odalar odanın doğusunda sırayla; sıradaki kilitli oda da görünür (temeli atılmış)
+  const rooms = roomsOf(ctx.best);
+  let rx = map.library.w + map.room.w;
+  for (const r of [...rooms.unlocked, ...(rooms.next ? [rooms.next] : [])]) {
+    regions.push({ id: r.id, x: rx, y: 0, w: r.w, h: H, locked: ctx.best < r.streak });
+    rx += r.w;
+  }
   const gate = map.garden.fixed.find((f) => f.kind === 'gate');
   const open = months.filter((m) => monthState(m, ctx.today) !== 'out');
   // Orman yolu bahçe kapısının hizasından doğuya
   const x0 = map.garden.w;
   const ta = H + (gate?.y ?? 0);
-  const fx = x0 + LEAD;
+  // Ay bahçeleri evin bittiği yerden sonra başlar (ilk sıra evin hizasına uzanır)
+  const fx = Math.max(x0 + LEAD, rx + 2);
   const pitch = G.w + 1;
   const rows = open.length > PER_ROW ? 2 : open.length ? 1 : 0;
   const len = fx + Math.min(open.length, PER_ROW) * pitch - x0;

@@ -2,6 +2,7 @@
 // gözlük ve sırt. Parçaların stili items.json → style, renkleri görünüşten (avatar.ts → AvatarLook).
 // Kemik yok: kollar omuzdan, bacaklar kalçadan döner; yürüme, koşma, zıplama, süzülme, el sallama, oturma,
 // yatma ve sallanma useFrame'de hesaplanır (yatarken gövdeyi yatıran çağıran taraftır). Ayakların altı y = 0, boy ~1.2 birim.
+// `holding`: bir eşyadan alınan ikram (DISPENSE: kahve, dondurma…) sağ elde, kol öne kalkık.
 //
 // Dünya görünümü "istek üzerine" çizildiğinden (frameloop="demand") boşta nefes/göz kırpma yalnızca
 // `live` açıkken (önizleme, gezinti) oynar; yürürken çağıran taraf kare ister.
@@ -59,7 +60,7 @@ function Ball({ p, r, c, sc, e }: { p: [number, number, number]; r: number; c: s
 
 const darker = (c: string, k = 0.75) => '#' + new Color(c).multiplyScalar(k).getHexString();
 
-export default function AvatarModel({ look, anim, live = false }: { look: AvatarLook; anim?: MutableRefObject<AvatarAnim>; live?: boolean }) {
+export default function AvatarModel({ look, anim, live = false, holding }: { look: AvatarLook; anim?: MutableRefObject<AvatarAnim>; live?: boolean; holding?: string | null }) {
   const body = useRef<Group>(null);
   const legL = useRef<Group>(null);
   const legR = useRef<Group>(null);
@@ -126,7 +127,8 @@ export default function AvatarModel({ look, anim, live = false }: { look: Avatar
         armR.current.rotation.x += (-0.2 - armR.current.rotation.x) * k;
         armR.current.rotation.z = -2.6 + Math.sin(t * 10) * 0.35;
       }
-    } else moving += ease(armR.current, seated ? arm : -arm, -armZ);
+    } else if (holding && s !== 'lie') moving += ease(armR.current, -1.05, -0.1);
+    else moving += ease(armR.current, seated ? arm : -arm, -armZ);
     if (body.current) {
       body.current.position.y = bob;
       body.current.rotation.x += (lean - body.current.rotation.x) * k;
@@ -163,6 +165,12 @@ export default function AvatarModel({ look, anim, live = false }: { look: Avatar
         {[-1, 1].map((side) => (
           <group key={side} ref={side < 0 ? armL : armR} position={[side * 0.215, SHOULDER, 0]}>
             <Arm look={look} top={top} topC={topC} />
+            {side > 0 && holding && (
+              // Kol öne kalkınca ikram dik dursun
+              <group position={[0, -0.34, 0.05]} rotation-x={1.05}>
+                <Treat kind={holding} />
+              </group>
+            )}
           </group>
         ))}
         {/* Sırt */}
@@ -314,6 +322,70 @@ function Arm({ look, top, topC }: { look: AvatarLook; top: string; topC: string 
       <Ball p={[0, -0.32, 0]} r={0.055} c={look.skin} />
     </group>
   );
+}
+
+/** Eldeki ikram: küçük, kodla çizilen nesneler */
+function Treat({ kind }: { kind: string }) {
+  switch (kind) {
+    case 'kahve':
+      return (
+        <group>
+          <mesh position={[0, 0.06, 0]} castShadow>
+            <cylinderGeometry args={[0.05, 0.04, 0.12, 12]} />
+            <Mat c="#ffffff" />
+          </mesh>
+          <mesh position={[0, 0.115, 0]}>
+            <cylinderGeometry args={[0.045, 0.045, 0.01, 12]} />
+            <Mat c="#6b3e1f" />
+          </mesh>
+          <Box p={[0.06, 0.06, 0]} s={[0.02, 0.05, 0.02]} c="#ffffff" />
+        </group>
+      );
+    case 'dondurma':
+      return (
+        <group>
+          <mesh position={[0, 0.05, 0]} rotation-x={Math.PI}>
+            <coneGeometry args={[0.045, 0.12, 10]} />
+            <Mat c="#d9a35b" />
+          </mesh>
+          <Ball p={[0, 0.13, 0]} r={0.05} c="#ff9ecb" />
+          <Ball p={[0, 0.18, 0]} r={0.035} c="#fff3c4" />
+        </group>
+      );
+    case 'meyve-suyu':
+      return (
+        <group>
+          <Box p={[0, 0.07, 0]} s={[0.07, 0.13, 0.05]} c="#ff9f43" />
+          <Box p={[0.01, 0.17, 0]} s={[0.012, 0.08, 0.012]} c="#ef4b4b" />
+        </group>
+      );
+    case 'patlamis-misir':
+      return (
+        <group>
+          <mesh position={[0, 0.06, 0]}>
+            <cylinderGeometry args={[0.06, 0.045, 0.12, 8]} />
+            <Mat c="#e53935" />
+          </mesh>
+          {[-0.02, 0.02, 0].map((x, i) => (
+            <Ball key={i} p={[x, 0.13 + (i === 2 ? 0.03 : 0), i === 2 ? 0 : 0.01]} r={0.03} c="#fff6c9" />
+          ))}
+        </group>
+      );
+    case 'kurabiye':
+      return (
+        <mesh position={[0, 0.03, 0]} rotation-x={Math.PI / 2}>
+          <cylinderGeometry args={[0.06, 0.06, 0.02, 12]} />
+          <Mat c="#c98a4b" />
+        </mesh>
+      );
+    default:
+      return (
+        <mesh position={[0, 0.07, 0]}>
+          <cylinderGeometry args={[0.04, 0.035, 0.14, 12]} />
+          <Mat c="#7ec8ff" o={0.75} />
+        </mesh>
+      );
+  }
 }
 
 // ---------- Yüz ----------

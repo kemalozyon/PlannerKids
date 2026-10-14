@@ -696,8 +696,13 @@ let ambientUntil = 0;
 
 export type Area = { x0: number; x1: number; y0: number; y1: number };
 
-export function Creatures({ list, area }: { list: typeof CFG.world.creatures; area: Area }) {
+/** Canlılar; `attract` verilirse (bugün mama konan kap, yatak) onun çevresinde dolaşırlar */
+export function Creatures({ list, area: all, attract }: { list: typeof CFG.world.creatures; area: Area; attract?: { x: number; z: number } | null }) {
   const invalidate = useThree((s) => s.invalidate);
+  const R = 1.6;
+  const area = attract
+    ? { x0: Math.max(all.x0, attract.x - R), x1: Math.min(all.x1, attract.x + R), y0: Math.max(all.y0, attract.z - R), y1: Math.min(all.y1, attract.z + R) }
+    : all;
   useEffect(() => {
     if (!list.length) return;
     const wake = () => {
