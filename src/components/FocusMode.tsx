@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { formatMinutes } from '../lib/date';
 import { CFG } from '../lib/config';
 import type { Course } from '../lib/types';
@@ -8,9 +8,13 @@ import ConfirmButton from './ConfirmButton';
 import { speciesOf, stageOf, treeLabel } from '../lib/world';
 import { useGame } from '../lib/GameContext';
 import { toLocalDate } from '../lib/date';
+import { ambientState, play as playAmbient, stop as stopAmbient } from '../lib/ambient';
+import { hasWebGL } from '../lib/webgl';
 
 const GOALS = [25, 40];
 const SOUND_KEY = 'ct-focus-sound-v1';
+const ROOM_KEY = 'ct-focus-room-v1';
+const StudyRoom = lazy(() => import('./world3d/StudyRoom'));
 
 /**
  * Tam ekran odak modu: halka sayaç, çalıştıkça büyüyen bugünün ağacı (her gün bir ağaç; büyüklüğü günün
@@ -30,7 +34,7 @@ export default function FocusMode({
   /** Bugün kaydedilmiş oturum sayısı (bu oturum hariç) */
   roundsToday: number;
   onFinish: () => void;
-  /** İptal (uzun sürdüyse ve o gün başka kayıt yoksa bahçede kuru ağaç kalır) */
+  /** İptal: seans kaydedilmez (ağaç büyümez) */
   onCancel: () => void;
   onClose: () => void;
 }) {
@@ -40,6 +44,16 @@ export default function FocusMode({
   const [sound, setSound] = useState(() => {
     try {
       return localStorage.getItem(SOUND_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  // Odam: karakter odadaki masasında ders çalışırken (isteğe bağlı, 3D)
+  const can3D = useMemo(hasWebGL, []);
+  const [room, setRoom] = useState(() => {
+    try {
+      return localStorage.getItem(ROOM_KEY) === '1';
     } catch {
       return false;
     }
@@ -65,7 +79,7 @@ export default function FocusMode({
   // Bugünün ağacı: günün toplamı (bu seans dahil) büyüklüğünü, tarih türünü belirler
   const { stats } = useGame();
   const dayMin = (stats?.todayMinutes ?? 0) + elapsedMin;
-  const species = speciesOf(toLocalDate());
+  const species = speciesOf(toLocalDate(), stats?.seeds);
   const { stage } = stageOf(Math.floor(dayMin));
   const nx = CFG.world.stages.find((k) => k.min > dayMin);
   const color = course?.color ?? 'var(--accent)';
@@ -144,7 +158,7 @@ export default function FocusMode({
             <div className="break-note">{Math.floor(elapsedMin)} dakikadır çalışıyorsun. Kısa bir mola iyi gelir. 🧃</div>
           )}
           <div className="actions center focus-actions">
-            <ConfirmButton className="btn ghost" confirmLabel={elapsedMin >= CFG.session.wiltMinutes ? 'Kuru ağaç kalsın mı?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
+            <ConfirmButton className="btn ghost" confirmLabel="Kaydetmeden sil?" onConfirm={onCancel}>
               İptal
             </ConfirmButton>
             {ses.paused && (
@@ -158,6 +172,36 @@ export default function FocusMode({
           </div>
         </section>
 
+        {can3D && room && (
+          <div className="focus-room">
+            <Suspense fallback={null}>
+              <StudyRoom />
+            </Suspense>
+          </div>
+        )}
+        {can3D && (
+          <section className="card row focus-sound">
+            <label className="check grow" htmlFor="focus-room">
+              <span className="grow">
+                <strong>🏠 Odamı göster</strong>
+                <span className="muted small"> · karakterin masanda seninle çalışsın</span>
+              </span>
+            </label>
+            <input
+              id="focus-room"
+              type="checkbox"
+              checked={room}
+              onChange={(e) => {
+                setRoom(e.target.checked);
+                try {
+                  localStorage.setItem(ROOM_KEY, e.target.checked ? '1' : '0');
+                } catch {
+                  /* yok say */
+                }
+              }}
+            />
+          </section>
+        )}
         <section className="card row focus-sound">
           <label className="check grow" htmlFor="focus-sound">
             <span className="grow">
@@ -179,7 +223,7 @@ export default function FocusMode({
             }}
           />
         </section>
-        <p className="muted small center">Seansı bitirince bugünün ağacı büyür ve çalıştığın her dakikaya 1 💎 Elmas kazanırsın. Yarıda bırakırsan (o gün başka çalışma yoksa) kuru ağaç kalır.</p>
+        <p className="muted small center">Seansı bitirince bugünün ağacı büyür ve çalıştığın her dakikaya 1 💎 Elmas kazanırsın. Bir günde {CFG.world.drop.minutes} dk sayaçla çalışırsan ağacın nadir olur ve dibinden bir eşya çıkar.</p>
       </div>
     </div>
   );
@@ -211,31 +255,16 @@ function useWakeLock(on: boolean) {
   }, [on]);
 }
 
-/** Kahverengi gürültü: yumuşak yağmur benzeri ses. Kapanınca/odak modundan çıkınca durur. */
+/**
+ * Yağmur sesi (uygulamanın ortam çaları, lib/ambient.ts). Odadaki radyoda başka bir kanal çalıyorsa ona dokunmaz;
+ * yalnızca kendi açtığı yağmuru kapatır.
+ */
 function useRain(on: boolean) {
   useEffect(() => {
-    if (!on) return;
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const len = ctx.sampleRate * 4;
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < len; i++) {
-      last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
-      data[i] = last * 3.5;
-    }
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.25;
-    src.connect(gain).connect(ctx.destination);
-    src.start();
+    if (!on || ambientState().channel) return;
+    playAmbient('yagmur');
     return () => {
-      src.stop();
-      ctx.close();
+      if (ambientState().channel === 'yagmur' && !ambientState().source) stopAmbient();
     };
   }, [on]);
 }

@@ -2,14 +2,22 @@
 // (0010_economy_v2.sql → economy_sync); istemci deftere yazamaz. Buradaki saf fonksiyonlar aynı kuralları
 // uygular: demo API ve ekrandaki ilerleme bunları kullanır. Bütün sayılar src/config/economy.json'da.
 //
-// Yalnızca sayaçla ölçülen (timer) ve eski (legacy) kayıtlar sayılır; elle yazılan süre (manual) Elmas vermez.
+// Ders Elmas'ı, seri, sandık ve görevler yalnızca sayaçla ölçülen (timer) ve eski (legacy) kayıtları sayar. Sayaç
+// dakikaları ayrıca canlı seans bonusu verir; elle yazılan süre (manual) düşük bir günlük tavanla Elmas verir;
+// ailenin verdiği görevler bitince Elmas verir. Hepsi günlük tavanın (study.dailyCap) içinde. Bir günde çok uzun
+// sayaçla çalışmak (world.drop) bir de nadir ağaç ödülü (eşya) verir.
+//
+// Ağaçtan talep (elmas.claim, 0036_tree_claim.sql): güne bağlı kazançlar (ders, canlı, elle, seri, plan, "nasıl
+// geçti", günlük görev, aile görevi) claim.from gününden itibaren deftere kendiliğinden yazılmaz; o günün ağacında
+// bekler ve çocuk Bahçem'de ağaca dokunup alınca yazılır (claim_day). Hiç kaybolmaz; alındıktan sonra o gün daha
+// çok çalışılırsa yeni Elmas yine ağaçta birikir. Haftalık görevler ve kitaplar kendiliğinden gelir.
 import { itemById, ITEMS, type Item, type UnlockKind } from './catalog';
 import { CFG, type QuestConfig } from './config';
 import { addDays, toLocalDate, weekStart } from './date';
 import { rng } from './rng';
 import { completedPlanDays } from './plan';
 import { computeStreak } from './streak';
-import type { Book, LedgerEntry, NewLedgerEntry, OwnedItem, PlanItem, Reflection, StudyLog } from './types';
+import type { Book, LedgerEntry, NewLedgerEntry, OwnedItem, PlanItem, Reflection, StudyLog, Task } from './types';
 
 const E = CFG.elmas;
 export const GIFT_MAX = E.giftMax;
@@ -33,6 +41,48 @@ export function dayTotalsOf(logs: StudyLog[]): Map<string, number> {
   return m;
 }
 
+/** Günün sayaçla ölçülen dakikaları (canlı seans bonusu; eski kayıtlar sayılmaz) */
+export function timerTotalsOf(logs: StudyLog[]): Map<string, number> {
+  const m = new Map<string, number>();
+  logs.filter((l) => l.source === 'timer').forEach((l) => m.set(l.date, (m.get(l.date) ?? 0) + l.duration_minutes));
+  return m;
+}
+
+/** Günün elle yazılan dakikaları: yalnızca kayıt gününden en çok lateDays gün sonra yazılanlar (geçmişe toplu yazı
+ *  Elmas vermez). Sunucu yazılma gününü UTC'ye göre alır (created_at::date). */
+export function manualTotalsOf(logs: StudyLog[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const l of logs) {
+    if (l.source !== 'manual' || toLocalDate(new Date(l.created_at)) > addDays(l.date, E.manual.lateDays)) continue;
+    m.set(l.date, (m.get(l.date) ?? 0) + l.duration_minutes);
+  }
+  return m;
+}
+
+/** Bir günün çalışma Elmas'ı: ders (güvenilir dakika), canlı seans bonusu (sayaç dakikası), elle yazılan süre;
+ *  üçü birlikte en çok dailyCap (sırayla: önce ders, sonra bonus, sonra elle yazılan) */
+export function dayElmas(date: string, trustedMin: number, timerMin: number, manualMin: number): { study: number; live: number; manual: number } {
+  const cap = E.study.dailyCap;
+  const study = studyElmas(trustedMin);
+  const live = date >= E.live.from ? Math.max(0, Math.min(Math.floor(timerMin * E.live.bonus), cap - study)) : 0;
+  const manual = date >= E.manual.from ? Math.max(0, Math.min(Math.floor(manualMin / E.manual.minutesPer), E.manual.capPerDay, cap - study - live)) : 0;
+  return { study, live, manual };
+}
+
+/** Elmas kazandıran aile görevleri: bitmiş ve gününün ilk perDay aile görevi olan (oluşturulma sırasıyla). Sıra
+ *  bitmemişleri de sayar: birini geri alıp başkasını bitirmek fazladan Elmas vermez. */
+export function paidTasks(tasks: Task[], today: string): Task[] {
+  const rank = new Map<string, number>();
+  return tasks
+    .filter((t) => t.from_parent && t.date <= addDays(today, 1))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+    .filter((t) => {
+      const n = (rank.get(t.date) ?? 0) + 1;
+      rank.set(t.date, n);
+      return t.done && n <= E.task.perDay;
+    });
+}
+
 /** Günün dakikasından Elmas: kademeler (bugün her dakikaya 1; azalan getiri de kurulabilir), en fazla dailyCap */
 export function studyElmas(minutes: number, study = E.study): number {
   let prev = 0;
@@ -51,6 +101,8 @@ export interface EconomyInput {
   reflections?: Reflection[];
   /** Seri dondurmalar için */
   owned?: OwnedItem[];
+  /** Aile görevleri için */
+  tasks?: Task[];
   today: string;
 }
 
@@ -111,19 +163,36 @@ export function bestStreakOf(logs: StudyLog[], owned: OwnedItem[], today: string
   return computeStreak((d) => totals.get(d) ?? 0, first, today, freezeDates(owned)).best;
 }
 
+/** Ağaçtan talep edilen ilk gün (öncesi kendiliğinden deftere yazılır) */
+export const CLAIM_FROM = E.claim.from;
+
+/** Kazanç; güne bağlıysa `day` (o günün ağacında bekler) */
+export type Earned = NewLedgerEntry & { day?: string };
+
+/** Ağaçta bekleyen kazanç mı (güne bağlı ve claim.from'dan sonra) */
+export const claimable = (e: Earned) => !!e.day && e.day >= CLAIM_FROM;
+
 /** Kayıtların hak ettirdiği bütün Elmas kazançları (geçmiş dahil). Hediye ve yıldızlar burada yok. */
-export function earnedEntries(input: EconomyInput): NewLedgerEntry[] {
+export function earnedEntries(input: EconomyInput): Earned[] {
   const f = factsOf(input);
-  const out: NewLedgerEntry[] = [];
-  const add = (kind: NewLedgerEntry['kind'], ref: string, amount: number) => amount > 0 && out.push({ currency: 'crystal', kind, ref, amount });
+  const out: Earned[] = [];
+  const add = (kind: NewLedgerEntry['kind'], ref: string, amount: number, day?: string) => amount > 0 && out.push({ currency: 'crystal', kind, ref, amount, ...(day ? { day } : {}) });
   const days = [...f.dayTotals.keys()].filter((d) => d <= f.today && (f.dayTotals.get(d) ?? 0) > 0).sort();
-  for (const d of days) add('study', d, studyElmas(f.dayTotals.get(d)!));
+  const timer = timerTotalsOf(input.logs);
+  const manual = manualTotalsOf(input.logs);
+  for (const d of new Set([...days, ...[...manual.keys()].filter((d) => d <= f.today)])) {
+    const e = dayElmas(d, f.dayTotals.get(d) ?? 0, timer.get(d) ?? 0, manual.get(d) ?? 0);
+    add('study', d, e.study, d);
+    add('live', d, e.live, d);
+    add('manual', d, e.manual, d);
+  }
+  for (const t of paidTasks(input.tasks ?? [], f.today)) add('task', t.id, E.task.each, t.date);
   const streak = computeStreak((d) => f.dayTotals.get(d) ?? 0, days[0] ?? null, f.today, freezeDates(input.owned ?? []));
-  for (const [d, b] of streak.bonus) add('streak', d, b);
-  for (const d of f.planDays) add('plan', d, E.plan);
+  for (const [d, b] of streak.bonus) add('streak', d, b, d);
+  for (const d of f.planDays) add('plan', d, E.plan, d);
   for (const r of input.reflections ?? []) {
     if (r.date <= f.today && r.rating != null && (r.note ?? '').trim().length >= E.reflection.minNote && (f.dayTotals.get(r.date) ?? 0) > 0) {
-      add('reflection', r.date, E.reflection.bonus);
+      add('reflection', r.date, E.reflection.bonus, r.date);
     }
   }
   for (const b of bonusBooks(f.books, f.today)) add('book', b.id, E.book.bonus);
@@ -131,7 +200,7 @@ export function earnedEntries(input: EconomyInput): NewLedgerEntry[] {
   const weeks = new Set([...days, ...f.books.map((b) => b.finished_on ?? '').filter((d) => d && d <= f.today)].map(weekStart));
   for (const q of QUESTS) {
     for (const period of q.scope === 'day' ? days : weeks) {
-      if (questProgress(q.id, period, f) >= q.target) add('quest', `${q.id}:${period}`, q.reward);
+      if (questProgress(q.id, period, f) >= q.target) add('quest', `${q.id}:${period}`, q.reward, q.scope === 'day' ? period : undefined);
     }
   }
   return out;
@@ -139,10 +208,29 @@ export function earnedEntries(input: EconomyInput): NewLedgerEntry[] {
 
 const key = (e: Pick<NewLedgerEntry, 'currency' | 'kind' | 'ref'>) => `${e.currency}|${e.kind}|${e.ref}`;
 
-/** Deftere yazılacaklar: yeni kazançlar ve artanlar (kazanç hiç azalmaz; sunucudaki economy_sync'in aynısı) */
-export function pendingEarnings(ledger: LedgerEntry[], earned: NewLedgerEntry[]): NewLedgerEntry[] {
+/** Deftere kendiliğinden yazılacaklar: yeni kazançlar ve artanlar, ağaçta bekleyenler hariç (kazanç hiç azalmaz;
+ *  sunucudaki economy_sync'in aynısı) */
+export function pendingEarnings(ledger: LedgerEntry[], earned: Earned[]): Earned[] {
   const have = new Map(ledger.map((e) => [key(e), e.amount]));
-  return earned.filter((e) => (have.get(key(e)) ?? 0) < e.amount);
+  return earned.filter((e) => !claimable(e) && (have.get(key(e)) ?? 0) < e.amount);
+}
+
+/** Bir günün ağacından alınınca deftere yazılacaklar (claim_day) */
+export function dayEarnings(ledger: LedgerEntry[], earned: Earned[], day: string): Earned[] {
+  const have = new Map(ledger.map((e) => [key(e), e.amount]));
+  return earned.filter((e) => claimable(e) && e.day === day && (have.get(key(e)) ?? 0) < e.amount);
+}
+
+/** Ağaçlarda bekleyen Elmas: gün → tutar (sunucuda economy_pending) */
+export function treeElmasOf(ledger: LedgerEntry[], earned: Earned[]): Map<string, number> {
+  const have = new Map(ledger.map((e) => [key(e), e.amount]));
+  const out = new Map<string, number>();
+  for (const e of earned) {
+    if (!claimable(e)) continue;
+    const gain = e.amount - (have.get(key(e)) ?? 0);
+    if (gain > 0) out.set(e.day!, (out.get(e.day!) ?? 0) + gain);
+  }
+  return out;
 }
 
 /** 💎 bakiye ve ⭐ toplanan yıldız sayısı */
@@ -220,6 +308,46 @@ export function chestPrize(week: string, owned: OwnedItem[]): Item {
   return pool[pool.length - 1];
 }
 
+// ---------- Nadir ağaç ödülü ----------
+const DROP = CFG.world.drop;
+export const DROP_MINUTES = DROP.minutes;
+
+export interface DropState {
+  date: string;
+  /** Günün güvenilir (sayaç + eski) dakikaları */
+  minutes: number;
+  opened: boolean;
+}
+
+/** Yalnızca nadir ağaç gününden çıkan eşyalar (items.json → drop; sunucu item_defs.def->>'drop') */
+export const inDropPool = (i: Item) => i.acquire.kind === 'drop';
+
+/** Ödül hak edilen günler: from gününden beri en az DROP_MINUTES güvenilir dakika (elle yazılan sayılmaz), eskiden yeniye */
+export function dropsOf(dayTotals: Map<string, number>, owned: OwnedItem[], today: string): DropState[] {
+  const out: DropState[] = [];
+  for (const [date, minutes] of dayTotals) {
+    if (minutes >= DROP_MINUTES && date >= DROP.from && date <= addDays(today, 1)) {
+      out.push({ date, minutes, opened: owned.some((o) => o.via === 'drop' && o.ref === date) });
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Günün ödülü: tarihe göre sabit; önce henüz sende olmayan nadir eşyalar, hepsi sendeyse herhangi biri (bir tane daha) */
+export function dropPrize(date: string, owned: OwnedItem[]): Item {
+  const have = new Set(owned.map((o) => o.item_id));
+  const all = ITEMS.filter(inDropPool);
+  const fresh = all.filter((i) => !have.has(i.id));
+  const pool = fresh.length ? fresh : all;
+  const total = pool.reduce((s, i) => s + WEIGHT[i.rarity], 0);
+  let pick = rng(`nadir:${date}`)() * total;
+  for (const i of pool) {
+    pick -= WEIGHT[i.rarity];
+    if (pick < 0) return i;
+  }
+  return pool[pool.length - 1];
+}
+
 // ---------- Sahiplik ----------
 /** Başarıyla açılan eşyalar için ilerleme */
 export interface UnlockProgress {
@@ -231,7 +359,7 @@ export interface UnlockProgress {
   level: number;
   /** Toplam (güvenilir) çalışma saati */
   hours: number;
-  /** Ağaç sayısı: çalışılan gün (kuru ağaçlar hariç) */
+  /** Ağaç sayısı: çalışılan gün */
   trees: number;
 }
 
@@ -247,12 +375,12 @@ export function owns(item: Item, owned: OwnedItem[], p: UnlockProgress): boolean
 }
 
 /**
- * Bir eşyadan kaç tane yerleştirilebilir (sunucuda world_owned): satılan/sandık eşyası sahip olunan adet;
+ * Bir eşyadan kaç tane yerleştirilebilir (sunucuda world_owned): satılan/sandık/nadir ağaç eşyası sahip olunan adet;
  * başarıyla açılan açıldıysa 1; ücretsiz başlangıç eşyası 1, ücretsiz kaplama sınırsız.
  */
 export function ownedCount(item: Item, owned: OwnedItem[], p: UnlockProgress): number {
   const a = item.acquire;
-  if (a.kind === 'buy' || a.kind === 'chest') return owned.filter((o) => o.item_id === item.id).length;
+  if (a.kind === 'buy' || a.kind === 'chest' || a.kind === 'drop') return owned.filter((o) => o.item_id === item.id).length;
   if (a.kind === 'unlock') return ['hours', 'level', 'trees'].includes(a.by) && unlockValue(a.by, p) >= a.target ? 1 : 0;
   return item.placement ? 1 : Infinity;
 }
@@ -261,6 +389,7 @@ export function ownedCount(item: Item, owned: OwnedItem[], p: UnlockProgress): n
 export function unlockHint(item: Item): string {
   const a = item.acquire;
   if (a.kind === 'chest') return '📦 Yalnızca haftalık sandıktan';
+  if (a.kind === 'drop') return `🌟 Yalnızca nadir ağaç gününden: bir günde ${DROP_MINUTES} dk sayaçla çalış`;
   if (a.kind !== 'unlock') return '';
   if (a.by === 'streak') return `🔥 ${a.target} günlük seri yap`;
   if (a.by === 'plans') return `📋 ${a.target} günün planını tamamla`;

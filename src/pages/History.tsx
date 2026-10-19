@@ -87,7 +87,7 @@ export default function History({ courses }: { courses: Course[] }) {
   const isThisWeek = week === weekStart(today);
 
   /** O günün ağacı (takvimde küçük simge) */
-  const treeOf = (d: string) => (stats?.forest ?? []).find((t) => t.date === d && !t.dry) ?? null;
+  const treeOf = (d: string) => (stats?.forest ?? []).find((t) => t.date === d) ?? null;
 
   return (
     <div className="stack">

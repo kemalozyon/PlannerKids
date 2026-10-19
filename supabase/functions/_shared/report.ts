@@ -29,10 +29,9 @@ export function genitive(name: string): string {
 /** Günün toplamına göre ağacın büyüklüğü (src/config/economy.json → world.stages ile aynı; logic.test.ts denetler) */
 export const TREE_STAGES: { min: number; name: string }[] = [
   { min: 0, name: 'Fidan' },
-  { min: 20, name: 'Küçük' },
-  { min: 45, name: 'Orta boy' },
-  { min: 90, name: 'Büyük' },
-  { min: 150, name: 'Dev' },
+  { min: 60, name: 'Genç' },
+  { min: 120, name: 'Tam' },
+  { min: 180, name: 'Nadir' },
 ];
 const treeName = (m: number) => {
   const i = Math.max(0, TREE_STAGES.filter((t) => m >= t.min).length - 1);

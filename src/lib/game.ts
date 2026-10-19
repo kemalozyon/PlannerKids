@@ -1,26 +1,41 @@
 // Oyunlaştırma: hepsi mevcut kayıtlardan türetilir.
 // Uzun vadeli ilerleme = her çalışılan günün ağacıyla dolan aylık bahçeler + çalıştıkça açılan haritalar + rozetler.
 // Elmas, seri, seviye ve haritalar yalnızca sayaçla ölçülen (ve eski) kayıtlardan gelir; ağaçlar elle yazılan
-// süreyle de dikilir (çocuk bazen sayaç tutmadan çalışır).
-import { weekStart } from './date';
+// süreyle de dikilir (çocuk bazen sayaç tutmadan çalışır). Sayaçla çok uzun çalışılan gün nadir ağaç ödülü verir.
+import { addDays, weekStart } from './date';
 import { completedPlanDays } from './plan';
-import { balances, chestsNow, dayTotalsOf, freezeDates, QUESTS, questsNow, trusted, type ChestState, type QuestState, type UnlockProgress } from './economy';
+import {
+  balances,
+  chestsNow,
+  dayTotalsOf,
+  dropsOf,
+  freezeDates,
+  QUESTS,
+  questsNow,
+  trusted,
+  type ChestState,
+  type DropState,
+  type QuestState,
+  type UnlockProgress,
+} from './economy';
 import { computeStreak } from './streak';
+import { seedMap } from './seeds';
 import { levelOf, skillsOf, type LevelInfo, type Skill } from './level';
 import { CFG } from './config';
 import { normalizeEquipped } from './avatar';
-import { creaturesOf, dayTrees, mapsOf, type DayTree, type SpaceId, type SpaceLayout } from './world';
+import { creaturesOf, dayTrees, mapsOf, shiftMonth, type DayTree, type SpaceId, type SpaceLayout } from './world';
 import {
   type WorldState,
-  type Abandoned,
   type Book,
   type Course,
+  type DaySeed,
   type Equipped,
   type LedgerEntry,
   type OwnedItem,
   type PlanItem,
   type Reflection,
   type StudyLog,
+  type TreeElmas,
   type UserRoom,
 } from './types';
 
@@ -41,8 +56,6 @@ export interface GameInput {
   today: string;
   /** Günlük planlar (yoksa boş) */
   plans?: PlanItem[];
-  /** Yarıda bırakılan seanslar: kuru ağaç (yoksa boş) */
-  abandoned?: Abandoned[];
   // Oyun ekonomisi (0008 yoksa boş)
   ledger?: LedgerEntry[];
   owned?: OwnedItem[];
@@ -54,7 +67,10 @@ export interface GameInput {
   spaces?: Partial<Record<SpaceId, SpaceLayout>>;
   /** Eklenen odalar (0023 yoksa boş) */
   rooms?: UserRoom[];
-  /** Kullanıcının haritası (0015 yoksa ilk harita) */
+  /** Seçilen günlük tohumlar (0031 yoksa boş) */
+  seeds?: DaySeed[];
+  /** Ağaçlarda bekleyen Elmas (Api.listTreeElmas; 0036 yoksa boş) */
+  treeElmas?: TreeElmas[];
 }
 
 export interface GameStats {
@@ -72,9 +88,9 @@ export interface GameStats {
   dayTotals: Map<string, number>;
   /** Sayaçla ölçülen (ve eski) toplam: seviye, haritalar ve kilitler buna göre */
   trustedMinutes: number;
-  /** Her çalışılan günün ağacı (kuru dahil), eskiden yeniye */
+  /** Her çalışılan günün ağacı, eskiden yeniye */
   forest: DayTree[];
-  /** Kuru olmayan ağaç (çalışılan gün) sayısı */
+  /** Ağaç (çalışılan gün) sayısı */
   treeCount: number;
   /** Arazi: bugünkü aşama (saatten türer), açılanlar, sıradaki */
   world: WorldState;
@@ -100,6 +116,11 @@ export interface GameStats {
   quests: QuestState[];
   /** Geçen hafta ve bu hafta */
   chests: ChestState[];
+  /** Nadir ağaç ödülü hak edilen günler (alınmış ya da bekleyen), eskiden yeniye */
+  drops: DropState[];
+  /** Ağaçlarda bekleyen Elmas: gün → tutar (Bahçem'de ağaca dokununca alınır) */
+  treeElmas: Map<string, number>;
+  treeElmasTotal: number;
   level: LevelInfo;
   skills: Skill[];
   /** Başarıyla açılan eşyalar için ilerleme */
@@ -108,6 +129,8 @@ export interface GameStats {
   freezesLeft: number;
   /** Bugün toplanan yıldızların sırası (0–7) */
   starsToday: number[];
+  /** Tarih → seçilen tohumun türü (seeds.ts) */
+  seeds: Record<string, string>;
 }
 
 export function computeStats({
@@ -116,7 +139,6 @@ export function computeStats({
   doneTasks,
   today,
   plans = [],
-  abandoned = [],
   ledger = [],
   owned = [],
   equipped = null,
@@ -124,25 +146,27 @@ export function computeStats({
   courses = [],
   spaces = {},
   rooms = [],
+  seeds: seedRows = [],
+  treeElmas = [],
 }: GameInput): GameStats {
+  const seeds = seedMap(seedRows);
   const dayTotals = new Map<string, number>();
   for (const l of logs) dayTotals.set(l.date, (dayTotals.get(l.date) ?? 0) + l.duration_minutes);
   const totalMinutes = logs.reduce((s, l) => s + l.duration_minutes, 0);
   const todayMinutes = dayTotals.get(today) ?? 0;
   const reflectionDays = reflections.filter((r) => r.rating != null || (r.note ?? '').trim()).length;
 
-  // Seri, seviye ve orman yalnızca güvenilir kayıtlarla (elle yazılan süre sayılmaz)
+  // Seri, seviye ve arazi yalnızca güvenilir kayıtlarla (elle yazılan süre sayılmaz)
   const ok = trusted(logs);
   const trustedTotals = dayTotalsOf(ok);
   const trustedMinutes = ok.reduce((s, l) => s + l.duration_minutes, 0);
   const first = [...trustedTotals.keys()].filter((d) => (trustedTotals.get(d) ?? 0) > 0).sort()[0] ?? null;
   const { streak, best: bestStreak, tier: streakTier, freezesLeft, bonus: streakBonus } = computeStreak((d) => trustedTotals.get(d) ?? 0, first, today, freezeDates(owned));
 
-  const forest = dayTrees(logs, abandoned, new Set(streakBonus.keys()));
-  const living = forest.filter((t) => !t.dry);
-  const atLeast = (stage: number) => living.filter((t) => t.stageIndex >= stage).length;
+  const forest = dayTrees(logs, new Set(streakBonus.keys()), seeds);
+  const atLeast = (stage: number) => forest.filter((t) => t.stageIndex >= stage).length;
   const perMonth = new Map<string, number>();
-  living.forEach((t) => perMonth.set(t.month, (perMonth.get(t.month) ?? 0) + 1));
+  forest.forEach((t) => perMonth.set(t.month, (perMonth.get(t.month) ?? 0) + 1));
 
   const weekCourses = new Map<string, Set<string>>();
   for (const l of logs) {
@@ -156,7 +180,9 @@ export function computeStats({
   const ws: WorldState = { map: maps.current.id };
   const booksDone = books.filter((b) => b.status === 'done').length;
   const stages = CFG.world.stages;
-  const species = new Set(living.map((t) => t.species.id)).size;
+  const tam = stages.findIndex((s) => s.id === 'tam');
+  const nadir = stages.findIndex((s) => s.id === 'nadir');
+  const species = new Set(forest.map((t) => t.species.id)).size;
 
   const b = (id: string, icon: string, title: string, desc: string, value: number, target: number): Badge => ({
     id,
@@ -169,14 +195,14 @@ export function computeStats({
   });
 
   const badges: Badge[] = [
-    b('plant1', '🌱', 'İlk Ağaç', 'Çalıştığın ilk gün bahçene ağaç dikilir', living.length, 1),
+    b('plant1', '🌱', 'İlk Ağaç', 'Çalıştığın ilk gün bahçene ağaç dikilir', forest.length, 1),
     b('streak3', '🔥', 'Isınma Turu', '3 günlük seri yap', bestStreak, 3),
     b('streak7', '⚡', 'Bir Hafta', '7 günlük seri yap', bestStreak, 7),
     b('streak30', '🏔️', 'Dağ Gibi', '30 günlük seri yap', bestStreak, 30),
-    b('grove10', '🌳', 'Koru', 'Bahçelerinde 10 ağaç olsun', living.length, 10),
-    b('big1', '🌳', 'Koca Ağaç', `Bir günde ${stages[3].min} dk çalışıp büyük ağaç dik`, atLeast(3), 1),
-    b('giant1', '🌲', 'Dev', `Bir günde ${stages[4].min} dk çalışıp dev ağaç dik`, atLeast(4), 1),
-    b('forester', '🏕️', 'Ormancı', '50 gün çalışıp 50 ağaç dik', living.length, 50),
+    b('grove10', '🌳', 'Koru', 'Bahçelerinde 10 ağaç olsun', forest.length, 10),
+    b('big1', '🌳', 'Koca Ağaç', `Bir günde ${stages[tam].min} dk çalışıp tam boy ağaç dik`, atLeast(tam), 1),
+    b('giant1', '🌟', 'Nadir Ağaç', `Bir günde ${stages[nadir].min} dk çalışıp nadir ağaç dik`, atLeast(nadir), 1),
+    b('forester', '🏕️', 'Ormancı', '50 gün çalışıp 50 ağaç dik', forest.length, 50),
     b('species8', '🌸', 'Botanikçi', '8 farklı türde ağacın olsun', species, 8),
     b('map2', '🗺️', 'Kâşif', 'İkinci haritayı aç', maps.unlocked.length, 2),
     b('feel7', '😊', 'Duygu Günlüğü', '7 gün "nasıl geçti" yaz', reflectionDays, 7),
@@ -201,11 +227,11 @@ export function computeStats({
     dayTotals,
     trustedMinutes,
     forest,
-    treeCount: living.length,
+    treeCount: forest.length,
     world: ws,
     maps,
     rooms: [...rooms].sort((a, b) => a.pos - b.pos),
-    creatures: creaturesOf(living.length),
+    creatures: creaturesOf(forest.length),
     booksDone,
     badges,
     planDays,
@@ -217,6 +243,9 @@ export function computeStats({
     spaces,
     quests: questsNow({ logs, plans, books, today }),
     chests: chestsNow(today, trustedTotals, owned),
+    drops: dropsOf(trustedTotals, owned, today),
+    treeElmas: new Map(treeElmas.filter((t) => t.amount > 0).map((t) => [t.date, t.amount])),
+    treeElmasTotal: treeElmas.reduce((n, t) => n + Math.max(0, t.amount), 0),
     level,
     skills,
     unlock: {
@@ -225,12 +254,13 @@ export function computeStats({
       gold: skills.filter((k) => k.tier === 3).length,
       level: level.index,
       hours: trustedMinutes / 60,
-      trees: living.length,
+      trees: forest.length,
     },
     freezesLeft,
     starsToday: ledger
       .filter((e) => e.currency === 'star' && e.kind === 'star' && e.ref.startsWith(`${today}:`))
       .map((e) => Number(e.ref.split(':')[1])),
+    seeds,
   };
 }
 
@@ -243,6 +273,9 @@ export const LEDGER_LABEL: Partial<Record<LedgerEntry['kind'], (ref: string) => 
   book: () => 'Kitap bitirdin',
   quest: (ref) => QUESTS.find((q) => q.id === ref.split(':')[0])?.title ?? 'Görev',
   gift: () => 'Aile hediyesi',
+  live: () => 'Sayaçla çalıştın (canlı bonus)',
+  manual: () => 'Süreni yazdın',
+  task: () => 'Ailenin görevini bitirdin',
 };
 
 export type Celebration = { kind: 'tree' | 'badge' | 'land' | 'streak'; title: string; detail: string; icon: string };
@@ -253,9 +286,8 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
   // Bugünün ağacı: yeni dikildi ya da büyüdü
   const had = new Map(prev.forest.map((t) => [t.id, t]));
   for (const t of next.forest) {
-    if (t.dry) continue;
     const was = had.get(t.id);
-    if (!was || was.dry) {
+    if (!was) {
       out.push({
         kind: 'tree',
         icon: t.icon,
@@ -296,6 +328,12 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
       out.push({ kind: 'badge', icon: ['', '🥉', '🥈', '🥇'][k.tier], title: `${k.course.name}: ${t} ${k.title}!`, detail: k.tier === 3 ? 'Yeni bir karakter açıldı olabilir, dükkâna bak.' : 'Bu derse çalıştıkça unvanın parlar.' });
     }
   }
+  // Nadir ağaç ödülü: bugün (ya da yeni) hak edildi
+  const hadDrop = new Set(prev.drops.map((d) => d.date));
+  const drop = next.drops.find((d) => !d.opened && !hadDrop.has(d.date));
+  if (drop) {
+    out.push({ kind: 'badge', icon: '🎁', title: 'Nadir ağaç! Bir ödül düştü', detail: `Bir günde ${drop.minutes} dk sayaçla çalıştın. Ağacına dokun, ödülünü al.` });
+  }
   const readyNow = next.chests.find((c) => c.ready && !c.opened);
   if (readyNow && !prev.chests.some((c) => c.week === readyNow.week && c.ready)) {
     out.push({ kind: 'badge', icon: '📦', title: 'Haftalık sandığın hazır!', detail: 'Bugün ekranından açabilirsin.' });
@@ -307,4 +345,40 @@ export function diffStats(prev: GameStats, next: GameStats): Celebration[] {
     }
   }
   return out;
+}
+
+export interface PeriodTotals {
+  /** Son haftalar (eskiden yeniye): pazartesi ve toplam dakika */
+  weeks: { start: string; minutes: number }[];
+  /** Son aylar (eskiden yeniye) */
+  months: { month: string; minutes: number; days: number }[];
+  /** Bu ayın dersleri (çoktan aza) */
+  courses: { course_id: string; minutes: number }[];
+}
+
+/**
+ * Kitaplığın "Kayıtlarım" sayfası: geçmiş haftaların ve ayların çalışma toplamları (elle yazılanlar dahil, rapor
+ * ve geçmiş gibi) ve bu ayın ders dağılımı.
+ */
+export function periodTotals(logs: StudyLog[], today: string, nWeeks = 8, nMonths = 6): PeriodTotals {
+  const w0 = weekStart(today);
+  const weeks = Array.from({ length: nWeeks }, (_, i) => ({ start: addDays(w0, -7 * (nWeeks - 1 - i)), minutes: 0 }));
+  const month = today.slice(0, 7);
+  const months = Array.from({ length: nMonths }, (_, i) => ({ month: shiftMonth(month, i - (nMonths - 1)), minutes: 0, days: 0 }));
+  const days = new Map<string, Set<string>>();
+  const courses = new Map<string, number>();
+  for (const l of logs) {
+    if (l.date > today) continue;
+    const w = weeks.find((x) => x.start === weekStart(l.date));
+    if (w) w.minutes += l.duration_minutes;
+    const m = months.find((x) => x.month === l.date.slice(0, 7));
+    if (m) {
+      m.minutes += l.duration_minutes;
+      if (!days.has(m.month)) days.set(m.month, new Set());
+      days.get(m.month)!.add(l.date);
+    }
+    if (l.date.startsWith(month)) courses.set(l.course_id, (courses.get(l.course_id) ?? 0) + l.duration_minutes);
+  }
+  for (const m of months) m.days = days.get(m.month)?.size ?? 0;
+  return { weeks, months, courses: [...courses].map(([course_id, minutes]) => ({ course_id, minutes })).sort((a, b) => b.minutes - a.minutes) };
 }

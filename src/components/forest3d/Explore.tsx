@@ -1,28 +1,26 @@
-// "Yakından gez": çocuk kendi avatarıyla bütün dünyada (ev, bahçe, orman yolu, ay bahçeleri) üçüncü şahıs
-// kamerayla yürür. Sahne dünya görünümüyle aynıdır (world3d/WorldScene, aynı dünya planı); yalnızca kamera ve
-// kontroller farklı. Alanlar arasında yalnızca kapılardan geçilir; eve girince çatı kalkar. Bir ağaca yaklaşınca o
-// günün özeti çıkar, "Bak" ile gün kartı açılır; her gün saklanan yıldızlar toplanır.
-// Bir eşyaya yaklaşınca adı çıkar; bir eşyaya (ya da düğmeye, E'ye) dokununca seçenek balonu eşyanın yanında açılır:
+// "Yakından gez": çocuk kendi avatarıyla seçili odada (oda, kütüphane, eklenen oda ya da teras) üçüncü şahıs
+// kamerayla yürür. Sahne oda görünümüyle aynıdır (world3d/WorldScene, aynı tek oda planı); yalnızca kamera ve
+// kontroller farklı. Her gün saklanan yıldızlar odanın boş karolarında toplanır.
+// Bir eşyaya yaklaşınca adı çıkar; bir eşyaya (ya da düğmeye, E'ye) dokununca alttaki çubukta seçenekleri açılır:
 // Kullan (otur, yat, sallan, aç-kapa, raflar; yanında olmak gerekir), Taşı (eşya karakterin önünde yeşil/kırmızı
-// hayalet olarak gezer, "Bırak" ile öndeki karoya konur; explore.ts → carrySpot), Döndür, Kaldır. 🎒 bulunduğun
-// alanın envanterini açar (seçilen eşya aynı şekilde önünde taşınır), 🛍️ dükkânı açar (açıkken gezinti durur).
-// Karaktere (ya da 🙂'ye) dokununca karakter menüsü: dans, el salla, yanına hayvan al, kıyafet, görünüş. Kayıtlar dünya sayfasının işleriyle (World.tsx) yapılır. Seviye atladıkça yeni yetenekler açılır (level.ts). Dokunmatikte sol altta joystick + zıpla, boş
-// yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar, Shift koş, boşluk zıpla (basılı tut: süzül), E bak, Esc çık.
+// hayalet olarak gezer, "Bırak" ile öndeki karoya konur; explore.ts → carrySpot), Döndür, Kaldır. 🎒 odanın
+// envanterini açar (seçilen eşya aynı şekilde önünde taşınır), 🛍️ gezintiyi kapatıp dükkânı açar.
+// Karaktere (ya da 🙂'ye) dokununca karakter düğmeleri: dans, el salla, yanına hayvan al, kıyafet, görünüş. Kayıtlar
+// Dünyam sayfasının işleriyle (World.tsx) yapılır. Seviye atladıkça yeni yetenekler açılır (level.ts). Dokunmatikte
+// sol altta joystick + zıpla, boş yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar, Shift koş, boşluk zıpla
+// (basılı tut: süzül), E bak, Esc çık.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
-import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type DirectionalLight, type Group, type PointLight } from 'three';
+import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type Group, type PointLight } from 'three';
 import type { ThreeEvent } from '@react-three/fiber';
 import type { AvatarLook } from '../../lib/avatar';
 import { has, itemById, type Item } from '../../lib/catalog';
 import { CFG, type MapDef } from '../../lib/config';
 import InventoryDrawer, { type InvEntry } from '../InventoryDrawer';
 import type { Tab as LookTab } from '../avatar/AvatarEditor';
-import ScreenAnchor from '../world3d/Anchor';
 import Companions from '../world3d/Companion';
-import Pop from '../world3d/Pop';
 import { dayPhase } from '../../lib/dayPhase';
-import { formatMinutes, formatShort } from '../../lib/date';
-import { carrySpot, dailyStars, moveDir, nearest, resolveMove, STAR_REACH } from '../../lib/explore';
+import { carrySpot, dailyStars, moveDir, resolveMove, STAR_REACH } from '../../lib/explore';
 import type { Perks } from '../../lib/level';
 import { setSoundOn, sfx, soundOn } from '../../lib/sfx';
 import type { Book } from '../../lib/types';
@@ -31,19 +29,14 @@ import {
   canRotate,
   fitsSpace,
   footSize,
-  isIndoor,
-  isMonthSpace,
   isOn,
   itemActions,
-  key,
   nextRot,
-  plotOf,
   powerKey,
   removeItemAt,
   seatOf,
   wallRot,
   type ActionId,
-  type DayTree,
   type PlacedItem,
   type Pose,
   type SpaceId,
@@ -51,10 +44,16 @@ import {
   type Step,
   type Tile,
 } from '../../lib/world';
-import { canStep, regionAt, regionOf, worldBlocked, type Region, type RegionId, type WorldPlan } from '../../lib/worldPlan';
+import { canStep, regionOf, worldBlocked, type Region, type WorldPlan } from '../../lib/worldPlan';
 import AvatarModel, { type AvatarAnim } from '../avatar/AvatarModel';
-import { applyPose } from '../world3d/Avatar';
+import { applyPose, blendApply, blendStart, newBlend } from '../world3d/Avatar';
+import { damp, dampAngle } from '../world3d/motion';
 import { FootTiles, ItemModel } from '../world3d/items';
+import type { Quality } from '../../lib/gfx';
+import Atmosphere, { shadowsFor } from '../world3d/Atmosphere';
+import { Blob } from '../world3d/Blob';
+import Effects from '../world3d/Effects';
+import { QualityContext } from '../world3d/gfx';
 import { isTap, LIGHT } from '../world3d/light';
 import type { TvData } from '../world3d/art';
 import WorldScene from '../world3d/WorldScene';
@@ -63,28 +62,22 @@ const WALK = 2.2;
 const RUN = 4;
 const GRAVITY = 14;
 const JUMP_V = 5;
-/** Bir ağacın "yanında" sayılma uzaklığı */
-const REACH = 1.3;
 
 /** Bir eşyanın "yanında" sayılma uzaklığı (ayak izinin kenarından); dokununca seçenekler için biraz daha uzak */
 const ITEM_REACH = 0.8;
 const TAP_REACH = 1.6;
 
-/** Bu kadar karo uzaktaki alanlar sade çizilir */
-const NEAR = 22;
-const NOOP = () => {};
-
 type ItemRef = { space: SpaceId; index: number };
 
 export interface ExploreProps {
   plan: WorldPlan;
+  /** Grafik kalitesi (gölge, son işlem) */
+  quality: Quality;
   map: MapDef;
   layouts: Partial<Record<SpaceId, SpaceLayout>>;
-  /** Bütün ağaçlar */
-  forest: DayTree[];
   creatures: typeof CFG.world.creatures;
   today: string;
-  /** Karakterin dünyadaki karosu (dünya görünümünde kaldığı yer) */
+  /** Karakterin odadaki karosu (oda görünümünde kaldığı yer) */
   start: Tile;
   books: Book[];
   reading: Book[];
@@ -94,7 +87,6 @@ export interface ExploreProps {
   tv: TvData;
   /** Üstte bir pencere açıkken karakter durur, tuşlar dinlenmez */
   paused: boolean;
-  onTree: (t: DayTree) => void;
   onClose: () => void;
   look: AvatarLook;
   perks: Perks;
@@ -111,7 +103,7 @@ export interface ExploreProps {
   toast: string | null;
   /** Yanına alınan evcil hayvanlar */
   pets: string[];
-  /** Envanter (World.tsx): alana konabilecek boştaki eşyalar, sahip olunan adet, kaplama, envanterden koy */
+  /** Envanter (World.tsx): odaya konabilecek boştaki eşyalar, sahip olunan adet, kaplama, envanterden koy */
   inventoryFor: (sp: SpaceId) => InvEntry[];
   owned: (it: Item) => number;
   onCover: (sp: SpaceId, slot: 'floor' | 'wall', id: string) => void;
@@ -123,8 +115,7 @@ export interface ExploreProps {
   onMe: (k: 'pets' | LookTab) => void;
 }
 
-type TreeNear = { kind: 'tree'; key: string; x: number; z: number; tree: DayTree };
-type Near = TreeNear | { kind: 'item'; key: string; space: SpaceId; index: number; item: Item };
+type Near = { kind: 'item'; key: string; space: SpaceId; index: number; item: Item };
 
 /** Yakınlık için eşyanın dünyadaki ayak izi dikdörtgeni (duvar eşyası duvarın dibinde ince bir şerit) */
 interface Spot {
@@ -173,17 +164,16 @@ interface PlayerState {
 }
 
 export default function Explore(props: ExploreProps) {
-  const { plan, map, forest, today, paused, onTree, onClose, perks } = props;
+  const { plan, map, today, paused, onClose, perks } = props;
   const size = { w: plan.w, h: plan.h };
   // Seçenekleri açık eşya, oturulan eşya, elde taşınan eşya (index null: envanterden; önündeki karo: spot)
   const [sel, setSel] = useState<ItemRef | null>(null);
   const [posed, setPosed] = useState<ItemRef | null>(null);
   const [carry, setCarry] = useState<{ space: SpaceId; index: number | null; item: Item; rot: number } | null>(null);
   const [spot, setSpot] = useState<Tile | null>(null);
-  // Envanter çekmecesi, karakter menüsü, seçenek balonu
+  // Envanter çekmecesi, karakter düğmeleri
   const [bag, setBag] = useState(false);
   const [me, setMe] = useState(false);
-  const popRef = useRef<HTMLDivElement>(null);
   // Taşınan eşya (ve üstündekiler) yerinden kalkmış görünür; yürüyüşü engellemez
   const layouts = useMemo(
     () =>
@@ -194,31 +184,13 @@ export default function Explore(props: ExploreProps) {
   );
   const blocked = useMemo(() => worldBlocked(plan, layouts), [plan, layouts]);
   const step = useMemo<Step>(() => (a, b) => canStep(plan, a, b), [plan]);
-  // Yıldızlar dışarıda saklanır (ev içinde değil)
-  const stars = useMemo(() => {
-    // Kayıtlı yerleşimden (elde taşınan eşya yıldızları oynatmasın)
-    const out = worldBlocked(plan, props.layouts);
-    for (const r of plan.regions) if (isIndoor(r.id as SpaceId)) for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.add(key(x, y));
-    return dailyStars(today, 'world', size, out);
-  }, [today, plan, props.layouts]); // eslint-disable-line react-hooks/exhaustive-deps
-  const trees = useMemo<TreeNear[]>(() => {
-    const out: TreeNear[] = [];
-    for (const r of plan.regions) {
-      if (!isMonthSpace(r.id) || r.locked) continue;
-      const month = r.id.slice(2);
-      for (const t of forest) {
-        if (t.month !== month) continue;
-        const p = plotOf(month, Number(t.date.slice(8, 10)));
-        out.push({ kind: 'tree', key: t.id, x: r.x + p.x + 0.5, z: r.y + p.y + 0.5, tree: t });
-      }
-    }
-    return out;
-  }, [plan, forest]);
+  const room = plan.regions[0];
+  // Yıldızlar odanın boş karolarında saklanır (kayıtlı yerleşimden: elde taşınan eşya yıldızları oynatmasın)
+  const stars = useMemo(() => dailyStars(today, room.id, size, worldBlocked(plan, props.layouts)), [today, plan, props.layouts]); // eslint-disable-line react-hooks/exhaustive-deps
   // Eşyaların ayak izleri (yürünen halı/yol yakınlıkta sayılmaz: üstünde durulur)
   const spots = useMemo<Spot[]>(() => {
     const out: Spot[] = [];
     for (const r of plan.regions) {
-      if (r.id === 'trail' || r.locked) continue;
       const l = layouts[r.id as SpaceId];
       l?.items.forEach((p, index) => {
         const item = itemById(p.item);
@@ -236,24 +208,8 @@ export default function Explore(props: ExploreProps) {
     return out;
   }, [plan, layouts]);
   const start = useMemo(() => ({ x: props.start.x + 0.5, z: props.start.y + 0.5 }), []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [here, setHere] = useState<RegionId | null>(() => regionAt(plan, props.start)?.id ?? null);
   const [center, setCenter] = useState<Tile>(props.start);
-  const nearRegions = useMemo(() => {
-    const out = new Set<RegionId>();
-    for (const r of plan.regions) {
-      const dx = Math.max(r.x - center.x, 0, center.x - (r.x + r.w));
-      const dy = Math.max(r.y - center.y, 0, center.y - (r.y + r.h));
-      if (Math.hypot(dx, dy) < NEAR) out.add(r.id);
-    }
-    return out;
-  }, [plan, center]);
-  const onTile = useCallback(
-    (t: Tile) => {
-      setHere(regionAt(plan, t)?.id ?? null);
-      setCenter((c) => (Math.abs(c.x - t.x) + Math.abs(c.y - t.y) > 3 ? t : c));
-    },
-    [plan],
-  );
+  const onTile = useCallback((t: Tile) => setCenter((c) => (Math.abs(c.x - t.x) + Math.abs(c.y - t.y) > 3 ? t : c)), []);
 
   const [phase, setPhase] = useState(() => dayPhase(new Date().getHours()));
   const [sound, setSound] = useState(soundOn);
@@ -295,9 +251,8 @@ export default function Explore(props: ExploreProps) {
     const n = nearRef.current;
     if (!n) return;
     sfx.pop();
-    if (n.kind === 'tree') onTree(n.tree);
-    else setSel({ space: n.space, index: n.index });
-  }, [onTree]);
+    setSel({ space: n.space, index: n.index });
+  }, []);
 
   const onNear = useCallback((n: Near | null) => {
     nearRef.current = n;
@@ -384,13 +339,11 @@ export default function Explore(props: ExploreProps) {
     setCarry(null);
     setSpot(null);
   };
-  // Envanter: bulunduğun alan (yolda ya da kilitli bahçede değil)
-  const hereR = here ? regionOf(plan, here) : undefined;
-  const bagSpace = hereR && here !== 'trail' && !hereR.locked ? (here as SpaceId) : null;
+  // Envanter: gezilen oda
+  const bagSpace: SpaceId = room.id;
   /** Envanterden ya da dükkândan gelen eşyayı karakterin önünde taşı */
   const carryFresh = (it: Item) => {
-    if (!bagSpace) return say('Eşya koymak için evine ya da bir bahçeye gir.');
-    if (!fitsSpace(it, bagSpace)) return say(it.placement === 'outdoor' ? `${it.name} dışarıya konur: bahçene git.` : `${it.name} evin içine konur: odana git.`);
+    if (!fitsSpace(it, bagSpace, plan.ctx)) return say(it.placement === 'outdoor' ? `${it.name} terasa konur.` : `${it.name} evin içine konur.`);
     standUp();
     setSel(null);
     setMe(false);
@@ -415,15 +368,6 @@ export default function Explore(props: ExploreProps) {
     const p = player.current;
     return p.pose ? { x: p.pose.back.x, z: p.pose.back.z, face: p.pose.face } : { x: p.x, z: p.z, face: p.face };
   }, []);
-  // Balonun bağlandığı nokta: seçili eşyanın üstü ya da karakterin başı
-  const popAt = useCallback((): [number, number, number] | null => {
-    const s = spotRef.current;
-    if (s) return [(s.x0 + s.x1) / 2, s.item.placement === 'wall' ? 2 : 1.1, (s.z0 + s.z1) / 2];
-    const p = player.current;
-    return p.pose ? [p.pose.x, p.pose.y + 1.4, p.pose.z] : [p.x, p.y + 1.75, p.z];
-  }, []);
-  const spotRef = useRef<Spot | undefined>(undefined);
-  spotRef.current = sel ? selSpot : undefined;
   const selected = useMemo(() => sel ?? null, [sel]);
 
   const collect = useCallback(
@@ -506,12 +450,12 @@ export default function Explore(props: ExploreProps) {
   };
 
   const L = LIGHT[phase];
-  const inside = !!here && isIndoor(here);
+  const sunAt = useCallback(() => ({ x: player.current.x, z: player.current.z }), []);
 
   return (
     <div
       className={`explore phase-${phase}`}
-      style={{ background: L.sky }}
+      style={{ background: L.horizon }}
       role="dialog"
       aria-label="Dünyanda gezinti"
       onPointerDown={lookDown}
@@ -522,69 +466,67 @@ export default function Explore(props: ExploreProps) {
         ctl.current.dist = Math.min(8, Math.max(2.8, ctl.current.dist + e.deltaY * 0.004));
       }}
     >
-      <Canvas shadows dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }} camera={{ fov: 55, near: 0.1, far: 160, position: [start.x, 4, start.z + 6] }}>
-        <hemisphereLight args={[L.sky2, L.ground, L.hemiI]} />
-        <Sun player={player} color={L.sun} intensity={L.sunI} />
-        <fog attach="fog" args={[L.fog, 18, 60]} />
-        <Suspense fallback={null}>
-          <WorldScene
-            plan={plan}
-            map={map}
-            layouts={layouts}
-            forest={forest}
-            creatures={props.creatures}
-            open={inside}
-            here={here}
-            night={phase === 'gece' || phase === 'aksam'}
-            near={nearRegions}
-            labels={false}
-            growId={null}
-            onGrown={NOOP}
-            books={props.books}
-            reading={props.reading}
-            phase={phase}
-            channels={props.channels}
-            tv={props.tv}
-            center={center}
-            selected={selected}
-            posed={posed}
-            onItem={carry ? undefined : onItem}
-          />
-          {carry && carryRegion && carryP && (
-            <group position={[carryRegion.x, 0, carryRegion.y]}>
-              <FootTiles item={carry.item} x={carryP.x} y={carryP.y} rot={carryP.rot} ok={carryOk} />
-              <Suspense fallback={null}>
-                <ItemModel item={carry.item} x={carryP.x} y={carryP.y} rot={carryP.rot} ghost={carryOk ? 'ok' : 'bad'} lift={0.05} />
-              </Suspense>
-            </group>
-          )}
-          {stars.map((s, i) => !got.has(i) && <Star key={i} x={s.x} z={s.z} i={i} />)}
-          <Player
-            look={props.look}
-            holding={props.holding}
-            player={player}
-            ctl={ctl}
-            blocked={blocked}
-            step={step}
-            size={size}
-            perks={perks}
-            onTile={onTile}
-            onStand={standUp}
-            onTap={() => {
-              sfx.pop();
-              setSel(null);
-              setBag(false);
-              setMe((m) => !m);
-            }}
-          />
-          <Companions pets={props.pets} at={leader} />
-        </Suspense>
-        {perks.trail && <Trail player={player} />}
-        <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
-        <FollowCam player={player} ctl={ctl} />
-        <Brain player={player} trees={trees} spots={carry ? NO_SPOTS : spots} stars={stars} got={got} onNear={onNear} onStar={collect} />
-        {carry && carryRegion && <Carry player={player} carry={carry} region={carryRegion} onSpot={setSpot} />}
-        {((sel && !carry) || me) && <ScreenAnchor el={popRef} at={popAt} id={sel ? `${sel.space}:${sel.index}` : 'me'} />}
+      <Canvas
+        shadows={shadowsFor(props.quality)}
+        dpr={[1, props.quality === 'dusuk' ? 1.5 : 1.75]}
+        gl={{ antialias: props.quality !== 'yuksek' }}
+        camera={{ fov: 55, near: 0.1, far: 160, position: [start.x, 4, start.z + 6] }}
+      >
+        <Atmosphere phase={phase} quality={props.quality} mode="third" target={sunAt} />
+        <QualityContext.Provider value={props.quality}>
+          <Suspense fallback={null}>
+            <WorldScene
+              plan={plan}
+              map={map}
+              layouts={layouts}
+              creatures={props.creatures}
+              night={phase === 'gece' || phase === 'aksam'}
+              books={props.books}
+              reading={props.reading}
+              phase={phase}
+              channels={props.channels}
+              tv={props.tv}
+              center={center}
+              selected={selected}
+              posed={posed}
+              onItem={carry ? undefined : onItem}
+            />
+            {carry && carryRegion && carryP && (
+              <group position={[carryRegion.x, 0, carryRegion.y]}>
+                <FootTiles item={carry.item} x={carryP.x} y={carryP.y} rot={carryP.rot} ok={carryOk} />
+                <Suspense fallback={null}>
+                  <ItemModel item={carry.item} x={carryP.x} y={carryP.y} rot={carryP.rot} ghost={carryOk ? 'ok' : 'bad'} lift={0.05} />
+                </Suspense>
+              </group>
+            )}
+            {stars.map((s, i) => !got.has(i) && <Star key={i} x={s.x} z={s.z} i={i} />)}
+            <Player
+              look={props.look}
+              holding={props.holding}
+              player={player}
+              ctl={ctl}
+              blocked={blocked}
+              step={step}
+              size={size}
+              perks={perks}
+              onTile={onTile}
+              onStand={standUp}
+              onTap={() => {
+                sfx.pop();
+                setSel(null);
+                setBag(false);
+                setMe((m) => !m);
+              }}
+            />
+            <Companions pets={props.pets} at={leader} />
+          </Suspense>
+          {perks.trail && <Trail player={player} />}
+          <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
+          {props.quality === 'yuksek' && <Effects night={phase === 'gece' || phase === 'aksam'} />}
+          <FollowCam player={player} ctl={ctl} />
+          <Brain player={player} spots={carry ? NO_SPOTS : spots} stars={stars} got={got} onNear={onNear} onStar={collect} />
+          {carry && carryRegion && <Carry player={player} carry={carry} region={carryRegion} onSpot={setSpot} />}
+        </QualityContext.Provider>
       </Canvas>
 
       <div className="explore-top">
@@ -612,7 +554,6 @@ export default function Explore(props: ExploreProps) {
           className={`explore-chip${bag ? ' on' : ''}`}
           aria-label="Envanter"
           onClick={() => {
-            if (!bagSpace) return say('Eşya koymak için evine ya da bir bahçeye gir.');
             setSel(null);
             setMe(false);
             setCarry(null);
@@ -642,11 +583,7 @@ export default function Explore(props: ExploreProps) {
         </div>
       ) : msg && (!near || carry) ? (
         <div className="explore-msg">{msg}</div>
-      ) : near?.kind === 'tree' ? (
-        <div className="explore-msg near" role="status">
-          {near.tree.dry ? near.tree.icon : near.tree.species.icon} <strong>{formatShort(near.tree.date)}</strong> · {formatMinutes(near.tree.minutes)} · {near.tree.name}
-        </div>
-      ) : near?.kind === 'item' && !sel ? (
+      ) : near && !sel ? (
         <div className="explore-msg near" role="status">
           {near.item.icon} <strong>{near.item.name}</strong> · dokun
         </div>
@@ -676,22 +613,22 @@ export default function Explore(props: ExploreProps) {
       </button>
       {near && !sel && !carry && !bag && !me && (
         <button className="explore-act" onClick={act}>
-          {near.kind === 'tree' ? '👀 O güne bak' : `${near.item.icon} Seçenekler`}
+          {near.item.icon} Seçenekler
           <span className="explore-key">E</span>
         </button>
       )}
       {sel && selItem && !carry && (
-        <Pop
-          ref={popRef}
-          title={
-            <>
+        <div className="explore-bar explore-dock" role="region" aria-label={selItem.name}>
+          <div className="dock-head">
+            <span className="grow dock-text">
               {selItem.icon} <strong>{selItem.name}</strong>
-            </>
-          }
-          onClose={() => setSel(null)}
-        >
+            </span>
+            <button className="pop-x" onClick={() => setSel(null)} aria-label="Kapat">
+              ✕
+            </button>
+          </div>
           {(selActions.length > 0 || (selItem.fx === 'tv' && selOn)) && (
-            <div className="pop-row">
+            <div className="dock-btns">
               {selActions.map((a, k) => (
                 <button key={a.id} className={`btn sm${k === 0 ? ' primary' : ''}`} onClick={() => runSel(a.id)}>
                   {a.label}
@@ -704,7 +641,7 @@ export default function Explore(props: ExploreProps) {
               )}
             </div>
           )}
-          <div className="pop-row edit">
+          <div className="dock-btns edit">
             <button className="btn sm" onClick={startCarry}>
               ✋ Taşı
             </button>
@@ -730,19 +667,19 @@ export default function Explore(props: ExploreProps) {
               📦 Kaldır
             </button>
           </div>
-        </Pop>
+        </div>
       )}
       {me && (
-        <Pop
-          ref={popRef}
-          title={
-            <>
+        <div className="explore-bar explore-dock" role="region" aria-label="Karakterin">
+          <div className="dock-head">
+            <span className="grow dock-text">
               🙂 <strong>Ben</strong>
-            </>
-          }
-          onClose={() => setMe(false)}
-        >
-          <div className="pop-row">
+            </span>
+            <button className="pop-x" onClick={() => setMe(false)} aria-label="Kapat">
+              ✕
+            </button>
+          </div>
+          <div className="dock-btns">
             {player.current.emote?.kind === 'dance' ? (
               <button className="btn sm primary" onClick={() => emote(null)}>
                 ⏹ Dur
@@ -765,7 +702,7 @@ export default function Explore(props: ExploreProps) {
               🐾 Hayvanımı yanıma al
             </button>
           </div>
-          <div className="pop-row edit">
+          <div className="dock-btns edit">
             <button
               className="btn sm"
               onClick={() => {
@@ -785,9 +722,9 @@ export default function Explore(props: ExploreProps) {
               🙂 Görünüşüm
             </button>
           </div>
-        </Pop>
+        </div>
       )}
-      {bag && bagSpace && !carry && (
+      {bag && !carry && (
         <InventoryDrawer
           space={bagSpace}
           layout={props.layouts[bagSpace]}
@@ -838,7 +775,6 @@ const NO_SPOTS: Spot[] = [];
 /** Her karede: en yakın ağaç ya da eşya ve yıldız toplama. React'e yalnızca değişince haber verir. */
 function Brain({
   player,
-  trees,
   spots,
   stars,
   got,
@@ -846,7 +782,6 @@ function Brain({
   onStar,
 }: {
   player: MutableRefObject<PlayerState>;
-  trees: TreeNear[];
   spots: Spot[];
   stars: { x: number; z: number }[];
   got: Set<number>;
@@ -856,7 +791,6 @@ function Brain({
   const last = useRef('');
   useFrame(() => {
     const p = player.current;
-    const tree = nearest([p.x, p.z], trees, REACH);
     let item: Spot | null = null;
     let itemD = ITEM_REACH;
     for (const s of spots) {
@@ -866,8 +800,7 @@ function Brain({
         itemD = d;
       }
     }
-    const treeD = tree ? Math.hypot(tree.x - p.x, tree.z - p.z) - 0.5 : Infinity;
-    const n: Near | null = item && itemD <= treeD ? { kind: 'item', key: item.key, space: item.space, index: item.index, item: item.item } : tree;
+    const n: Near | null = item ? { kind: 'item', key: item.key, space: item.space, index: item.index, item: item.item } : null;
     const key = n?.key ?? '';
     if (key !== last.current) {
       last.current = key;
@@ -913,6 +846,13 @@ function Player({
   const tile = useRef('');
   const anim = useRef<AvatarAnim>({ state: 'wave' });
   const waveUntil = useRef(performance.now() + 1300);
+  /** Yatay hız (hızlanma/sürtünme), yerden ayrılınca kalan zıplama süresi, erken basılan zıplama, iniş ezilmesi */
+  const vel = useRef({ x: 0, z: 0 });
+  const coyote = useRef(0);
+  const buffer = useRef(0);
+  const squash = useRef(0);
+  const blend = useRef(newBlend());
+  const shadow = useRef<Group>(null);
 
   useFrame(({ clock }, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
@@ -925,13 +865,17 @@ function Player({
       const k = c.keys;
       const moving = !c.paused && ((c.joy && Math.hypot(c.jx, c.jy) > 0.3) || [...k].some((x) => x !== 'ShiftLeft' && x !== 'ShiftRight') || c.jump);
       if (!moving) {
+        blendStart(blend.current, `${p.pose.kind}:${p.pose.x},${p.pose.z}`, g, n);
         anim.current.state = p.pose.kind;
         applyPose(g, n, p.pose, clock.elapsedTime);
+        blendApply(blend.current, g, n, dt);
+        vel.current = { x: 0, z: 0 };
         return;
       }
       c.jump = false;
       onStand();
     }
+    blendStart(blend.current, '', g, n);
     n.position.set(0, 0, 0);
     n.rotation.set(0, 0, 0);
     let ix = 0;
@@ -950,14 +894,31 @@ function Player({
     }
     const [dx, dz] = moveDir(ix, iy, c.yaw);
     const mag = Math.hypot(dx, dz);
-    if (mag > 0.05) {
-      const speed = (run ? RUN * perks.runBoost : WALK) * Math.max(0.35, mag);
-      const [x, z] = resolveMove([p.x, p.z], [p.x + dx * speed * dt, p.z + dz * speed * dt], blocked, size.w, size.h, step);
+    const grounded = p.y <= 0.001;
+    // Hız girdiye yumuşakça yaklaşır: kalkışta hızlanır, bırakınca kısa kayıp durur (havada daha az kontrol)
+    const top = mag > 0.05 ? (run ? RUN * perks.runBoost : WALK) * Math.max(0.35, mag) : 0;
+    const wantX = mag > 0.05 ? (dx / mag) * top : 0;
+    const wantZ = mag > 0.05 ? (dz / mag) * top : 0;
+    const v = vel.current;
+    const grip = grounded ? (mag > 0.05 ? 12 : 16) : 4;
+    v.x = damp(v.x, wantX, grip, dt);
+    v.z = damp(v.z, wantZ, grip, dt);
+    const sp = Math.hypot(v.x, v.z);
+    if (sp > 0.02) {
+      const [x, z] = resolveMove([p.x, p.z], [p.x + v.x * dt, p.z + v.z * dt], blocked, size.w, size.h, step);
+      // Duvara çarpınca o yöndeki hız biter
+      if (dt > 0) {
+        v.x = (x - p.x) / dt;
+        v.z = (z - p.z) / dt;
+      }
       p.x = x;
       p.z = z;
-      let diff = Math.atan2(dx, dz) - p.face;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      p.face += diff * Math.min(1, dt * 12);
+    } else {
+      v.x = 0;
+      v.z = 0;
+    }
+    if (mag > 0.05) {
+      p.face = dampAngle(p.face, Math.atan2(dx, dz), 12, dt);
       // İleri yürürken kamera yavaşça arkaya geçer (çocuk kamerayı hiç çevirmese de kaybolmasın)
       if (iy > 0 && performance.now() - c.lastLook > 800) {
         let cd = p.face + Math.PI - c.yaw;
@@ -967,13 +928,23 @@ function Player({
     }
     if (mag > 0.05 || c.jump) p.emote = null;
     if (p.emote?.until != null && performance.now() > p.emote.until) p.emote = null;
-    const grounded = p.y <= 0.001;
-    if (grounded) p.jumps = perks.doubleJump ? 1 : 0;
+    if (grounded) {
+      p.jumps = perks.doubleJump ? 1 : 0;
+      coyote.current = 0.1;
+    } else coyote.current -= dt;
+    // Zıplama tamponu: yere değmeden az önce basılan zıplama da sayılır
     if (c.jump) {
       c.jump = false;
-      if (!c.paused && (grounded || p.jumps > 0)) {
-        if (!grounded) p.jumps--;
-        p.vy = grounded ? JUMP_V : JUMP_V * 0.85;
+      if (!c.paused) buffer.current = 0.12;
+    } else buffer.current -= dt;
+    if (buffer.current > 0) {
+      const canGround = coyote.current > 0 && p.vy <= 0;
+      if (canGround || (!grounded && p.jumps > 0 && buffer.current >= 0.11)) {
+        if (!canGround) p.jumps--;
+        p.vy = canGround ? JUMP_V : JUMP_V * 0.85;
+        coyote.current = 0;
+        buffer.current = 0;
+        squash.current = -0.12;
         sfx.jump();
       }
     }
@@ -986,12 +957,28 @@ function Player({
         gliding = true;
       }
       p.y = Math.max(0, p.y + p.vy * dt);
-      if (p.y === 0) p.vy = 0;
+      if (p.y === 0) {
+        // İniş: düşüş hızına göre kısa ezilme
+        squash.current = Math.min(0.22, Math.abs(p.vy) * 0.025);
+        p.vy = 0;
+      }
     }
+    squash.current = damp(squash.current, 0, 14, dt);
     anim.current.state =
-      performance.now() < waveUntil.current ? 'wave' : p.y > 0.05 ? (gliding ? 'glide' : p.vy > 0 ? 'jump' : 'fall') : mag > 0.05 ? (run ? 'run' : 'walk') : (p.emote?.kind ?? 'idle');
+      performance.now() < waveUntil.current ? 'wave' : p.y > 0.05 ? (gliding ? 'glide' : p.vy > 0 ? 'jump' : 'fall') : sp > 0.3 ? (sp > WALK * 1.25 ? 'run' : 'walk') : (p.emote?.kind ?? 'idle');
+    anim.current.speed = sp;
     g.position.set(p.x, p.y + 0.02, p.z);
     g.rotation.y = p.face;
+    blendApply(blend.current, g, n, dt);
+    // Ezilme: inişte basık, kalkışta uzun (hacim korunur)
+    const q = squash.current;
+    n.scale.set(1 + q * 0.5, 1 - q, 1 + q * 0.5);
+    // Leke gölge yerde kalır; zıpladıkça küçülür
+    const sh = shadow.current;
+    if (sh) {
+      sh.position.set(g.position.x, 0, g.position.z);
+      sh.scale.setScalar(Math.max(0.4, 1 - p.y * 0.35));
+    }
     const t = { x: Math.floor(p.x), y: Math.floor(p.z) };
     if (tile.current !== `${t.x},${t.y}`) {
       tile.current = `${t.x},${t.y}`;
@@ -1000,18 +987,23 @@ function Player({
   });
 
   return (
-    <group
-      ref={group}
-      onClick={(e) => {
-        if (!isTap(e)) return;
-        e.stopPropagation();
-        onTap();
-      }}
-    >
-      <group ref={inner}>
-        <AvatarModel look={look} anim={anim} live holding={holding} />
+    <>
+      <group ref={shadow}>
+        <Blob size={0.75} />
       </group>
-    </group>
+      <group
+        ref={group}
+        onClick={(e) => {
+          if (!isTap(e)) return;
+          e.stopPropagation();
+          onTap();
+        }}
+      >
+        <group ref={inner}>
+          <AvatarModel look={look} anim={anim} live holding={holding} />
+        </group>
+      </group>
+    </>
   );
 }
 
@@ -1064,32 +1056,6 @@ function Trail({ player }: { player: MutableRefObject<PlayerState> }) {
   );
 }
 
-/** Güneş gölgesi karakteri izler (dünya geniş) */
-function Sun({ player, color, intensity }: { player: MutableRefObject<PlayerState>; color: string; intensity: number }) {
-  const ref = useRef<DirectionalLight>(null);
-  useFrame(() => {
-    const l = ref.current;
-    if (!l) return;
-    const p = player.current;
-    l.position.set(p.x + 12, 20, p.z + 8);
-    l.target.position.set(p.x, 0, p.z);
-    l.target.updateMatrixWorld();
-  });
-  return (
-    <directionalLight
-      ref={ref}
-      intensity={intensity}
-      color={color}
-      castShadow
-      shadow-mapSize={[1024, 1024]}
-      shadow-camera-left={-24}
-      shadow-camera-right={24}
-      shadow-camera-top={24}
-      shadow-camera-bottom={-24}
-    />
-  );
-}
-
 /** Karakterin önünü aydınlatan yumuşak ışık; akşam ve gece fener gibi daha güçlü */
 function Lantern({ player, night }: { player: MutableRefObject<PlayerState>; night: boolean }) {
   const ref = useRef<PointLight>(null);
@@ -1115,7 +1081,14 @@ function FollowCam({ player, ctl }: { player: MutableRefObject<PlayerState>; ctl
     want.set(p.x + Math.sin(yaw) * Math.cos(pitch) * dist, p.y + 0.6 + Math.sin(pitch) * dist, p.z + Math.cos(yaw) * Math.cos(pitch) * dist);
     const k = first.current ? 1 : 1 - Math.exp(-Math.min(dt, 0.1) * 7);
     camera.position.lerp(want, k);
-    target.set(p.x, p.y + 0.7, p.z);
+    // Bakış noktası da yumuşak: zıplarken görüntü titremez (dikeyde daha yavaş)
+    if (first.current) target.set(p.x, p.y + 0.7, p.z);
+    else {
+      const kd = Math.min(dt, 0.1);
+      target.x = damp(target.x, p.x, 12, kd);
+      target.z = damp(target.z, p.z, 12, kd);
+      target.y = damp(target.y, p.y * 0.6 + 0.7, 5, kd);
+    }
     camera.lookAt(target);
     first.current = false;
   });
@@ -1203,7 +1176,7 @@ function Joystick({ ctl }: { ctl: MutableRefObject<Ctl> }) {
       onPointerUp={end}
       onPointerCancel={end}
     >
-      <div className="joy-knob" style={{ transform: `translate(${knob[0]}px, ${knob[1]}px)` }} />
+      <div className={`joy-knob${knob[0] || knob[1] ? ' held' : ''}`} style={{ transform: `translate(${knob[0]}px, ${knob[1]}px)` }} />
     </div>
   );
 }

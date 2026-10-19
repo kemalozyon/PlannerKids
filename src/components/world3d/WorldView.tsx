@@ -1,24 +1,23 @@
-// Dünyanın 3D görünümü: bütün dünya (ev, bahçe, orman yolu, ay bahçeleri) tek sahnede (WorldScene). İzometrik
-// hisli ortografik kamera karakteri izler; döndürme, yakınlaştırma ve kaydırma serbest (evin içindeyken açı ön
-// çeyrekle sınırlı). Sahne yalnızca bir şey değişince çizilir (frameloop="demand").
+// Odanın 3D görünümü (Habbo gibi): seçilen oda koyu boşlukta yüzen bir ada (WorldScene). Ortografik kamera hep
+// aynı izometrik açıdan (güneydoğudan) bakar; yakınlaştırma ve kaydırma var, oda açılınca bütünü ekrana sığar.
+// Sahne yalnızca bir şey değişince çizilir (frameloop="demand").
 //
-// Oynarken: bir karoya dokununca karakter A* ile oraya yürür (uzun yolda koşar); alanlar arasında yalnızca
-// kapılardan geçer (worldPlan.ts → canStep). Eve girince çatı kalkar. Kitaplığa, kitaba ya da ağaca dokununca
-// yanına gidip penceresini açar.
-// Bir eşyaya dokununca eşya havalanır ve seçenek balonu eşyanın yanında açılır (ScreenAnchor); karakter yerinden
+// Oynarken: bir karoya dokununca karakter A* ile oraya yürür (uzun yolda koşar). Kapıya dokununca kapıya yürür,
+// sayfa kapının götürdüğü odayı açar. Kitaplığa ya da kitaba dokununca yanına gidip penceresini açar.
+// Bir eşyaya dokununca eşya havalanır ve sayfa alttaki panelde eşyanın seçeneklerini gösterir; karakter yerinden
 // kıpırdamaz. Yalnızca bir kullanım eylemi seçilince (reach) yanına yürür, varınca sayfa eylemi yapar. Oturunca
-// karakter eşyanın üstüne geçer; boş bir yere dokununca kalkar. Karaktere dokununca karakter menüsü açılır.
-// Yerleştirirken (envanter açık ya da eşya taşınırken: `edit`) karakter görünür kalır; bulunduğu alanın ızgarası
-// görünür, elde tutulan eşya imleçle gezer ve karoya (duvar süsü duvara) bırakılır. İmleç yalnızca düzenleme
-// katmanını (EditOverlay) yeniden çizer; dünya (WorldScene, memo) yerinde kalır.
+// karakter eşyanın üstüne geçer; boş bir yere dokununca kalkar. Karaktere dokununca sayfa karakter panelini açar.
+// Yerleştirirken (envanter açık ya da eşya taşınırken: `edit`) odanın ızgarası görünür, elde tutulan eşya imleçle
+// gezer ve karoya (duvar süsü duvara) bırakılır. İmleç yalnızca düzenleme katmanını (EditOverlay) yeniden çizer;
+// oda (WorldScene, memo) yerinde kalır.
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react';
-import { Vector3, type DirectionalLight } from 'three';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { MOUSE, TOUCH, Vector3 } from 'three';
 import type { OrbitControls as OrbitImpl } from 'three-stdlib';
 import type { AvatarLook } from '../../lib/avatar';
-import { itemById } from '../../lib/catalog';
-import { CFG, type MapDef } from '../../lib/config';
+import { has, itemById } from '../../lib/catalog';
+import { CFG, type FixedTile, type MapDef } from '../../lib/config';
 import type { DayPhase } from '../../lib/dayPhase';
 import type { Book } from '../../lib/types';
 import {
@@ -26,31 +25,42 @@ import {
   blockedTiles,
   canPlaceAt,
   findPath,
-  footprint,
   isIndoor,
   powerKey,
   seatOf,
+  smoothPath,
+  snapToSurface,
   supportOf,
   wallRot,
-  type DayTree,
   type SpaceId,
   type SpaceLayout,
   type Tile,
   type WorldCtx,
 } from '../../lib/world';
-import { canStep, entryOf, regionAt, regionOf, worldBlocked, type Region, type RegionId, type WorldPlan } from '../../lib/worldPlan';
+import { canStep, regionOf, worldBlocked, type Region, type WorldPlan } from '../../lib/worldPlan';
 import { modelUrl } from '../forest3d/models';
-import ScreenAnchor from './Anchor';
 import Companions from './Companion';
-import type { TvData } from './art';
+import type { BoardCard, TvData } from './art';
 import Avatar, { pathSpeed, type Walker } from './Avatar';
-import { FootTiles, GridLines, HoverTile, ItemModel, OnSurface } from './items';
-import { isTap, LIGHT } from './light';
+import { FootTiles, GridLines, HoverTile, ItemModel, OnSurface, surfaceTop } from './items';
+import type { Quality } from '../../lib/gfx';
+import Atmosphere, { shadowsFor } from './Atmosphere';
+import Effects from './Effects';
+import { QualityContext } from './gfx';
+import { isTap } from './light';
 import { WALL_H } from './Room';
 import WorldScene from './WorldScene';
 
-/** Kamera hedefinden bu kadar karo uzaktaki alanlar sade çizilir */
-const NEAR = 26;
+/** Kameranın yönü: güneydoğudan (arka duvarlar kuzey ve batı) */
+const AZ = Math.PI / 4;
+/** Kameranın konumu hedefe göre; eğikliği: yatay / dikey */
+const CAM_OFF: [number, number, number] = [18, 20, 18];
+const TILT = Math.hypot(CAM_OFF[0], CAM_OFF[2]) / CAM_OFF[1];
+/** Habbo'nun boşluğu (tuval yüklenirken de) */
+export const VOID_BG = '#141d2b';
+
+/** Bırakılacak yer: karo; masa üstünde çeyreği de */
+export type Spot = Tile & { sub?: number };
 
 export type ItemRef = { space: SpaceId; index: number };
 
@@ -59,17 +69,14 @@ export interface WorldViewProps {
   map: MapDef;
   /** Kayıtlı (ayıklanmış) yerleşimler */
   layouts: Partial<Record<SpaceId, SpaceLayout>>;
-  forest: DayTree[];
   creatures: typeof CFG.world.creatures;
   phase: DayPhase;
-  shadows: boolean;
+  quality: Quality;
   look: AvatarLook;
-  /** Karakterin başladığı karo (dünya) */
+  /** Mantar panodaki notlar */
+  board?: BoardCard[];
+  /** Karakterin başladığı karo */
   start: Tile;
-  /** Bir alana git (sekmeler): n her istekte artar */
-  goal: { to: RegionId; n: number } | null;
-  growId: string | null;
-  onGrown: () => void;
   /** Bitirilen (eskiden yeniye) ve okunmakta olan kitaplar */
   books: Book[];
   reading: Book[];
@@ -78,17 +85,14 @@ export interface WorldViewProps {
   edit: { space: SpaceId; layout: SpaceLayout } | null;
   /** Elde tutulan eşya (yerleştirme) */
   held: { item: string; rot: number } | null;
-  onDrop: (tile: Tile) => void;
-  onTree: (t: DayTree) => void;
+  onDrop: (spot: Spot) => void;
+  /** Kapıya varıldı: kapının götürdüğü oda açılsın */
+  onDoor: (d: FixedTile) => void;
   /** Bir eşyaya dokunuldu: seçenekler açılsın (karakter yürümez) */
   onUse: (space: SpaceId, index: number) => void;
   /** Kullanım eylemi için eşyanın yanına yürü: n her istekte artar; varınca onReached */
   reach: { space: SpaceId; index: number; n: number } | null;
   onReached: (r: ItemRef) => void;
-  /** Seçenek balonu (eşyanın ya da karakterin yanında durur) */
-  pop: RefObject<HTMLDivElement | null>;
-  /** Karakter menüsü açık (balon karakterin başında) */
-  avatarMenu: boolean;
   /** Karaktere dokunuldu */
   onAvatar: () => void;
   /** Dans et / el salla / dur (kind null): n her istekte artar */
@@ -107,29 +111,31 @@ export interface WorldViewProps {
   holding: string | null;
   channels: Record<string, number>;
   tv: TvData;
-  /** Karakterin bulunduğu alan değişince */
-  onRegion: (id: RegionId | null) => void;
   /** Karakter yeni bir karoya geçince (konum saklanır) */
   onTile: (t: Tile) => void;
 }
 
 export default function WorldView(props: WorldViewProps) {
-  const L = LIGHT[props.phase];
   return (
     <Canvas
       orthographic
       frameloop="demand"
-      shadows={props.shadows}
-      dpr={[1, 1.75]}
-      gl={{ alpha: true, antialias: true }}
-      camera={{ position: [20, 22, 20], zoom: 40, near: -200, far: 400 }}
-      style={{ background: L.sky, touchAction: 'none' }}
-      aria-label="Dünyan"
+      shadows={shadowsFor(props.quality)}
+      dpr={[1, props.quality === 'dusuk' ? 1.5 : 1.75]}
+      gl={{ antialias: props.quality !== 'yuksek' }}
+      camera={{ position: [20, 22, 20], zoom: 40, near: -60, far: 320 }}
+      style={{ background: VOID_BG, touchAction: 'none' }}
+      aria-label="Odan"
     >
-      <Lights phase={props.phase} shadows={props.shadows} />
-      <Suspense fallback={null}>
-        <Scene {...props} />
-      </Suspense>
+      {/* Koyu boşluk ve gün evresinin ışığı; güneş gölgesi kamera hedefini izler */}
+      <Atmosphere phase={props.phase} quality={props.quality} mode="iso" backdrop="void" />
+      <QualityContext.Provider value={props.quality}>
+        <Suspense fallback={null}>
+          {/* Oda değişince sahne baştan kurulur (kamera yeni odaya sığar, karakter kapıda başlar) */}
+          <Scene key={props.plan.regions[0].id} {...props} />
+        </Suspense>
+      </QualityContext.Provider>
+      {props.quality === 'yuksek' && <Effects night={props.phase === 'gece' || props.phase === 'aksam'} />}
     </Canvas>
   );
 }
@@ -141,38 +147,6 @@ function useStable<A extends unknown[], R>(f: (...a: A) => R): (...a: A) => R {
   return useCallback((...a: A) => ref.current(...a), []);
 }
 
-/** Güneş gölgesi kamera hedefini izler (dünya geniş, gölge haritası değil) */
-function Lights({ phase, shadows }: { phase: DayPhase; shadows: boolean }) {
-  const L = LIGHT[phase];
-  const sun = useRef<DirectionalLight>(null);
-  const controls = useThree((s) => s.controls) as OrbitImpl | null;
-  useFrame(() => {
-    const l = sun.current;
-    if (!l || !controls) return;
-    const t = controls.target;
-    l.position.set(t.x + 12, 20, t.z + 8);
-    l.target.position.set(t.x, 0, t.z);
-    l.target.updateMatrixWorld();
-  });
-  return (
-    <>
-      <hemisphereLight args={[L.sky2, L.ground, L.hemiI]} />
-      <directionalLight
-        ref={sun}
-        position={[12, 20, 8]}
-        intensity={L.sunI}
-        color={L.sun}
-        castShadow={shadows}
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-left={-28}
-        shadow-camera-right={28}
-        shadow-camera-top={28}
-        shadow-camera-bottom={-28}
-        shadow-camera-far={120}
-      />
-    </>
-  );
-}
 
 function Scene(p: WorldViewProps) {
   const { plan } = p;
@@ -182,15 +156,16 @@ function Scene(p: WorldViewProps) {
   const blocked = useMemo(() => worldBlocked(plan, layouts), [plan, layouts]);
   const step = useMemo(() => (a: Tile, b: Tile) => canStep(plan, a, b), [plan]);
   const walker = useRef<Walker>({ x: p.start.x + 0.5, z: p.start.y + 0.5, face: Math.PI / 4, path: [], onArrive: null });
-  const follow = useRef(true);
-  const [here, setHere] = useState<RegionId | null>(() => regionAt(plan, p.start)?.id ?? null);
-  const [center, setCenter] = useState<Tile>(p.start);
+  /** Kamera karakteri izlesin mi: oda ekrana sığıyorsa hayır (Habbo gibi sabit), yakınlaştırınca evet */
+  const follow = useRef(false);
+  const zoomedIn = useRef(false);
+  const [center, setCenter] = useState<Tile>(() => ({ x: Math.floor(plan.w / 2), y: Math.floor(plan.h / 2) }));
   /** Kullanmak için karakterin yürüdüğü eşya (havalanık kalır) */
   const [aim, setAim] = useState<ItemRef | null>(null);
   /** Bırakmanın hemen ardından gelen "click" karakteri yürütmesin */
   const droppedAt = useRef(0);
   /** Düzenleme katmanının imleci (yalnızca o katman yeniden çizilir) */
-  const hoverTo = useRef<((t: Tile | null) => void) | null>(null);
+  const hoverTo = useRef<((t: Spot | null) => void) | null>(null);
 
   const [posed, setPosed] = useState<{ space: SpaceId; index: number; key: string } | null>(null);
   const tileNow = (): Tile => ({ x: Math.floor(walker.current.x), y: Math.floor(walker.current.z) });
@@ -210,25 +185,18 @@ function Scene(p: WorldViewProps) {
     standUp();
     const path = findPath(tileNow(), to, plan.w, plan.h, blocked, step);
     if (!path) return false;
-    walker.current.path = path.map((t) => ({ x: t.x + 0.5, z: t.y + 0.5 }));
+    walker.current.path = smoothPath(tileNow(), path, blocked, step).map((t) => ({ x: t.x + 0.5, z: t.y + 0.5 }));
     walker.current.speed = pathSpeed(path.length);
     walker.current.onArrive = then ?? null;
-    follow.current = true;
+    follow.current = zoomedIn.current;
     invalidate();
     return true;
   };
   const onWalk = useStable((to: Tile, then?: () => void) => {
     setAim(null);
-    walkTo(to, then);
+    // Kapı karosu yürünür: oraya varınca (ya da yol yoksa hemen) kapı işi
+    if (!walkTo(to, then)) then?.();
   });
-  // Sekmeden bir alana git
-  useEffect(() => {
-    if (!p.goal) return;
-    const to = entryOf(plan, p.goal.to);
-    setAim(null);
-    if (to) walkTo(to);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.goal?.n]);
 
   /** Eşyanın önüne yürü (dünya karosu); varınca then(). Yol yoksa false */
   const walkToItem = (space: SpaceId, i: number, then?: () => void): boolean => {
@@ -291,34 +259,7 @@ function Scene(p: WorldViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layouts]);
 
-  // Başlangıç alanını sayfaya bildir (sekme, envanter)
-  useEffect(() => {
-    p.onRegion(here);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const onTile = (x: number, y: number) => {
-    const id = regionAt(plan, { x, y })?.id ?? null;
-    if (id !== here) {
-      setHere(id);
-      p.onRegion(id);
-    }
-    p.onTile({ x, y });
-  };
-  const inside = !!here && isIndoor(here);
-  const open = editR ? isIndoor(editR.id as SpaceId) || inside : inside;
-
-  // Yakındaki alanlar ayrıntılı çizilir
-  const near = useMemo(() => {
-    const out = new Set<RegionId>();
-    for (const r of plan.regions) {
-      const dx = Math.max(r.x - center.x, 0, center.x - (r.x + r.w));
-      const dy = Math.max(r.y - center.y, 0, center.y - (r.y + r.h));
-      if (Math.hypot(dx, dy) < NEAR) out.add(r.id);
-    }
-    if (editR) out.add(editR.id);
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, center, editR?.id]);
+  const onTile = (x: number, y: number) => p.onTile({ x, y });
 
   const heldItem = p.held ? itemById(p.held.item) : undefined;
   const heldWall = heldItem?.placement === 'wall';
@@ -328,6 +269,23 @@ function Scene(p: WorldViewProps) {
   }, [heldItem]);
   const local = (t: Tile): Tile => (editR ? { x: t.x - editR.x, y: t.y - editR.y } : t);
   const tileOf = (e: ThreeEvent<PointerEvent | MouseEvent>): Tile => ({ x: Math.floor(e.point.x), y: Math.floor(e.point.z) });
+  /**
+   * İmlecin bırakma yeri (alanın yerel karosu). Elde masa üstü eşyası varsa yakındaki yüzeye mıknatıslanır:
+   * zemindeki imleç noktası her yüzeyin yüksekliğine kameraya doğru kaydırılır (eğik bakış).
+   */
+  const spotOf = (e: ThreeEvent<PointerEvent>): Spot => {
+    const t = local(tileOf(e));
+    if (!editR || !p.edit || !p.held || !heldItem || !has(heldItem, 'ON_SURFACE')) return t;
+    const fx = e.point.x - editR.x;
+    const fz = e.point.z - editR.y;
+    const dx = Math.sin(AZ) * TILT;
+    const dz = Math.cos(AZ) * TILT;
+    const at = (q: { item: string }) => {
+      const H = surfaceTop(itemById(q.item)!);
+      return { x: fx + dx * H, y: fz + dz * H };
+    };
+    return snapToSurface(p.edit.space, p.edit.layout, plan.ctx, p.held, at) ?? t;
+  };
 
   const onFloorClick = (e: ThreeEvent<MouseEvent>) => {
     if (!isTap(e)) return;
@@ -338,7 +296,7 @@ function Scene(p: WorldViewProps) {
     setAim(null);
     walkTo(tileOf(e));
   };
-  const release = (e: ThreeEvent<PointerEvent>, t: Tile) => {
+  const release = (e: ThreeEvent<PointerEvent>, t: Spot) => {
     if (p.edit && p.held) {
       e.stopPropagation();
       droppedAt.current = performance.now();
@@ -365,62 +323,31 @@ function Scene(p: WorldViewProps) {
     const P = w.pose;
     return P && !w.path.length ? { x: P.back.x, z: P.back.z, face: P.face } : { x: w.x, z: w.z, face: w.face };
   });
-  // Balonun bağlandığı nokta: seçili eşyanın üstü ya da karakterin başı
-  const popAt = (): [number, number, number] | null => {
-    const u = p.using;
-    if (u) {
-      const r = regionOf(plan, u.space);
-      const it = layouts[u.space]?.items[u.index];
-      const item = it && itemById(it.item);
-      if (!r || !it || !item) return null;
-      if (item.placement === 'wall') {
-        const n = item.w ?? 1;
-        return it.y === -1 ? [r.x + it.x + n / 2, 2, r.y + 0.1] : [r.x + 0.1, 2, r.y + it.y + n / 2];
-      }
-      const f = footprint(item, it.x, it.y, it.rot);
-      const cx = f.reduce((s, t) => s + t.x, 0) / f.length + 0.5;
-      const cz = f.reduce((s, t) => s + t.y, 0) / f.length + 0.5;
-      return [r.x + cx, supportOf(layouts[u.space]!, it, u.index) != null ? 1.5 : 1.1, r.y + cz];
-    }
-    if (p.avatarMenu) {
-      const w = walker.current;
-      const P = w.pose;
-      return P && !w.path.length ? [P.x, P.y + 1.4, P.z] : [w.x, 1.75, w.z];
-    }
-    return null;
-  };
   const onBook = useStable((b: Book) => p.onBook(b));
-  const onTree = useStable((t: DayTree) => p.onTree(t));
-  const onGrown = useStable(() => p.onGrown());
+  const onDoor = useStable((d: FixedTile) => p.onDoor(d));
   const selected = p.using ?? aim;
 
   return (
     <>
-      <Camera plan={plan} walker={walker} follow={follow} indoor={inside} locked={!!p.held} onCenter={setCenter} />
+      <Camera plan={plan} walker={walker} follow={follow} zoomedIn={zoomedIn} locked={!!p.held} onCenter={setCenter} />
       <WorldScene
         plan={plan}
         map={p.map}
         layouts={layouts}
-        forest={p.forest}
         creatures={p.creatures}
-        open={open}
-        here={editR?.id ?? here}
         night={p.phase === 'gece' || p.phase === 'aksam'}
-        near={near}
-        labels
-        growId={p.growId}
-        onGrown={onGrown}
         books={p.books}
         reading={p.reading}
         selected={selected}
         phase={p.phase}
         channels={p.channels}
         tv={p.tv}
+        board={p.board}
         posed={posed}
         center={center}
         onWalk={p.held ? undefined : onWalk}
         onBook={onBook}
-        onTree={onTree}
+        onDoor={p.held ? undefined : onDoor}
         onItem={onItem}
       />
       {editR && p.edit && (
@@ -428,20 +355,19 @@ function Scene(p: WorldViewProps) {
           <EditOverlay region={editR} edit={p.edit} ctx={plan.ctx} held={p.held} hoverTo={hoverTo} onRelease={release} />
         </group>
       )}
-      {/* Zemine dokunma/sürükleme yakalayıcı: bütün dünya */}
+      {/* Zemine dokunma/sürükleme yakalayıcı: bütün oda */}
       <mesh
         position={[plan.w / 2, 0.02, plan.h / 2]}
         rotation-x={-Math.PI / 2}
         onClick={onFloorClick}
-        onPointerMove={(e) => p.edit && !heldWall && hoverTo.current?.(local(tileOf(e)))}
-        onPointerUp={(e) => !heldWall && release(e, local(tileOf(e)))}
+        onPointerMove={(e) => p.edit && !heldWall && hoverTo.current?.(spotOf(e))}
+        onPointerUp={(e) => !heldWall && release(e, spotOf(e))}
       >
         <planeGeometry args={[plan.w, plan.h]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <Avatar look={p.look} walker={walker} onTile={onTile} holding={p.holding} onTap={onAvatar} />
       <Companions pets={p.pets} at={leader} />
-      {(p.using || p.avatarMenu) && <ScreenAnchor el={p.pop} at={popAt} id={p.using ? `${p.using.space}:${p.using.index}` : 'avatar'} />}
       {p.held && <HoldCursor />}
     </>
   );
@@ -464,27 +390,27 @@ function EditOverlay({
   edit: { space: SpaceId; layout: SpaceLayout };
   ctx: WorldCtx;
   held: { item: string; rot: number } | null;
-  hoverTo: MutableRefObject<((t: Tile | null) => void) | null>;
-  onRelease: (e: ThreeEvent<PointerEvent>, t: Tile) => void;
+  hoverTo: MutableRefObject<((t: Spot | null) => void) | null>;
+  onRelease: (e: ThreeEvent<PointerEvent>, t: Spot) => void;
 }) {
-  const [hover, setHover] = useState<Tile | null>(null);
+  const [hover, setHover] = useState<Spot | null>(null);
   useEffect(() => {
-    hoverTo.current = (t) => setHover((h) => (h && t && h.x === t.x && h.y === t.y ? h : t));
+    hoverTo.current = (t) => setHover((h) => (h && t && h.x === t.x && h.y === t.y && h.sub === t.sub ? h : t));
     return () => {
       hoverTo.current = null;
     };
   }, [hoverTo]);
   const heldItem = held ? itemById(held.item) : undefined;
   const heldWall = heldItem?.placement === 'wall';
-  const indoor = isIndoor(region.id);
+  const indoor = isIndoor(region.id, ctx);
   const ghost =
     held && hover && (heldWall ? hover.x === -1 || hover.y === -1 : hover.x >= 0 && hover.y >= 0)
-      ? { item: held.item, x: hover.x, y: hover.y, rot: heldWall ? wallRot(hover.x, hover.y) : held.rot }
+      ? { item: held.item, x: hover.x, y: hover.y, rot: heldWall ? wallRot(hover.x, hover.y) : held.rot, ...(hover.sub === undefined ? {} : { sub: hover.sub }) }
       : null;
   const ghostOk = ghost ? canPlaceAt(edit.space, edit.layout, ctx, ghost) : false;
   const support = ghost ? supportOf(edit.layout, ghost) : null;
   const supportItem = support != null ? itemById(edit.layout.items[support].item) : undefined;
-  const model = ghost && heldItem && <ItemModel item={heldItem} x={ghost.x} y={ghost.y} rot={ghost.rot} ghost={ghostOk ? 'ok' : 'bad'} lift={0.05} />;
+  const model = ghost && heldItem && <ItemModel item={heldItem} x={ghost.x} y={ghost.y} rot={ghost.rot} sub={ghost.sub} ghost={ghostOk ? 'ok' : 'bad'} lift={0.05} />;
   const set = (t: Tile) => hoverTo.current?.(t);
   return (
     <>
@@ -492,7 +418,7 @@ function EditOverlay({
       {held && hover && !heldWall && hover.x >= 0 && hover.y >= 0 && hover.x < region.w && hover.y < region.h && <HoverTile x={hover.x} y={hover.y} />}
       {ghost && heldItem && (
         <>
-          <FootTiles item={heldItem} x={ghost.x} y={ghost.y} rot={ghost.rot} ok={ghostOk} />
+          <FootTiles item={heldItem} x={ghost.x} y={ghost.y} rot={ghost.rot} ok={ghostOk} sub={ghost.sub} />
           <Suspense fallback={null}>{supportItem ? <OnSurface support={supportItem}>{model}</OnSurface> : model}</Suspense>
         </>
       )}
@@ -533,56 +459,58 @@ function HoldCursor() {
 }
 
 /**
- * Kamera karakteri izler (kullanıcı kaydırınca bırakır, karakter yürüyünce yeniden izler). Elde eşya varken
- * kamera kilitli (sürükleme eşyayı gezdirir). Evin içindeyken döndürme arka duvarları göstermeye sınırlı.
+ * Habbo gibi sabit kamera: oda açılınca bütünü ekrana sığar ve odanın ortasına bakar; açı hep aynı (güneydoğu).
+ * Sürükleme kaydırır, tekerlek/iki parmak yakınlaştırır. Yakınlaştırınca kamera karakteri izler (yürüyünce),
+ * kullanıcı kaydırınca bırakır. Elde eşya varken kamera kilitli (sürükleme eşyayı gezdirir).
  */
 function Camera({
   plan,
   walker,
   follow,
-  indoor,
+  zoomedIn,
   locked,
   onCenter,
 }: {
   plan: WorldPlan;
   walker: MutableRefObject<Walker>;
   follow: MutableRefObject<boolean>;
-  indoor: boolean;
+  zoomedIn: MutableRefObject<boolean>;
   locked: boolean;
   onCenter: (t: Tile) => void;
 }) {
-  const { camera, size: view, invalidate } = useThree();
+  const { camera, size: screen, invalidate } = useThree();
   const controls = useRef<OrbitImpl>(null);
   const reported = useRef({ x: -99, y: -99 });
-  const OFF = useMemo(() => new Vector3(18, 20, 18), []);
+  const OFF = useMemo(() => new Vector3(...CAM_OFF), []);
   const tmp = useMemo(() => new Vector3(), []);
-  // ~13 karo görünür (tam ekranda da aynı ölçek)
-  const fit = Math.min(view.width, view.height) / 13;
+  // Odanın bütünü sığsın: izometrikte en (w + h)·0.71, boy (w + h)·0.41 + duvar
+  const span = plan.w + plan.h;
+  const fit = Math.min(screen.width / (span * 0.72 + 1.6), screen.height / (span * 0.41 + WALL_H * 0.82 + 1.4));
 
-  // Başta ve ekran boyu değişince kamerayı karakterin üstüne yerleştir
+  // Başta (ve ekran boyu değişince: tam ekran) oda ortaya, bütünü görünür
   useEffect(() => {
     const c = controls.current;
-    const cam = camera;
-    const w = walker.current;
-    const target = new Vector3(w.x, 0.4, w.z);
-    cam.position.copy(target).add(OFF);
-    cam.zoom = fit;
-    cam.updateProjectionMatrix();
+    const target = new Vector3(plan.w / 2, 0.6, plan.h / 2);
+    camera.position.copy(target).add(OFF);
+    camera.zoom = fit;
+    camera.updateProjectionMatrix();
     if (c) {
       c.target.copy(target);
       c.update();
     }
-    follow.current = true;
+    follow.current = false;
+    zoomedIn.current = false;
     invalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fit]);
 
-  // Kullanıcı kamerayı tutunca izleme biter; karakter yeniden yürüyünce başlar (walkTo)
+  // Kullanıcı kamerayı tutunca izleme biter; yakınlaştırınca karakter yürüyünce izlenir (walkTo)
   useEffect(() => {
     const c = controls.current;
     if (!c) return;
     const start = () => (follow.current = false);
     const clamp = () => {
+      zoomedIn.current = camera.zoom > fit * 1.25;
       const t = c.target;
       const x = Math.min(plan.w, Math.max(0, t.x));
       const z = Math.min(plan.h, Math.max(0, t.z));
@@ -603,9 +531,9 @@ function Camera({
       c.removeEventListener('start', start);
       c.removeEventListener('change', clamp);
     };
-  }, [camera, plan.w, plan.h, follow, onCenter]);
+  }, [camera, plan.w, plan.h, follow, zoomedIn, fit, onCenter]);
 
-  // Karakteri yumuşakça izle
+  // Karakteri yumuşakça izle (yalnızca yakınlaştırılmışken)
   useFrame((_, dt) => {
     const c = controls.current;
     if (!c || !follow.current) return;
@@ -619,20 +547,19 @@ function Camera({
     invalidate();
   });
 
-  const az = Math.PI / 4;
   return (
     <OrbitControls
       ref={controls}
       makeDefault
       enabled={!locked}
-      enableDamping={false}
-      screenSpacePanning
-      minPolarAngle={0.55}
-      maxPolarAngle={1.12}
-      minAzimuthAngle={indoor ? az - 0.7 : -Infinity}
-      maxAzimuthAngle={indoor ? az + 0.7 : Infinity}
-      minZoom={fit * 0.35}
-      maxZoom={fit * 3}
+      enableRotate={false}
+      enableDamping
+      dampingFactor={0.12}
+      screenSpacePanning={false}
+      mouseButtons={{ LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
+      touches={{ ONE: TOUCH.PAN, TWO: TOUCH.DOLLY_PAN }}
+      minZoom={fit * 0.7}
+      maxZoom={fit * 3.2}
     />
   );
 }

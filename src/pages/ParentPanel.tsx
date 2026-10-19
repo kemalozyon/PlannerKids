@@ -12,8 +12,9 @@ import { useGame } from '../lib/GameContext';
 import { MOODS } from '../lib/mood';
 import { useReading } from '../lib/ReadingContext';
 import { kindOf, REWARD_KINDS, rewardProgress } from '../lib/rewards';
-import type { Course, FamilySettings, ParentNote, PlanItem, Reflection, Reward, RewardKind } from '../lib/types';
+import type { Course, FamilySettings, ParentNote, PlanItem, Reflection, Reward, RewardKind, Task } from '../lib/types';
 
+const QUICK_TASKS = ['Matematik ödevini bitir', '20 sayfa kitap oku', 'Yarınki çantanı hazırla', 'İngilizce kelime tekrarı'];
 const QUICK_NOTES = ['Aferin! 👏', 'Seninle gurur duyuyorum!', 'Yarın da böyle devam 💪', 'Bugün biraz dinlen, hak ettin.'];
 
 /** Aile paneli: PIN ile açılır. Haftalık özet, plan onayı, not, ödüller ve günlük rapor ayarları. */
@@ -71,6 +72,7 @@ export default function ParentPanel({ courses, goPlan }: { courses: Course[]; go
       <WeekSummary />
       <PlanApproval family={family} onChange={saveFamily} courses={courses} goPlan={goPlan} />
       <NotesCard />
+      <TaskGiver courses={courses} />
       <RewardsAdmin />
       <EconomyAdmin />
       <ParentSettings />
@@ -366,6 +368,118 @@ function NotesCard() {
   );
 }
 
+/** Görev ver: çocuğun Yapılacaklar listesine düşer, bitince Elmas kazandırır (günün ilk elmas.task.perDay görevi) */
+function TaskGiver({ courses }: { courses: Course[] }) {
+  const api = useApi();
+  const today = toLocalDate();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(today);
+  const [courseId, setCourseId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => {
+    api
+      .listParentTasks(addDays(today, -3), addDays(today, 7))
+      .then(setTasks)
+      .catch(() => setTasks([]));
+  }, [api, today]);
+  useEffect(load, [load]);
+  const { each, perDay } = CFG.elmas.task;
+  const onDay = tasks.filter((t) => t.date === date).length;
+  const byId = new Map(courses.map((c) => [c.id, c]));
+  return (
+    <section className="card">
+      <h2>Görev ver</h2>
+      <p className="muted small">
+        Çocuğunuzun Yapılacaklar listesine düşer; bitirince +{each} 💎 kazanır (günde ilk {perDay} görev). Çocuk bu görevleri silemez.
+      </p>
+      <div className="tabs" role="radiogroup" aria-label="Gün">
+        {[
+          [today, 'Bugün'],
+          [addDays(today, 1), 'Yarın'],
+        ].map(([d, name]) => (
+          <button key={d} role="radio" aria-checked={date === d} className={date === d ? 'on' : ''} onClick={() => setDate(d)}>
+            {name}
+          </button>
+        ))}
+      </div>
+      <label className="field">
+        <span>Görev</span>
+        <input value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="ör. Kesirler testinin 10 sorusunu çöz" />
+      </label>
+      <div className="chips">
+        {QUICK_TASKS.map((q) => (
+          <button key={q} className="chip-btn" onClick={() => setTitle(q)}>
+            {q}
+          </button>
+        ))}
+      </div>
+      {courses.length > 0 && (
+        <label className="field">
+          <span>Ders (isteğe bağlı)</span>
+          <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+            <option value="">—</option>
+            {courses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <button
+        className="btn primary full"
+        disabled={!title.trim() || busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await api.addTask({ title: title.trim(), date, course_id: courseId || null, from_parent: true });
+            setTitle('');
+            load();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Görevi ver
+      </button>
+      {onDay >= perDay && <p className="muted small">Bu gün için {perDay} görev verdiniz; bundan sonrakiler Elmas vermez.</p>}
+      {error && <p className="error-ink small">{error}</p>}
+      {tasks.length > 0 && (
+        <ul className="list sent-notes">
+          {tasks.map((t) => (
+            <li key={t.id} className="row">
+              <span className="grow small">
+                {t.done ? '✅ ' : '⬜ '}
+                {t.title}
+                <span className="muted">
+                  {' '}
+                  · {t.date === today ? 'bugün' : formatShort(t.date)}
+                  {t.course_id && byId.get(t.course_id) ? ` · ${byId.get(t.course_id)!.name}` : ''}
+                </span>
+              </span>
+              <button
+                className="icon-btn"
+                aria-label="Görevi sil"
+                onClick={async () => {
+                  await api.deleteTask(t.id);
+                  load();
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function RewardsAdmin() {
   const api = useApi();
   const { stats } = useGame();
@@ -523,16 +637,17 @@ function economyRules(): string {
       ? 'her çalışma dakikasına 1 💎'
       : t.map((x, i) => `${i ? t[i - 1].upTo : 0}–${x.upTo}. dk ${x.minutesPer} dk = 1 💎`).join(', ');
   return (
-    `Elmas yalnızca sayaçla ölçülen çalışmadan kazanılır; süreyi sunucu tutar, sekme değişince ya da uzun süre dokunulmayınca sayaç durur. ` +
-    `Elle yazılan süre kayda geçer ama Elmas vermez. Günlük: ${tiers}, en çok ${e.study.dailyCap} 💎. ` +
+    `Elmas çalışarak kazanılır; sayaçla ölçülen süreyi sunucu tutar, sekme değişince ya da uzun süre dokunulmayınca sayaç durur. ` +
+    `Günlük: ${tiers}, sayaçla çalışınca ayrıca %${Math.round(e.live.bonus * 100)} canlı bonus; elle yazılan süre ${e.manual.minutesPer} dk = 1 💎, günde en çok ${e.manual.capPerDay} 💎 ` +
+    `(seri ve sandık yalnızca sayaçla); hepsi birlikte günde en çok ${e.study.dailyCap} 💎. Verdiğiniz görev bitince +${e.task.each} (günde ${e.task.perDay} görev). ` +
     `Seri kademesi günde +${e.streak.tiers[0].bonus}…+${e.streak.tiers.at(-1)!.bonus}, öz değerlendirme +${e.reflection.bonus}, ` +
-    `planı biten gün +${e.plan}, biten kitap +${e.book.bonus} (haftada en çok ${e.book.perWeek}), ders görevleri. Gezinti yıldızları para değildir.`
+    `planı biten gün +${e.plan}, biten kitap +${e.book.bonus} (haftada en çok ${e.book.perWeek}), ders görevleri. Günün Elması (ders, seri, plan, "nasıl geçti", günlük ve aile görevleri) o günün ağacında bekler; çocuk Bahçem'de ağaca dokunup alır, hiç kaybolmaz. Bir günde ${CFG.world.drop.minutes} dk sayaçla çalışınca nadir ağaç ödülü (satılmayan bir eşya) çıkar. Gezinti yıldızları para değildir.`
   );
 }
 
 /** Kazancın ait olduğu gün (geçmişten kazanılanlar kendi gününde görünsün), değilse yazıldığı gün */
 function ledgerDate(e: { kind: string; ref: string; created_at: string }): string {
-  const d = ['study', 'plan', 'streak', 'reflection'].includes(e.kind) ? e.ref : e.kind === 'quest' ? e.ref.split(':')[1] : null;
+  const d = ['study', 'live', 'manual', 'plan', 'streak', 'reflection'].includes(e.kind) ? e.ref : e.kind === 'quest' ? e.ref.split(':')[1] : null;
   return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : toLocalDate(new Date(e.created_at));
 }
 

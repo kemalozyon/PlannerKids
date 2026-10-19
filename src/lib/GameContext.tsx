@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useApi } from './ApiContext';
 import { toLocalDate } from './date';
 import { computeStats, diffStats, type Celebration, type GameStats } from './game';
-import type { Equipped, RoomInput, UserRoom } from './types';
+import type { Equipped, RoomInput, TreeElmas, UserRoom } from './types';
 import type { SpaceId, SpaceLayout } from './world';
 
 interface GameCtx {
@@ -13,6 +13,10 @@ interface GameCtx {
   /** Dükkândan satın al (bakiye yetmezse hata fırlatır) */
   buy: (itemId: string) => Promise<void>;
   openChest: (week: string, itemId: string) => Promise<void>;
+  /** Nadir ağaç ödülünü al (o günün eşyası) */
+  openDrop: (date: string, itemId: string) => Promise<void>;
+  /** Bir günün ağacındaki Elması al (Bahçem); alınan tutar */
+  claimDay: (date: string) => Promise<number>;
   /** Gezintide yıldız topla (günün i. yıldızı) */
   collectStar: (i: number) => Promise<void>;
   equip: (e: Equipped) => Promise<void>;
@@ -64,14 +68,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const unsaved = useRef(new Map<SpaceId, SpaceLayout>());
   const refresh = useCallback(async () => {
     const today = toLocalDate();
-    const [logs, reflections, doneTasks, plans, abandoned, ledger0, owned, equipped, books, courses, spaces, rooms] = await Promise.all([
+    const [logs, reflections, doneTasks, plans, ledger0, owned, equipped, books, courses, spaces, rooms, seeds] = await Promise.all([
       api.listLogs('2000-01-01', today),
       api.listReflections('2000-01-01', today),
       api.countDoneTasks(),
       // Plan tablosu henüz kurulmadıysa (0005 çalıştırılmadı) oyun yine çalışsın
       api.listPlans('2000-01-01', today).catch(() => []),
-      // 0007 çalıştırılmadıysa kuru ağaç olmadan devam
-      api.listAbandoned().catch(() => []),
       // 0008 çalıştırılmadıysa oyun ekonomisi olmadan devam
       api.listLedger().catch(() => null),
       api.listOwned().catch(() => []),
@@ -82,8 +84,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
       api.listSpaces().catch(() => []),
       // 0023 çalıştırılmadıysa eklenen oda yok
       api.listRooms().catch(() => []),
+      // 0031 çalıştırılmadıysa ağaç türü tarihten
+      api.listDaySeeds().catch(() => []),
     ]);
     let ledger = ledger0 ?? [];
+    let treeElmas: TreeElmas[] = [];
     if (ledger0) {
       // Elmas'ı sunucu kayıtlardan hesaplar; deftere yalnızca o yazar (0010 yoksa eski defterle devam)
       for (const i of legacyStars(today)) await api.collectStar(today, i).catch(() => {});
@@ -91,6 +96,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         .syncEconomy()
         .then(() => api.listLedger())
         .catch(() => ledger);
+      // Ağaçlarda bekleyen Elmas (0036 çalıştırılmadıysa yok)
+      treeElmas = await api.listTreeElmas().catch(() => []);
     }
     const next = computeStats({
       logs,
@@ -98,7 +105,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       doneTasks,
       today,
       plans,
-      abandoned,
       ledger,
       owned,
       equipped,
@@ -106,6 +112,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       courses,
       spaces: { ...Object.fromEntries(spaces.map((s) => [s.space, s.layout])), ...Object.fromEntries(unsaved.current) },
       rooms,
+      seeds,
+      treeElmas,
     });
     // İlk yüklemede kutlama yok; yalnızca bu oturumdaki gelişmeler
     if (prev.current) diffStats(prev.current, next).forEach(celebrate);
@@ -180,6 +188,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
         dismiss,
         buy: after((id: string) => api.buyItem(id)),
         openChest: after((week: string, id: string) => api.openChest(week, id)),
+        openDrop: after((date: string, id: string) => api.openDrop(date, id)),
+        claimDay: async (date: string) => {
+          const n = await api.claimDay(date);
+          await refresh();
+          return n;
+        },
         collectStar: after((i: number) => api.collectStar(toLocalDate(), i)),
         equip: after((e: Equipped) => api.saveEquipped(e)),
         saveSpace,

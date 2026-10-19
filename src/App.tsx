@@ -10,6 +10,7 @@ import Courses from './pages/Courses';
 import History from './pages/History';
 import Today from './pages/Today';
 import World from './pages/World';
+import Garden from './pages/Garden';
 import Library from './pages/Library';
 import Profile from './pages/Profile';
 import WeekPlan from './pages/WeekPlan';
@@ -22,24 +23,26 @@ import Login, { NewPassword } from './components/Login';
 import { GameProvider, useGame } from './lib/GameContext';
 import { SessionProvider, useSession } from './lib/SessionContext';
 import { formatClock } from './lib/useTimer';
+import { hasWebGL } from './lib/webgl';
 import { TOUR_EVENT, type TourMode } from './lib/tour';
-import { openShop, placeNow, SHOP_EVENT } from './lib/shop';
+import { openShop, SHOP_EVENT } from './lib/shop';
 import { STUDIO_EVENT, studioWanted } from './lib/thumbs';
 
 const Tour = lazy(() => import('./components/Tour'));
-const ShopWindow = lazy(() => import('./pages/Shop'));
 const ThumbStudio = lazy(() => import('./components/ThumbStudio'));
-import { IconBack, IconBook, IconCalendar, IconForest, IconToday, IconUser } from './components/Icons';
+const StudyRoom = lazy(() => import('./components/world3d/StudyRoom'));
+import { IconBack, IconBook, IconCalendar, IconForest, IconHome, IconToday, IconUser } from './components/Icons';
 
 /** Alt menüdeki sekmeler */
-type MainTab = 'today' | 'forest' | 'library' | 'history' | 'profile';
+type MainTab = 'today' | 'forest' | 'garden' | 'library' | 'history' | 'profile';
 /** Bir sekmenin içinden açılan alt sayfalar */
 type SubPage = 'plan' | 'rewards' | 'parent' | 'courses' | 'collection';
 type Tab = MainTab | SubPage;
 
 const TABS: { id: MainTab; label: string; icon: () => ReactNode }[] = [
   { id: 'today', label: 'Bugün', icon: IconToday },
-  { id: 'forest', label: 'Dünyam', icon: IconForest },
+  { id: 'forest', label: 'Dünyam', icon: IconHome },
+  { id: 'garden', label: 'Bahçem', icon: IconForest },
   { id: 'library', label: 'Kitaplık', icon: IconBook },
   { id: 'history', label: 'Geçmiş', icon: IconCalendar },
   { id: 'profile', label: 'Profil', icon: IconUser },
@@ -58,7 +61,7 @@ const ALL: Tab[] = [...TABS.map((t) => t.id), ...(Object.keys(SUB) as SubPage[])
 
 function readTab(): Tab {
   const h = location.hash.slice(1);
-  // Dükkân bir pencere: "#shop" Dünyam'ın üstünde açılır
+  // Dükkân Dünyam'ın alttaki panelinde: "#shop" Dünyam'ı açar
   if (h === 'shop') return 'forest';
   return (ALL.includes(h as Tab) ? h : 'today') as Tab;
 }
@@ -108,12 +111,17 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
     return () => window.removeEventListener(TOUR_EVENT, on);
   }, []);
 
-  // Dükkân penceresi (her sayfanın üstünde) ve eşya resimlerini çizen gizli sahne
-  const [shop, setShop] = useState(() => location.hash === '#shop');
+  // Eşya resimlerini çizen gizli sahne; "dükkânı aç" Dünyam'a götürür (dükkân alttaki panelde)
   const [studio, setStudio] = useState(false);
   useEffect(() => {
-    const on = () => setShop(true);
+    const on = () => {
+      if (location.hash !== '#forest') {
+        location.hash = 'forest';
+        setTab('forest');
+      }
+    };
     const st = () => setStudio(true);
+    if (location.hash === '#shop') openShop();
     if (studioWanted()) setStudio(true);
     window.addEventListener(SHOP_EVENT, on);
     window.addEventListener(STUDIO_EVENT, st);
@@ -125,15 +133,11 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
 
   useEffect(() => {
     const onHash = () => {
-      setShop(location.hash === '#shop');
+      if (location.hash === '#shop') openShop();
       setTab(readTab());
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  const closeShop = useCallback(() => {
-    setShop(false);
-    if (location.hash === '#shop') history.replaceState(null, '', '#forest');
   }, []);
 
   const go = useCallback((t: Tab) => {
@@ -202,6 +206,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
               goCourses={() => go('courses')}
               goProfile={() => go('parent')}
               goForest={() => go('forest')}
+              goGarden={() => go('garden')}
               goPlan={() => go('plan')}
               goRewards={() => go('rewards')}
               goShop={openShop}
@@ -211,8 +216,10 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             />
           ) : tab === 'forest' ? (
             <GameLock goToday={() => go('today')}>
-              <World courses={courses} goShop={openShop} />
+              <World goCollection={() => go('collection')} goGarden={() => go('garden')} />
             </GameLock>
+          ) : tab === 'garden' ? (
+            <Garden courses={courses} goToday={() => go('today')} />
           ) : tab === 'library' ? (
             <Library onShelf={goShelf} />
           ) : tab === 'history' ? (
@@ -225,7 +232,7 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
             <Rewards />
           ) : tab === 'collection' ? (
             <GameLock goToday={() => go('today')}>
-              <Collection goWorld={() => go('forest')} />
+              <Collection goGarden={() => go('garden')} />
             </GameLock>
           ) : tab === 'parent' ? (
             <ParentPanel courses={courses} goPlan={() => go('plan')} />
@@ -243,22 +250,6 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
         </nav>
         <Celebrations />
         <IdlePrompt />
-        {shop && (
-          <Suspense fallback={null}>
-            <ShopWindow
-              onClose={closeShop}
-              goCollection={() => {
-                closeShop();
-                go('collection');
-              }}
-              onPlace={(id) => {
-                closeShop();
-                placeNow(id);
-                if (tab !== 'forest') go('forest');
-              }}
-            />
-          </Suspense>
-        )}
         {studio && (
           <Suspense fallback={null}>
             <ThumbStudio />
@@ -277,18 +268,30 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
   );
 }
 
-/** Çalışma sürerken dünya, dükkân ve koleksiyon kapalı: önce bitir ya da ara ver (süre oyuna akmasın) */
+/**
+ * Çalışma sürerken dünya, dükkân ve koleksiyon kapalı: önce bitir ya da ara ver (süre oyuna akmasın). Dünyan
+ * oynanmaz ama görünür: karakterin odandaki ders masasında çalışıyor (StudyRoom).
+ */
 function GameLock({ goToday, children }: { goToday: () => void; children: ReactNode }) {
   const ses = useSession();
   const [busy, setBusy] = useState(false);
+  const can3D = useMemo(hasWebGL, []);
   if (!ses.running) return <>{children}</>;
   return (
     <section className="card idle-card game-lock" role="status">
-      <div className="idle-face" aria-hidden>
-        ⏱
-      </div>
-      <h2>Çalışırken dünyan kapalı</h2>
-      <p className="muted">Sayacın çalışıyor ({formatClock(ses.elapsedMs)}). Önce çalışmanı bitir ya da kısa bir ara ver; arada sayaç durur.</p>
+      {can3D ? (
+        <div className="study-room">
+          <Suspense fallback={<div className="study-room-wait">📖</div>}>
+            <StudyRoom />
+          </Suspense>
+        </div>
+      ) : (
+        <div className="idle-face" aria-hidden>
+          ⏱
+        </div>
+      )}
+      <h2>Karakterin masasında çalışıyor</h2>
+      <p className="muted">Sayacın çalışıyor ({formatClock(ses.elapsedMs)}). Dünyan çalışırken yalnızca izlenir; oynamak için önce bitir ya da kısa bir ara ver, arada sayaç durur.</p>
       <div className="stack">
         <button className="btn primary big full" onClick={goToday}>
           Sayaca dön

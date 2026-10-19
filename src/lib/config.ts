@@ -33,11 +33,20 @@ export interface EconomyConfig {
     maxMinutes: number;
     noteMin: number;
     noteMax: number;
-    /** Bu kadar dakikadan sonra yarıda bırakılan seans kuru ağaç olur */
+    /** Bu kadar dakikadan sonra yarıda bırakılan seans abandoned_sessions'a yazılır (kayıt için; ağaç dikmez) */
     wiltMinutes: number;
   };
   elmas: {
     study: { tiers: StudyTier[]; dailyCap: number };
+    /** Canlı seans bonusu: sayaçla ölçülen dakikaların bu oranı kadar 💎 (günlük tavanın içinde); from'dan itibaren */
+    live: { bonus: number; from: string };
+    /** Elle yazılan süre: minutesPer dakikaya 1 💎, günde en çok capPerDay; kayıt gününden en çok lateDays gün sonra
+     *  yazılmışsa sayılır (geçmişe toplu yazı Elmas vermez); from'dan itibaren */
+    manual: { minutesPer: number; capPerDay: number; lateDays: number; from: string };
+    /** Ailenin verdiği görev bitince each 💎; günün ilk perDay aile görevi sayılır */
+    task: { each: number; perDay: number };
+    /** Ağaçtan talep: bu günden itibaren günün Elması ağacında bekler (Bahçem → ağaca dokun); öncesi kendiliğinden */
+    claim: { from: string };
     streak: { minMinutes: number; tiers: { days: number; bonus: number }[] };
     reflection: { bonus: number; minNote: number };
     plan: number;
@@ -73,26 +82,33 @@ export interface FixedTile {
   day?: number;
 }
 
-/** Ay bahçesi: m:YYYY-MM */
+/** Ay bahçesi: m:YYYY-MM (Bahçem sayfası; süslenmez) */
 export type MonthSpace = `m:${string}`;
-/** Çocuğun eklediği odalar: r:<kimlik> (evin doğusunda, odadan sonra sırayla; user_rooms) */
+/** Çocuğun eklediği odalar: r:<kimlik> (user_rooms; teras da bir oda türü) */
 export type RoomId = `r:${string}`;
-/** Evin alanları (haritaya göre), eklenen odalar ve aylık ağaç bahçeleri */
-export type SpaceId = 'room' | 'library' | 'garden' | RoomId | MonthSpace;
-export type HomeSpace = 'room' | 'library' | 'garden' | RoomId;
+/** Evin odaları (oda ve kütüphane haritaya göre), eklenen odalar ve aylık ağaç bahçeleri */
+export type SpaceId = 'room' | 'library' | RoomId | MonthSpace;
+export type HomeSpace = 'room' | 'library' | RoomId;
 
-/** Oda türü (mutfak, yatak odası…): adı, simgesi ve kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez) */
+/**
+ * Oda türü (mutfak, yatak odası, teras…): adı, simgesi ve kaplama seçilmemişken görünen zemin/duvar (sahip olmak
+ * gerekmez). `outdoor`: açık hava (teras): duvarı ve kaplaması yok, dış mekân eşyaları konur.
+ */
 export interface RoomKind {
   id: string;
   name: string;
   icon: string;
   floor: string;
   wall: string;
+  outdoor?: boolean;
   desc: string;
 }
 
 export type RoomSize = 's' | 'm' | 'l';
-/** Odanın bir boyuttaki ölçüsü; `cut` zeminden çıkarılan dikdörtgenler [x, y, en, boy] (ön ve doğu taraftan) */
+/**
+ * Odanın zemini: w×h kutu ve `cut` zeminden çıkarılan dikdörtgenler [x, y, en, boy] (ön ve doğu taraftan). Şablonun
+ * bir boyutu ya da blok düzenleyicide karo karo çizilen şekil (user_rooms.cells; 1×1 kesikler).
+ */
 export interface RoomCells {
   w: number;
   h: number;
@@ -115,8 +131,8 @@ export interface SpaceDef {
 }
 
 /**
- * Arazinin büyüme aşaması: toplam (güvenilir) çalışma saatiyle kendiliğinden açılır; ev ve bahçe aynı yerde
- * büyür (yalnızca doğuya ve güneye), yeni özellikler (dere, tepe, göl, deniz) yalnızca yeni açılan karolarda.
+ * Evin büyüme aşaması: toplam (güvenilir) çalışma saatiyle kendiliğinden açılır; oda ve kütüphane yerinde büyür
+ * (yalnızca doğuya ve güneye, kapı ve pencereler yerinde kalır). Tema evin renklerini ve pencereden görüneni seçer.
  */
 export interface MapDef {
   id: string;
@@ -127,7 +143,6 @@ export interface MapDef {
   theme: { scenery: 'meadow' | 'lake' | 'forest' | 'mountain' | 'beach'; ground: string; side: string; wall: string; roof: string; floors: number };
   room: SpaceDef;
   library: SpaceDef;
-  garden: SpaceDef;
 }
 
 /** Ağacın büyüklüğü: günün toplam dakikasına göre */
@@ -159,14 +174,18 @@ export interface WorldConfig {
   roomShapes: RoomShape[];
   /** Eklenebilecek en çok oda */
   maxRooms: number;
+  /** Blok düzenleyicide odanın en büyük kutusu */
+  roomMax: { w: number; h: number };
   /** Kitaplık görünümünde (ShelfView) raf başına kitap */
   library: { perShelf: number };
   season: { from: string; to: string };
   monthGarden: { w: number; h: number; x0: number; y0: number; step: number; gate: { x: number; y: number } };
+  /** Ağacın büyüklükleri (günün toplamı, elle yazılan dahil): Fidan · Genç · Tam · Nadir */
   stages: StageDef[];
   glowMinutes: number;
+  /** Nadir ağaç ödülü: bir günde en az `minutes` güvenilir (sayaç) dakika → drop havuzundan bir eşya (from gününden) */
+  drop: { minutes: number; from: string };
   species: SpeciesDef[];
-  dry: Omit<SpeciesDef, 'months' | 'fruit'>;
   creatures: { id: string; name: string; icon: string; trees: number; model?: string; fly?: boolean }[];
 }
 
@@ -194,10 +213,14 @@ export const BEHAVIORS = [
   'CHANGE_COLOR',
   'INTERACT_PET',
   'BOOKS',
+  'MUSIC',
+  'NOTES',
+  'STATS',
+  'STUDY',
 ] as const;
 export type Behavior = (typeof BEHAVIORS)[number];
-/** TOGGLE açılınca ne olur: ışık saçar, TV ekranı, ateş yanar, hareket (anim) */
-export type Fx = 'light' | 'tv' | 'fire' | 'anim';
+/** TOGGLE açılınca ne olur: ışık saçar, TV ekranı, ateş yanar, hareket (anim), buhar tüter (steam) */
+export type Fx = 'light' | 'tv' | 'fire' | 'anim' | 'steam';
 /** DISPENSE: karakterin eline verilen */
 export const DISPENSE = ['kahve', 'dondurma', 'meyve-suyu', 'patlamis-misir', 'kurabiye', 'su'] as const;
 export type Dispense = (typeof DISPENSE)[number];
@@ -218,6 +241,8 @@ export interface ItemDef {
   unlock?: { by: string; target: number };
   /** Yalnızca haftalık sandıktan */
   chest?: boolean;
+  /** Yalnızca nadir ağaç gününden (world.drop) */
+  drop?: boolean;
   repeat?: boolean;
   model?: string;
   scale?: number;
@@ -269,6 +294,8 @@ export interface ItemDef {
   color?: string;
   color2?: string;
   stars?: boolean;
+  /** Kataloğa eklendiği gün (YYYY-MM-DD): dükkânda bir süre "YENİ" görünür */
+  since?: string;
 }
 
 export const CFG = economy as EconomyConfig;

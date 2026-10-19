@@ -1,12 +1,12 @@
-// Dünya: ev (oda, kütüphane, evin bahçesi) ve aylık ağaç bahçeleri aynı karo ızgarasını ve aynı yerleştirme
+// Dünya: evin odaları (oda, kütüphane, eklenen odalar ve teraslar) aynı karo ızgarasını ve aynı yerleştirme
 // kurallarını kullanır. Buradaki saf fonksiyonlar SQL'deki save_space doğrulamasının aynısıdır
-// (0015_world_v2.sql); demo API, 3D sahne ve testler bunları kullanır. Sayılar src/config/economy.json → world.
+// (0034_rooms_v3.sql); demo API, 3D sahne ve testler bunları kullanır. Sayılar src/config/economy.json → world.
 //
 // Koordinatlar: x sağa, y öne (kameraya doğru) artar; karo (x, y) 3D'de (x + 0.5, 0, y + 0.5) merkezlidir.
 // Duvar eşyaları arka duvarda y = -1 (x boyunca) ya da sol duvarda x = -1 (y boyunca) durur.
-// Alanlar tek bir bağlı dünyada yan yana durur (worldPlan.ts): kütüphane | oda, önünde bahçe, doğuda orman yolu
-// ve ay bahçeleri. Arazi toplam saatle yerinde büyür (aşama, saklanmaz). Her gün bir ağaç: çalışılan her gün o
-// ayın bahçesinde kendi yerine (takvim düzeni) bir ağaç dikilir.
+// Habbo gibi her oda ayrı bir yerdir (worldPlan.ts → spacePlan): biri seçilir, kapılardan ötekilere geçilir.
+// Oda ve kütüphane toplam saatle yerinde büyür (aşama, saklanmaz). Her gün bir ağaç: çalışılan her gün o ayın
+// bahçesinde (Bahçem sayfası, süslenmez) kendi yerine (takvim düzeni) bir ağaç dikilir.
 import { has, itemById, poseOf, type Item } from './catalog';
 import {
   CFG,
@@ -24,7 +24,7 @@ import {
   type StageDef,
 } from './config';
 import { rng } from './rng';
-import type { Abandoned, StudyLog, UserRoom } from './types';
+import type { StudyLog, UserRoom } from './types';
 
 export type { SpaceId, HomeSpace, MonthSpace, RoomId, RoomKind, RoomShape, RoomSize, RoomCells, UserRoom };
 const W = CFG.world;
@@ -53,6 +53,8 @@ export interface PlacedItem {
   stored?: string[];
   /** INTERACT_PET: mama konan gün (YYYY-MM-DD) */
   fed?: string;
+  /** Masa üstündeki çeyrek eşyasının (items.json → quarter) çeyreği (0 sol üst, 1 sağ üst, 2 sol alt, 3 sağ alt); yoksa bütün karo */
+  sub?: number;
 }
 
 /** Bir alanın durumu (Postgres'te user_spaces.layout jsonb) */
@@ -94,8 +96,8 @@ export function mapsOf(totalMinutes: number) {
 }
 
 // ---------- Eklenen odalar ----------
-// Kilit yok: çocuk istediği kadar (en çok maxRooms) oda ekler; türünü (adı, simgesi, varsayılan kaplaması), şeklini
-// (Habbo modelleri gibi şablon) ve boyutunu seçer. Odalar odanın doğusunda sırayla durur (worldPlan.ts).
+// Kilit yok: çocuk istediği kadar (en çok maxRooms) oda ekler; türünü (adı, simgesi, varsayılan kaplaması; teras
+// açık havadır), şeklini (Habbo modelleri gibi şablon, sonra blok düzenleyicide karo karo) ve adını seçer.
 export const ROOM_KINDS: RoomKind[] = W.rooms;
 export const ROOM_SHAPES: RoomShape[] = W.roomShapes;
 export const ROOM_SIZES: { id: RoomSize; name: string }[] = [
@@ -107,23 +109,88 @@ export const ROOM_SIZES: { id: RoomSize; name: string }[] = [
 export const isRoom = (s: string): s is RoomId => /^r:[a-z0-9]{1,12}$/.test(s);
 export const roomSpace = (id: string): RoomId => `r:${id}`;
 export const roomOf = (space: string, ctx: Pick<WorldCtx, 'rooms'>): UserRoom | undefined => ctx.rooms.find((r) => `r:${r.id}` === space);
-export const kindById = (id: string): RoomKind => ROOM_KINDS.find((k) => k.id === id) ?? ROOM_KINDS.at(-1)!;
+export const kindById = (id: string): RoomKind => ROOM_KINDS.find((k) => k.id === id) ?? ROOM_KINDS.find((k) => k.id === 'free') ?? ROOM_KINDS[0];
 export const shapeById = (id: string): RoomShape | undefined => ROOM_SHAPES.find((s) => s.id === id);
 /** Şablonun bir boyuttaki ölçüsü ve kesikleri (bilinmeyen şablon: küçük kare) */
 export const cellsOf = (shape: string, size: RoomSize): RoomCells => shapeById(shape)?.sizes[size] ?? ROOM_SHAPES[0].sizes.s;
+/** Odanın zemini: blok düzenleyicide çizilen şekil, yoksa şablonu */
+export const roomCells = (r: Pick<UserRoom, 'shape' | 'size' | 'cells'>): RoomCells => r.cells ?? cellsOf(r.shape, r.size);
 /** Odanın zemini mi (kesik değil, alanın içinde) */
 export function inCells(c: RoomCells, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= c.w || y >= c.h) return false;
   return !(c.cut ?? []).some(([cx, cy, cw, ch]) => x >= cx && x < cx + cw && y >= cy && y < cy + ch);
 }
-/** Odanın sabitleri: batı/doğu kapısı (zincir), arka duvarda pencere, kesikler (boşluk) */
-export function roomFixed(c: RoomCells): FixedTile[] {
+/** Kapıların satırı: 5 (kısa odada son satır) */
+export const doorRow = (c: RoomCells) => Math.min(5, c.h - 1);
+
+/**
+ * Odanın sabitleri: batı kapısı (bir önceki odaya), doğu kapısı (sonrakine; doğu sütunu o satırda kesikse en
+ * doğudaki zemin karosu), arka duvarda pencere (terasta yok), kesikler (boşluk).
+ */
+export function roomFixed(c: RoomCells, outdoor = false): FixedTile[] {
+  const y = doorRow(c);
+  let ex = c.w - 1;
+  while (ex > 0 && !inCells(c, ex, y)) ex--;
   return [
-    { kind: 'door', x: 0, y: 5, edge: 'w' },
-    { kind: 'door', x: c.w - 1, y: 5, edge: 'e' },
-    { kind: 'window', x: Math.max(1, Math.floor(c.w / 2) - 1), y: -1, w: 2 },
+    { kind: 'door', x: 0, y, edge: 'w' },
+    ...(ex > 0 ? [{ kind: 'door', x: ex, y, edge: 'e' } as FixedTile] : []),
+    ...(outdoor || c.w < 4 ? [] : [{ kind: 'window', x: Math.max(1, Math.floor(c.w / 2) - 1), y: -1, w: 2 } as FixedTile]),
     ...(c.cut ?? []).map(([x, y, w, h]): FixedTile => ({ kind: 'void', x, y, w, h })),
   ];
+}
+
+/** Zemin karolarının sayısı */
+export function cellCount(c: RoomCells): number {
+  let n = 0;
+  for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (inCells(c, x, y)) n++;
+  return n;
+}
+
+/** En az bu kadar karo */
+export const MIN_CELLS = 6;
+
+/**
+ * Blok düzenleyicinin şekli geçerli mi (sunucuda room_cells_check ile aynı): kutu 3…roomMax, kesikler kutunun içinde,
+ * arka sıra (y 0) ve sol sütun (x 0) hep dolu (duvarlar, pencere ve duvar eşyaları için), en az MIN_CELLS karo,
+ * bütün karolar birbirine bağlı.
+ */
+export function roomCellsProblem(c: unknown): string | null {
+  const q = c as RoomCells | null;
+  if (!q || typeof q !== 'object' || !Number.isInteger(q.w) || !Number.isInteger(q.h)) return 'Odanın şekli geçersiz';
+  if (q.w < 3 || q.h < 3 || q.w > W.roomMax.w || q.h > W.roomMax.h) return `Oda en az 3×3, en çok ${W.roomMax.w}×${W.roomMax.h} karo olur`;
+  const cut = q.cut ?? [];
+  if (!Array.isArray(cut) || cut.length > q.w * q.h) return 'Odanın şekli geçersiz';
+  for (const r of cut) {
+    if (!Array.isArray(r) || r.length !== 4 || !r.every(Number.isInteger)) return 'Odanın şekli geçersiz';
+    const [x, y, w, h] = r;
+    if (w < 1 || h < 1 || x < 0 || y < 0 || x + w > q.w || y + h > q.h) return 'Odanın şekli geçersiz';
+    if (x === 0 || y === 0) return 'Arka sıra ve sol sütun duvar dibi: hep dolu kalır';
+  }
+  const n = cellCount(q);
+  if (n < MIN_CELLS) return `Oda en az ${MIN_CELLS} karo olur`;
+  // Bağlı mı: (0,0)'dan yayıl
+  const seen = new Set<string>(['0,0']);
+  const todo: Tile[] = [{ x: 0, y: 0 }];
+  while (todo.length) {
+    const t = todo.pop()!;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = t.x + dx;
+      const y = t.y + dy;
+      const k = key(x, y);
+      if (!seen.has(k) && inCells(q, x, y)) {
+        seen.add(k);
+        todo.push({ x, y });
+      }
+    }
+  }
+  return seen.size === n ? null : 'Odanın bütün karoları birbirine bağlı olmalı';
+}
+
+/** Şekli 1×1 karolardan kurar: kutunun dışındaki ya da kesik karolar (blok düzenleyici) */
+export function cellsFrom(w: number, h: number, floor: (x: number, y: number) => boolean): RoomCells {
+  const cut: [number, number, number, number][] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (!floor(x, y)) cut.push([x, y, 1, 1]);
+  return cut.length ? { w, h, cut } : { w, h };
 }
 /** Zemini dikdörtgenlere böler (satır satır, aynı aralıklı satırlar birleşir): 3D zemin ve dış duvarlar */
 export function cellRects(c: RoomCells): [number, number, number, number][] {
@@ -151,30 +218,35 @@ export function cellRects(c: RoomCells): [number, number, number, number][] {
   return [...out, ...open];
 }
 /** Oda bilgisi geçerli mi (sunucuda add_room/update_room ile aynı) */
-export function roomInputProblem(r: { kind: string; shape: string; size: string; name: string }): string | null {
+export function roomInputProblem(r: { kind: string; shape: string; size: string; name: string; cells?: RoomCells | null }): string | null {
   if (!ROOM_KINDS.some((k) => k.id === r.kind)) return 'Oda türü yok';
   if (!shapeById(r.shape)) return 'Oda şekli yok';
   if (!ROOM_SIZES.some((z) => z.id === r.size)) return 'Oda boyu yok';
   const n = (r.name ?? '').trim();
   if (n.length < 1 || n.length > 24) return 'Odanın adı 1–24 harf olmalı';
-  return null;
+  return r.cells == null ? null : roomCellsProblem(r.cells);
 }
 /** Alanın zemin ölçüsü ve kesikleri (oda değilse dikdörtgen) */
 export function spaceCells(space: SpaceId, ctx: WorldCtx): RoomCells {
   const r = isRoom(space) ? roomOf(space, ctx) : undefined;
-  if (r) return cellsOf(r.shape, r.size);
+  if (r) return roomCells(r);
   return spaceSize(space, ctx);
 }
 
 // ---------- Alanlar ----------
 export const isMonthSpace = (s: string): s is MonthSpace => /^m:\d{4}-\d{2}$/.test(s);
 export const monthSpace = (month: string): MonthSpace => `m:${month}`;
-export const isHome = (s: string): s is HomeSpace => s === 'room' || s === 'library' || s === 'garden' || isRoom(s);
-/** Evin içi: oda, kütüphane ve eklenen odalar */
-export const isIndoor = (s: string) => s === 'room' || s === 'library' || isRoom(s);
-export const isOutdoor = (s: SpaceId) => s === 'garden' || isMonthSpace(s);
+export const isHome = (s: string): s is HomeSpace => s === 'room' || s === 'library' || isRoom(s);
+/** Açık hava odası (teras): duvarı ve kaplaması yok, dış mekân eşyaları konur */
+export const isTerrace = (s: string, ctx: Pick<WorldCtx, 'rooms'>) => {
+  const r = isRoom(s) ? roomOf(s, ctx) : undefined;
+  return !!r && !!kindById(r.kind).outdoor;
+};
+/** Evin içi: oda, kütüphane ve teras olmayan eklenen odalar */
+export const isIndoor = (s: string, ctx: Pick<WorldCtx, 'rooms'>) => s === 'room' || s === 'library' || (isRoom(s) && !isTerrace(s, ctx));
+export const isOutdoor = (s: SpaceId, ctx: Pick<WorldCtx, 'rooms'>) => isMonthSpace(s) || isTerrace(s, ctx);
 
-const shiftMonth = (month: string, n: number) => {
+export const shiftMonth = (month: string, n: number) => {
   const [y, m] = month.split('-').map(Number);
   const d = new Date(y, m - 1 + n, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -212,7 +284,7 @@ export function spaceSize(space: SpaceId, ctx: WorldCtx): { w: number; h: number
   if (isMonthSpace(space)) return { w: W.monthGarden.w, h: W.monthGarden.h };
   if (isRoom(space)) {
     const r = roomOf(space, ctx);
-    return r ? { w: cellsOf(r.shape, r.size).w, h: cellsOf(r.shape, r.size).h } : { w: 0, h: 0 };
+    return r ? { w: roomCells(r).w, h: roomCells(r).h } : { w: 0, h: 0 };
   }
   const s = mapById(ctx.map)[space];
   return { w: s.w, h: s.h };
@@ -227,7 +299,7 @@ export function fixedDefs(space: SpaceId, ctx: WorldCtx): FixedTile[] {
   }
   if (isRoom(space)) {
     const r = roomOf(space, ctx);
-    return r ? roomFixed(cellsOf(r.shape, r.size)) : [];
+    return r ? roomFixed(roomCells(r), !!kindById(r.kind).outdoor) : [];
   }
   return mapById(ctx.map)[space].fixed;
 }
@@ -248,7 +320,7 @@ export function fixedTiles(space: SpaceId, ctx: WorldCtx): Map<string, FixedTile
 /** Duvarda eşya asılamayan yerler: pencere, kapı ve gömme rafların üstü */
 export function wallBlocked(space: SpaceId, ctx: WorldCtx): Set<string> {
   const out = new Set<string>();
-  if (!isIndoor(space)) return out;
+  if (!isIndoor(space, ctx)) return out;
   for (const f of fixedDefs(space, ctx)) {
     const fw = f.w ?? 1;
     const fh = f.h ?? 1;
@@ -293,18 +365,30 @@ export function wallSlots(item: Pick<Item, 'w'>, x: number, y: number): Tile[] {
 /** Bir eşyanın kapladığı yerler (duvar eşyasında duvardaki yerleri) */
 export const tilesOf = (item: Item, p: PlacedItem): Tile[] => (item.placement === 'wall' ? wallSlots(item, p.x, p.y) : footprint(item, p.x, p.y, p.rot));
 
-/** Bu alana konabilir mi: duvar eşyası içeride, iç/dış mekân eşyası kendi yerinde */
-export const fitsSpace = (item: Item, space: SpaceId) => {
-  if (item.placement === 'wall') return isIndoor(space);
+/** Bu alana konabilir mi: duvar eşyası içeride, iç/dış mekân eşyası kendi yerinde (dış mekân: teras) */
+export const fitsSpace = (item: Item, space: SpaceId, ctx: Pick<WorldCtx, 'rooms'>) => {
+  if (item.placement === 'wall') return isIndoor(space, ctx);
   if (item.placement === 'both') return true;
-  return isOutdoor(space) ? item.placement === 'outdoor' : item.placement === 'indoor';
+  return isOutdoor(space, ctx) ? item.placement === 'outdoor' : item.placement === 'indoor';
 };
 
 /**
  * Katmanlar: zemin (halı, yol: üstünden yürünür, mobilya üstüne konabilir), eşya, üst (masanın üstündeki
- * küçük eşya), duvar. Küçük eşya ya bütünüyle yüzeyin üstünde ya bütünüyle yerdedir.
+ * küçük eşya), duvar. Küçük eşya ya bütünüyle yüzeyin üstünde ya bütünüyle yerdedir. Üst katmanda her karo dört
+ * çeyrektir: çeyrek eşyası (`quarter`) birini, ötekiler hepsini kaplar.
  */
 type Layer = 'zemin' | 'esya' | 'ust' | 'duvar';
+
+export const SUBS = [0, 1, 2, 3] as const;
+/** Çeyreğin karo ortasına göre kayması (x, y) */
+export const subOffset = (sub: number): [number, number] => [sub % 2 ? 0.25 : -0.25, sub >= 2 ? 0.25 : -0.25];
+const validSub = (sub: unknown): sub is number => Number.isInteger(sub) && (sub as number) >= 0 && (sub as number) <= 3;
+
+/** Katmanda kaplanan yerler: üst katmanda çeyrek çeyrek */
+function takenKeys(layer: Layer, tiles: Tile[], sub?: number): string[] {
+  if (layer !== 'ust') return tiles.map((t) => key(t.x, t.y));
+  return tiles.flatMap((t) => (sub === undefined ? SUBS : [sub]).map((q) => `${key(t.x, t.y)}:${q}`));
+}
 
 /** Üstüne küçük eşya konabilen eşyaların karoları */
 function surfaceTiles(items: PlacedItem[], skip = -1): Set<string> {
@@ -337,12 +421,12 @@ type Taken = Record<Layer, Set<string>>;
 const emptyTaken = (): Taken => ({ zemin: new Set(), esya: new Set(), ust: new Set(), duvar: new Set() });
 
 /** Tek eşyanın kuralları: tür, alan, dönüş, sınır, sabit karo, katman ve çakışma. Sorun yoksa kapladığı yerler. */
-function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken, surfaces: Set<string>): string | { layer: Layer; tiles: Tile[] } {
+function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken, surfaces: Set<string>): string | { layer: Layer; keys: string[] } {
   const it = itemById(p.item);
   if (!it || !it.placement) return 'Bu eşya yerleştirilemez';
   const bad = stateProblem(it, p);
   if (bad) return bad;
-  if (!fitsSpace(it, space)) return it.placement === 'wall' ? 'Duvar süsü yalnızca odalara asılır' : isOutdoor(space) ? 'Bu eşya içeride durur' : 'Bu eşya dışarıda durur';
+  if (!fitsSpace(it, space, ctx)) return it.placement === 'wall' ? 'Duvar süsü yalnızca odalara asılır' : isOutdoor(space, ctx) ? 'Bu eşya içeride durur' : 'Bu eşya terasta durur';
   if (![p.x, p.y, p.rot].every(Number.isInteger)) return 'Yerleşim geçersiz';
   const { w, h } = spaceSize(space, ctx);
   if (it.placement === 'wall') {
@@ -354,7 +438,7 @@ function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken
       if (blocked.has(key(t.x, t.y))) return 'Duvarın bu kısmı boş değil';
       if (taken.duvar.has(key(t.x, t.y))) return 'Duvarın bu kısmı dolu';
     }
-    return { layer: 'duvar', tiles };
+    return { layer: 'duvar', keys: takenKeys('duvar', tiles) };
   }
   if (!(it.rotations ?? [0]).includes(p.rot)) return 'Bu eşya böyle döndürülemez';
   const tiles = footprint(it, p.x, p.y, p.rot);
@@ -365,12 +449,14 @@ function placeProblem(space: SpaceId, ctx: WorldCtx, p: PlacedItem, taken: Taken
   }
   const layer = layerOf(it, tiles, surfaces);
   if (!layer) return 'Yarısı yüzeyin dışında kalıyor';
-  for (const t of tiles) if (taken[layer].has(key(t.x, t.y))) return 'Bu karo dolu';
-  return { layer, tiles };
+  if (p.sub !== undefined && (!it.quarter || layer !== 'ust' || !validSub(p.sub))) return 'Yerleşim geçersiz';
+  const keys = takenKeys(layer, tiles, p.sub);
+  for (const k of keys) if (taken[layer].has(k)) return 'Bu karo dolu';
+  return { layer, keys };
 }
 
 // ---------- Eşyanın kendi durumu ----------
-const PLACED_KEYS = new Set(['item', 'x', 'y', 'rot', 'on', 'open', 'color', 'stored', 'fed']);
+const PLACED_KEYS = new Set(['item', 'x', 'y', 'rot', 'on', 'open', 'color', 'stored', 'fed', 'sub']);
 
 /** İçine konabilir mi: yerleştirilebilen, kendisi depo olmayan eşya (kaplama, kıyafet, canlı konmaz) */
 export const storable = (s: Item | undefined): s is Item => !!s && !!s.placement && !has(s, 'STORAGE');
@@ -403,9 +489,8 @@ export function itemCounts(layout: SpaceLayout | undefined): Map<string, number>
 
 function monthProblem(space: SpaceId, ctx: WorldCtx): string | null {
   if (isRoom(space)) return roomOf(space, ctx) ? null : 'Bu oda yok';
-  if (!isMonthSpace(space)) return null;
-  const st = monthState(space.slice(2), ctx.today);
-  return st === 'out' ? 'Bu ayın bahçesi yok' : st === 'locked' ? 'Bu ayın bahçesi henüz açılmadı' : null;
+  // Ağaç bahçeleri yalnızca ağaçların: eşya konmaz (Bahçem sayfası)
+  return isMonthSpace(space) ? 'Ağaç bahçesi süslenmez' : null;
 }
 
 /**
@@ -426,14 +511,14 @@ export function layoutProblem(
     const id = layout[slot];
     if (id == null) continue;
     const it = itemById(id);
-    if (!isIndoor(space) || !it || it.category !== cat || ownedCount(it) < 1) return { message: 'Bu kaplama sende yok' };
+    if (!isIndoor(space, ctx) || !it || it.category !== cat || ownedCount(it) < 1) return { message: 'Bu kaplama sende yok' };
   }
   const surfaces = surfaceTiles(layout.items);
   const taken = emptyTaken();
   for (const [index, p] of layout.items.entries()) {
     const r = placeProblem(space, ctx, p, taken, surfaces);
     if (typeof r === 'string') return { message: r, index };
-    r.tiles.forEach((t) => taken[r.layer].add(key(t.x, t.y)));
+    r.keys.forEach((k) => taken[r.layer].add(k));
   }
   for (const [id, n] of itemCounts(layout)) {
     if (n + usedElsewhere(id) > ownedCount(itemById(id)!)) {
@@ -454,9 +539,54 @@ export function canPlaceAt(space: SpaceId, layout: SpaceLayout, ctx: WorldCtx, p
     if (!it) continue;
     const tiles = tilesOf(it, q);
     const layer = layerOf(it, tiles, surfaces);
-    if (layer) tiles.forEach((t) => taken[layer].add(key(t.x, t.y)));
+    if (layer) takenKeys(layer, tiles, q.sub).forEach((k) => taken[layer].add(k));
   }
   return typeof placeProblem(space, ctx, p, taken, surfaces) !== 'string';
+}
+
+/**
+ * Masa üstü mıknatısı: elde tutulan küçük eşya (ON_SURFACE) bir yüzeyin (STACKABLE) üstüne ya da yarım karo
+ * yakınına gelince yüzeyin en yakın boş yerine oturur; çeyrek eşyası (kupa, lamba) karonun en yakın çeyreğine.
+ * Boş yer yoksa en yakın yer (kırmızı önizleme). `pointAt`: imlecin o yüzeyin üst yüksekliğindeki yeri (alanın
+ * yerel karo koordinatında, kesirli; kamera eğik baktığı için her yüzeyin yüksekliğine göre ayrı). Yakında
+ * yüzey yoksa null (eşya imlecin altındaki karoya).
+ */
+export function snapToSurface(
+  space: SpaceId,
+  layout: SpaceLayout,
+  ctx: WorldCtx,
+  held: { item: string; rot: number },
+  pointAt: (surface: PlacedItem) => { x: number; y: number },
+): (Tile & { sub?: number }) | null {
+  const it = itemById(held.item);
+  if (!it || !has(it, 'ON_SURFACE') || it.placement === 'wall') return null;
+  const [w, h] = footSize(it, held.rot);
+  let best: (Tile & { sub?: number }) | null = null;
+  let bestD = Infinity;
+  let bestFree = false;
+  for (const q of layout.items) {
+    const s = itemById(q.item);
+    if (!s || !has(s, 'STACKABLE') || s.placement === 'wall') continue;
+    const pt = pointAt(q);
+    const [sw, sh] = footSize(s, q.rot);
+    if (pt.x < q.x - 0.5 || pt.y < q.y - 0.5 || pt.x > q.x + sw + 0.5 || pt.y > q.y + sh + 0.5) continue;
+    for (let y = q.y; y + h <= q.y + sh; y++) {
+      for (let x = q.x; x + w <= q.x + sw; x++) {
+        for (const sub of it.quarter ? SUBS : [undefined]) {
+          const [ox, oy] = sub === undefined ? [0, 0] : subOffset(sub);
+          const d = Math.hypot(x + w / 2 + ox - pt.x, y + h / 2 + oy - pt.y);
+          const cand: PlacedItem = { item: held.item, x, y, rot: held.rot, ...(sub === undefined ? {} : { sub }) };
+          const free = canPlaceAt(space, layout, ctx, cand);
+          if ((free && !bestFree) || (free === bestFree && d < bestD)) {
+            best = sub === undefined ? { x, y } : { x, y, sub };
+            bestD = d;
+            bestFree = free;
+          }
+        }
+      }
+    }
+  }
+  return best;
 }
 
 /** Bir yüzeyin (masa, sehpa) üstünde duran küçük eşyaların sırası: yüzey kaldırılınca envantere dönerler */
@@ -498,13 +628,14 @@ export function rotateItemAt(space: SpaceId, layout: SpaceLayout, index: number,
 }
 
 /** Eşyayı aynı alanda başka bir karoya taşı (üstündekiler envantere döner); konamıyorsa null */
-export function moveItemTo(space: SpaceId, layout: SpaceLayout, index: number, to: Tile, rot: number, ctx: WorldCtx): SpaceLayout | null {
+export function moveItemTo(space: SpaceId, layout: SpaceLayout, index: number, to: Tile & { sub?: number }, rot: number, ctx: WorldCtx): SpaceLayout | null {
   const p = layout.items[index];
   const it = p && itemById(p.item);
   if (!it) return null;
   const base = removeItemAt(layout, index);
   // Durumu (açık, renk, içindekiler) onunla gider
-  const q: PlacedItem = { ...p, x: to.x, y: to.y, rot: it.placement === 'wall' ? wallRot(to.x, to.y) : rot };
+  const { sub: _sub, ...state } = p;
+  const q: PlacedItem = { ...state, x: to.x, y: to.y, rot: it.placement === 'wall' ? wallRot(to.x, to.y) : rot, ...(to.sub === undefined ? {} : { sub: to.sub }) };
   return canPlaceAt(space, base, ctx, q) ? { ...base, items: [...base.items, q] } : null;
 }
 
@@ -534,6 +665,7 @@ export function sanitizeLayout(
   usedElsewhere: (id: string) => number = () => 0,
 ): { layout: SpaceLayout; dropped: number } {
   const items = Array.isArray(layout.items) ? layout.items : [];
+  if (isMonthSpace(space)) return { layout: { items: [] }, dropped: items.length };
   const surfaces = surfaceTiles(items);
   const taken = emptyTaken();
   const used = new Map<string, number>();
@@ -548,19 +680,25 @@ export function sanitizeLayout(
     const it = itemById(raw?.item);
     if (!it) continue;
     // Uymayan durum alanları atılır, eşya kalır; içindekilerden sahip olunmayanlar envantere döner
-    const p = cleanState(it, raw);
-    const r = placeProblem(space, ctx, p, taken, surfaces);
+    let p = cleanState(it, raw);
+    let r = placeProblem(space, ctx, p, taken, surfaces);
+    // Çeyreği artık geçmiyorsa (yüzey kalktı, çeyrek dolu) bütün karo olarak denenir
+    if (typeof r === 'string' && p.sub !== undefined) {
+      const { sub: _sub, ...rest } = p;
+      p = rest;
+      r = placeProblem(space, ctx, p, taken, surfaces);
+    }
     if (typeof r === 'string' || !take(p.item, it)) continue;
     if (p.stored) p.stored = p.stored.filter((id) => take(id, itemById(id)!));
-    r.tiles.forEach((t) => taken[r.layer].add(key(t.x, t.y)));
+    r.keys.forEach((k) => taken[r.layer].add(k));
     keep.push(p);
   }
   const cover = (id: string | null | undefined, cat: 'zemin' | 'duvar') => {
     const it = id ? itemById(id) : undefined;
-    return isIndoor(space) && it && it.category === cat && ownedCount(it) > 0 ? id : undefined;
+    return isIndoor(space, ctx) && it && it.category === cat && ownedCount(it) > 0 ? id : undefined;
   };
   const out: SpaceLayout = { items: keep };
-  if (isIndoor(space)) {
+  if (isIndoor(space, ctx)) {
     // Eklenen odalarda kaplama seçilmemişse odanın kendi görünüşü kalır (defaultCover; sahip olmak gerekmez)
     const floor = cover(layout.floor, 'zemin') ?? (isRoom(space) ? undefined : 'zemin:ahsap');
     const wall = cover(layout.wall, 'duvar') ?? (isRoom(space) ? undefined : 'duvar:krem');
@@ -582,6 +720,7 @@ function cleanState(it: Item, p: PlacedItem): PlacedItem {
     const s = p.stored.filter((id) => typeof id === 'string' && storable(itemById(id))).slice(0, it.capacity ?? 0);
     if (s.length) out.stored = s;
   }
+  if (it.quarter && validSub(p.sub)) out.sub = p.sub;
   return out;
 }
 
@@ -604,6 +743,40 @@ export function seatOf(item: Item, p: PlacedItem): { kind: Pose; x: number; z: n
   const f = FRONT[p.rot] ?? FRONT[0];
   const shift = kind === 'lie' ? 0.55 : kind === 'sit' ? -0.05 : 0;
   return { kind, x: p.x + w / 2 + f.x * shift, z: p.y + h / 2 + f.y * shift, y: item.seat ?? (kind === 'lie' ? 0.5 : 0.45), face };
+}
+
+/**
+ * Ders çalışma yeri (STUDY masası): masanın önünde, masaya dönük oturuş (alanın yerel koordinatında 3D konum).
+ * Önündeki karoda sandalye (SIT) varsa onun oturağında; yoksa tabure çizilir (`stool`). Masa değilse null.
+ */
+export function studySpot(layout: SpaceLayout, index: number): { x: number; z: number; y: number; face: number; stool: boolean } | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it || !has(it, 'STUDY')) return null;
+  const [w, h] = footSize(it, p.rot);
+  const f = FRONT[p.rot] ?? FRONT[0];
+  let x = p.x + w / 2 + f.x * (w / 2 + 0.42);
+  let z = p.y + h / 2 + f.y * (h / 2 + 0.42);
+  // Masanın önündeki şerit (ortadakiler önce): orada bir sandalye varsa onun karosunda oturulur
+  const strip: Tile[] = f.y
+    ? Array.from({ length: w }, (_, i) => ({ x: p.x + i, y: f.y > 0 ? p.y + h : p.y - 1 }))
+    : Array.from({ length: h }, (_, i) => ({ x: f.x > 0 ? p.x + w : p.x - 1, y: p.y + i }));
+  const mid = (strip.length - 1) / 2;
+  const off = (t: Tile) => Math.abs((f.y ? t.x - p.x : t.y - p.y) - mid);
+  strip.sort((a, b) => off(a) - off(b));
+  let chair: Item | undefined;
+  for (const t of strip) {
+    const q = layout.items.find((q) => {
+      const c = itemById(q.item);
+      return c && poseOf(c) === 'sit' && footprint(c, q.x, q.y, q.rot).some((u) => u.x === t.x && u.y === t.y);
+    });
+    if (!q) continue;
+    chair = itemById(q.item);
+    if (f.y) x = t.x + 0.5;
+    else z = t.y + 0.5;
+    break;
+  }
+  return { x, z, y: chair?.seat ?? 0.45, face: Math.PI - (p.rot * Math.PI) / 180, stool: !chair };
 }
 
 /**
@@ -642,7 +815,7 @@ export const isOpen = (item: Item, p: PlacedItem): boolean => (has(item, 'OPEN_C
 export const colorOf = (item: Item, p: PlacedItem): string | undefined => (has(item, 'CHANGE_COLOR') ? item.palette?.[p.color ?? 0] : undefined);
 
 /** Eşyanın eylemleri (seçenek çubuğundaki "Kullan" düğmeleri) */
-export type ActionId = 'sit' | 'lie' | 'swing' | 'stand' | 'toggle' | 'open' | 'color' | 'storage' | 'dispense' | 'sound' | 'feed' | 'books';
+export type ActionId = 'sit' | 'lie' | 'swing' | 'stand' | 'toggle' | 'open' | 'color' | 'storage' | 'dispense' | 'sound' | 'feed' | 'books' | 'music' | 'notes' | 'stats' | 'study';
 export interface ItemAction {
   id: ActionId;
   label: string;
@@ -665,7 +838,7 @@ export function itemActions(item: Item, p: PlacedItem, o: { posed: boolean; toda
   if (has(item, 'TOGGLE')) {
     const on = isOn(item, p);
     const label =
-      item.fx === 'fire' ? (on ? '🔥 Söndür' : '🔥 Yak') : item.fx === 'tv' ? (on ? '📺 Kapat' : '📺 Aç') : item.fx === 'anim' ? (on ? '⏹️ Durdur' : '▶️ Çalıştır') : on ? '💡 Kapat' : '💡 Aç';
+      item.fx === 'fire' ? (on ? '🔥 Söndür' : '🔥 Yak') : item.fx === 'tv' ? (on ? '📺 Kapat' : '📺 Aç') : item.fx === 'anim' ? (on ? '⏹️ Durdur' : '▶️ Çalıştır') : item.fx === 'steam' ? (on ? '⏹️ Kapat' : '♨️ Çalıştır') : on ? '💡 Kapat' : '💡 Aç';
     out.push({ id: 'toggle', label });
   }
   if (has(item, 'GATE')) out.push({ id: 'open', label: isOpen(item, p) ? '🚧 Kapıyı kapat' : '🚪 Kapıyı aç' });
@@ -676,6 +849,10 @@ export function itemActions(item: Item, p: PlacedItem, o: { posed: boolean; toda
   if (has(item, 'PLAY_SOUND')) out.push({ id: 'sound', label: '🎵 Çal' });
   if (has(item, 'INTERACT_PET') && p.fed !== o.today) out.push({ id: 'feed', label: '🥣 Mama koy' });
   if (has(item, 'BOOKS')) out.push({ id: 'books', label: '📚 Rafları aç' });
+  if (has(item, 'STATS')) out.push({ id: 'stats', label: '📊 Kayıtlarım' });
+  if (has(item, 'MUSIC')) out.push({ id: 'music', label: '🎧 Müzik' });
+  if (has(item, 'NOTES')) out.push({ id: 'notes', label: '📌 Notlarım' });
+  if (has(item, 'STUDY')) out.push({ id: 'study', label: '📖 Ders çalış' });
   return out;
 }
 
@@ -807,6 +984,61 @@ export function findPath(from: Tile, to: Tile, w: number, h: number, blocked: Se
   return null;
 }
 
+/**
+ * Yolu yumuşatır (ip çekme): karo karo A* yolundan, arası düz çizgiyle yürünebilen ara noktaları atar; karakter
+ * köşelerde zikzak yapmadan çapraz gider. Çizgi (ve karakterin iki yanı, ±0.28) yalnızca boş karolardan geçmeli ve
+ * her karo geçişi `step` kuralına uymalı (duvar/çit kapı dışında aşılmaz). Son karo hep kalır.
+ */
+export function smoothPath(from: Tile, path: Tile[], blocked: Set<string>, step?: Step): Tile[] {
+  if (path.length < 2) return path;
+  const ok = (a: Tile, b: Tile) => !step || step(a, b);
+  /** a karosundan b karosuna (komşu ya da çapraz) geçilebilir mi */
+  const pass = (a: Tile, b: Tile) => {
+    if (blocked.has(key(b.x, b.y))) return false;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (Math.abs(dx) + Math.abs(dy) <= 1) return ok(a, b);
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) return false;
+    // Çapraz: iki ara karo da boş ve geçişler izinli olmalı (köşeden sıyrılmasın)
+    const m1 = { x: b.x, y: a.y };
+    const m2 = { x: a.x, y: b.y };
+    return !blocked.has(key(m1.x, m1.y)) && !blocked.has(key(m2.x, m2.y)) && ok(a, m1) && ok(m1, b) && ok(a, m2) && ok(m2, b);
+  };
+  const line = (a: Tile, b: Tile, off: number) => {
+    const ax = a.x + 0.5;
+    const ay = a.y + 0.5;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (!len) return true;
+    const nx = (-dy / len) * off;
+    const ny = (dx / len) * off;
+    const n = Math.ceil(len * 8);
+    let prev: Tile = { x: Math.floor(ax + nx), y: Math.floor(ay + ny) };
+    if (blocked.has(key(prev.x, prev.y))) return false;
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      const cur = { x: Math.floor(ax + dx * t + nx), y: Math.floor(ay + dy * t + ny) };
+      if (cur.x === prev.x && cur.y === prev.y) continue;
+      if (!pass(prev, cur)) return false;
+      prev = cur;
+    }
+    return true;
+  };
+  const sees = (a: Tile, b: Tile) => line(a, b, 0) && line(a, b, 0.28) && line(a, b, -0.28);
+  const out: Tile[] = [];
+  let anchor = from;
+  let i = 0;
+  while (i < path.length) {
+    let j = i;
+    while (j + 1 < path.length && sees(anchor, path[j + 1])) j++;
+    out.push(path[j]);
+    anchor = path[j];
+    i = j + 1;
+  }
+  return out;
+}
+
 // ---------- Ağaçlar: her gün bir ağaç ----------
 export interface DayTree {
   /** Gün (YYYY-MM-DD): ağacın kimliği */
@@ -822,9 +1054,7 @@ export interface DayTree {
   minutes: number;
   /** Bunun elle yazılan kısmı */
   manual: number;
-  /** Yalnızca yarım kalmış seans: kuru ağaç */
-  dry: boolean;
-  /** Çok uzun gün: ışıltılı yapraklar */
+  /** Çok uzun gün (Nadir): ışıltılı yapraklar */
   glow: boolean;
   /** Seri günü: dibinde çiçekler */
   flowers: boolean;
@@ -838,8 +1068,10 @@ export function stageOf(minutes: number): { stage: StageDef; index: number } {
   return { stage: W.stages[index], index };
 }
 
-/** Günün ağaç türü: tarihten tohumlanır (hep aynı); mevsiminde olan türler daha sık çıkar */
-export function speciesOf(date: string): SpeciesDef {
+/** Günün ağaç türü: o gün seçilen tohum (seeds.ts), yoksa tarihten tohumlanır (hep aynı; mevsiminde olan türler daha sık çıkar) */
+export function speciesOf(date: string, seeds?: Record<string, string>): SpeciesDef {
+  const chosen = seeds?.[date] && W.species.find((s) => s.id === seeds[date]);
+  if (chosen) return chosen;
   const month = Number(date.slice(5, 7));
   const weight = (s: SpeciesDef) => (!s.months ? 1 : s.months.includes(month) ? 3 : 0.3);
   const total = W.species.reduce((n, s) => n + weight(s), 0);
@@ -854,11 +1086,12 @@ export function speciesOf(date: string): SpeciesDef {
 export const treeLabel = (species: Pick<SpeciesDef, 'name'>, stage: StageDef) => stage.label.replace('{s}', lower(species.name)).replace('{S}', species.name);
 
 /**
- * Bütün ağaçlar: çalışma kaydı olan her gün bir ağaç (sayaç da elle yazılan süre de sayılır), türü tarihten,
- * büyüklüğü günün toplamından. Kaydı olmayan ama uzun süren yarım seansı olan gün kuru ağaçtır.
+ * Bütün ağaçlar: çalışma kaydı olan her gün bir ağaç (sayaç da elle yazılan süre de sayılır), türü seçilen tohumdan
+ * ya da tarihten, büyüklüğü günün toplamından (Fidan · Genç · Tam · Nadir). Yarım kalan seans ağaç dikmez, kurutmaz da.
  * @param streakDays seri bonusu alan günler (dibinde çiçek açar)
+ * @param seeds tarih → seçilen tohumun türü
  */
-export function dayTrees(logs: StudyLog[], abandoned: Abandoned[], streakDays: Set<string> = new Set()): DayTree[] {
+export function dayTrees(logs: StudyLog[], streakDays: Set<string> = new Set(), seeds?: Record<string, string>): DayTree[] {
   const days = new Map<string, { minutes: number; manual: number }>();
   for (const l of logs) {
     const d = days.get(l.date) ?? { minutes: 0, manual: 0 };
@@ -869,7 +1102,7 @@ export function dayTrees(logs: StudyLog[], abandoned: Abandoned[], streakDays: S
   const out: DayTree[] = [];
   for (const [date, d] of days) {
     if (d.minutes <= 0) continue;
-    const species = speciesOf(date);
+    const species = speciesOf(date, seeds);
     const { stage, index } = stageOf(d.minutes);
     out.push({
       id: date,
@@ -882,18 +1115,9 @@ export function dayTrees(logs: StudyLog[], abandoned: Abandoned[], streakDays: S
       icon: stage.icon ?? species.icon,
       minutes: d.minutes,
       manual: d.manual,
-      dry: false,
       glow: d.minutes >= W.glowMinutes,
       flowers: streakDays.has(date),
     });
-  }
-  const dryDays = new Map<string, number>();
-  for (const a of abandoned) {
-    if (a.minutes >= CFG.session.wiltMinutes && !days.has(a.date)) dryDays.set(a.date, Math.max(dryDays.get(a.date) ?? 0, a.minutes));
-  }
-  const dry = { ...W.dry, months: undefined } as SpeciesDef;
-  for (const [date, minutes] of dryDays) {
-    out.push({ id: date, date, month: date.slice(0, 7), species: dry, stage: W.stages[2], stageIndex: 2, name: W.dry.name, icon: W.dry.icon, minutes, manual: 0, dry: true, glow: false, flowers: false });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -919,7 +1143,7 @@ export const DEFAULT_ROOM: SpaceLayout = {
   ],
 };
 
-/** Kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez) */
+/** Kaplama seçilmemişken görünen zemin/duvar (sahip olmak gerekmez; terasta boş: çim zemin, duvar yok) */
 export function defaultCover(space: SpaceId, slot: 'floor' | 'wall', ctx: Pick<WorldCtx, 'rooms'>): string {
   const r = isRoom(space) ? roomOf(space, ctx) : undefined;
   if (r) return kindById(r.kind)[slot];

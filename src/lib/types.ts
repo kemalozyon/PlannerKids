@@ -1,5 +1,5 @@
 import type { SessionState, StudySession } from './session';
-import type { RoomSize } from './config';
+import type { RoomCells, RoomSize } from './config';
 import type { SpaceId, SpaceLayout } from './world';
 import type { AvatarLook } from './avatar';
 
@@ -10,7 +10,7 @@ export interface Course {
   created_at: string;
 }
 
-/** timer: sunucuda ölçülen seans · manual: elle yazılan (Elmas ve ağaç vermez) · legacy: 0009'dan önceki kayıt */
+/** timer: sunucuda ölçülen seans · manual: elle yazılan (ağaç ve düşük tavanlı 💎 verir; seri, sandık ve arazi saymaz) · legacy: 0009'dan önceki kayıt */
 export type LogSource = 'timer' | 'manual' | 'legacy';
 
 export interface StudyLog {
@@ -32,6 +32,14 @@ export interface Task {
   date: string;
   done: boolean;
   created_at: string;
+  /** Aile panelinden verildi: bitince 💎 kazandırır (günün ilk elmas.task.perDay aile görevi), çocuk silemez */
+  from_parent?: boolean;
+}
+
+/** Günün tohumu: o günün ağacının türü (yalnızca o gün, sahip olunan ve mevsiminde olan tohum) */
+export interface DaySeed {
+  date: string;
+  species: string;
 }
 
 export interface Reflection {
@@ -48,7 +56,7 @@ export interface Api {
   deleteCourse(id: string): Promise<void>;
 
   listLogs(from: string, to: string): Promise<StudyLog[]>;
-  /** Elle yazılan süre: kayda geçer ama Elmas ve ağaç vermez (source = 'manual') */
+  /** Elle yazılan süre (source = 'manual'): ağaç ve günde en çok elmas.manual.capPerDay 💎 verir */
   addLog(log: Pick<StudyLog, 'course_id' | 'date' | 'duration_minutes' | 'note'>): Promise<StudyLog>;
   deleteLog(id: string): Promise<void>;
 
@@ -63,11 +71,13 @@ export interface Api {
   resumeSession(id: string): Promise<SessionState>;
   /** Not zorunlu; dakikayı sunucu hesaplar, kaydı yazar ve Elmas'ı günceller */
   finishSession(id: string, courseId: string, note: string): Promise<{ session: StudySession; log: StudyLog }>;
-  /** Yarıda bırakılır (uzun sürdüyse kuru ağaç) */
+  /** Yarıda bırakılır (kaydedilmez) */
   abandonSession(id: string): Promise<StudySession>;
 
   listTasks(date: string): Promise<Task[]>;
-  addTask(task: Pick<Task, 'title' | 'date' | 'course_id'>): Promise<Task>;
+  addTask(task: Pick<Task, 'title' | 'date' | 'course_id'> & { from_parent?: boolean }): Promise<Task>;
+  /** [from, to] aralığındaki aile görevleri (aile paneli) */
+  listParentTasks(from: string, to: string): Promise<Task[]>;
   setTaskDone(id: string, done: boolean): Promise<void>;
   deleteTask(id: string): Promise<void>;
 
@@ -108,7 +118,18 @@ export interface Api {
   reactNote(id: string, reaction: NoteReaction): Promise<void>;
   deleteNote(id: string): Promise<void>;
 
-  /** Yarıda bırakılan seanslar (ormanda kuru ağaç) */
+  /** Mantar panodaki notlar (eskiden yeniye) */
+  listBoardNotes(): Promise<BoardNote[]>;
+  addBoardNote(text: string, color: number): Promise<BoardNote>;
+  updateBoardNote(id: string, patch: Partial<Pick<BoardNote, 'text' | 'color' | 'done'>>): Promise<void>;
+  deleteBoardNote(id: string): Promise<void>;
+
+  /** Seçilen günlük tohumlar (0031 yoksa hata) */
+  listDaySeeds(): Promise<DaySeed[]>;
+  /** Günün tohumunu seçer ya da değiştirir (yalnızca bugün; sahip olunan, mevsiminde olan tohum) */
+  setDaySeed(date: string, species: string): Promise<void>;
+
+  /** Yarıda bırakılan seanslar (yalnızca kayıt; oyunda kullanılmıyor) */
   listAbandoned(): Promise<Abandoned[]>;
   addAbandoned(a: Pick<Abandoned, 'date' | 'minutes'>): Promise<Abandoned>;
 
@@ -130,6 +151,12 @@ export interface Api {
   buyItem(itemId: string): Promise<OwnedItem>;
   /** Haftalık sandık: hafta hedefi tuttuysa eşya bir kez verilir */
   openChest(week: string, itemId: string): Promise<OwnedItem>;
+  /** Nadir ağaç ödülü: o gün yeterince sayaçla çalışıldıysa günün eşyası bir kez verilir (ref = tarih) */
+  openDrop(date: string, itemId: string): Promise<OwnedItem>;
+  /** Ağaçlarda bekleyen Elmas (güne bağlı kazançlar, elmas.claim.from'dan beri; sunucuda economy_pending) */
+  listTreeElmas(): Promise<TreeElmas[]>;
+  /** Bir günün ağacındaki Elması al: deftere yazılır (claim_day); alınan tutar */
+  claimDay(date: string): Promise<number>;
   getEquipped(): Promise<Equipped | null>;
   saveEquipped(e: Equipped): Promise<void>;
 
@@ -153,15 +180,17 @@ export interface UserRoom {
   id: string;
   /** Oda türü (economy.json → world.rooms) */
   kind: string;
-  /** Şablon (world.roomShapes) ve boyutu */
+  /** Başlangıç şablonu (world.roomShapes) ve boyutu */
   shape: string;
   size: RoomSize;
+  /** Blok düzenleyicide çizilen şekil; yoksa şablonun kendisi */
+  cells?: RoomCells | null;
   name: string;
   pos: number;
 }
-export type RoomInput = Pick<UserRoom, 'kind' | 'shape' | 'size' | 'name'>;
+export type RoomInput = Pick<UserRoom, 'kind' | 'shape' | 'size' | 'name'> & { cells?: RoomCells | null };
 
-/** Yarıda bırakılan seans: ormanda kuru ağaç olarak kalır (session_abandon yazar). */
+/** Yarıda bırakılan seans (session_abandon yazar). Eskiden kuru ağaç olurdu; artık oyunda kullanılmıyor. */
 export interface Abandoned {
   id: string;
   /** Sayacın başladığı gün */
@@ -198,6 +227,21 @@ export interface ParentNote {
   id: string;
   text: string;
   reaction: NoteReaction | null;
+  created_at: string;
+}
+
+/** Post-it renkleri (BoardNote.color bu dizinin sırası) */
+export const BOARD_COLORS = ['#ffe58a', '#ffb3c1', '#a8e6cf', '#a0d2ff', '#d7b8ff'] as const;
+/** Panoda en fazla bu kadar not */
+export const BOARD_MAX = 30;
+export const BOARD_TEXT_MAX = 120;
+
+/** Mantar panodaki not (çocuğun kendi hatırlatıcısı) */
+export interface BoardNote {
+  id: string;
+  text: string;
+  color: number;
+  done: boolean;
   created_at: string;
 }
 
@@ -293,9 +337,10 @@ export const DEFAULT_READING_GOALS: ReadingGoals = { monthly_books: 2, daily_pag
 // ---------- Oyun ekonomisi (0008_economy.sql, 0010_economy_v2.sql) ----------
 /** 'crystal' = 💎 Elmas (yalnızca çalışarak kazanılır, tek para) · 'star' = gezintide toplanan ⭐ (sayaç, harcanmaz) */
 export type Currency = 'crystal' | 'star';
-/** study: günün dakikaları · streak: seri kademesi · plan: tamamlanan planlı gün · reflection: öz değerlendirme ·
- *  book: biten kitap · quest: görev · star: toplanan yıldız · gift: ebeveyn hediyesi · buy: harcama */
-export type LedgerKind = 'study' | 'streak' | 'plan' | 'reflection' | 'book' | 'quest' | 'star' | 'gift' | 'buy';
+/** study: günün dakikaları · live: canlı seans bonusu · manual: elle yazılan süre · task: aile görevi · streak: seri kademesi ·
+ *  plan: tamamlanan planlı gün · reflection: öz değerlendirme · book: biten kitap · quest: görev · star: toplanan yıldız ·
+ *  gift: ebeveyn hediyesi · buy: harcama */
+export type LedgerKind = 'study' | 'live' | 'manual' | 'task' | 'streak' | 'plan' | 'reflection' | 'book' | 'quest' | 'star' | 'gift' | 'buy';
 
 /** Elmas/yıldız defterinin bir satırı. Kazanç artı, harcama eksi. (currency, kind, ref) tektir. */
 export interface LedgerEntry {
@@ -310,11 +355,17 @@ export interface LedgerEntry {
 
 export type NewLedgerEntry = Pick<LedgerEntry, 'currency' | 'kind' | 'ref' | 'amount'> & { note?: string | null };
 
-/** Satın alınan ya da sandıktan çıkan eşya. Yapı ve süslerden birden fazla olabilir. */
+/** Bir günün ağacında bekleyen Elmas */
+export interface TreeElmas {
+  date: string;
+  amount: number;
+}
+
+/** Satın alınan, sandıktan ya da nadir ağaç gününden çıkan eşya. Yapı ve süslerden birden fazla olabilir. */
 export interface OwnedItem {
   id: string;
   item_id: string;
-  via: 'buy' | 'chest';
+  via: 'buy' | 'chest' | 'drop';
   /** Sandıkta haftanın pazartesisi */
   ref: string | null;
   created_at: string;

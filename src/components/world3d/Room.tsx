@@ -1,9 +1,9 @@
-// Odanın içi: desenli zemin, arkadaki iki duvar (kaplama rengi ve deseniyle), kapılar ve pencereler.
-// Kamera öndeki köşeden baktığı için içeriden yalnızca arka duvarlar çizilir (izometrik oda, Habbo gibi); ön ve
-// doğu duvarları, çatı evin dış kabuğundadır (House.tsx). Odanın sol duvarı kütüphaneyle aradaki iç duvardır:
-// kenarı 'w' olan kapı orada gerçek bir açıklıktır, karakter içinden yürüyerek geçer.
+// Odanın içi (Habbo gibi boşlukta yüzen ada): kalın desenli zemin, yalnızca arkadaki iki duvar (kaplama rengi ve
+// deseniyle), kapılar ve pencereler. Kamera hep güneydoğudan bakar, ön ve doğu tarafta duvar yoktur.
+// Kenarı 'w' ya da 'n' olan kapı duvarda bir açıklıktır; doğu/güney kenarındaki kapı yerde bir paspastır. Kapıya
+// dokununca karakter oraya yürür ve sayfa kapının götürdüğü odayı açar.
 // Kütüphane odasında arka duvar boyunca gömme raflar ve bitirilen kitaplar durur.
-// Eklenen odaların şekli olabilir (L, basamak…): zemin dikdörtgen parçalardan çizilir (`rects`), kesikler dışarısıdır.
+// Eklenen odaların şekli olabilir (L, basamak, blok düzenleyici): zemin dikdörtgen parçalardan çizilir (`rects`).
 import type { ThreeEvent } from '@react-three/fiber';
 import { useMemo } from 'react';
 import { Color, type Texture } from 'three';
@@ -30,16 +30,14 @@ export interface RoomProps {
   onBook?: (b: Book) => void;
   /** Pencereden görünen dış dünya (art.ts → windowTexture: gerçek saate göre) */
   view?: Texture;
-  /** Sol duvar (batıdaki odayla bölme) alçalsın: karakter batıdaki odadayken içerisi görünsün */
-  lowLeft?: boolean;
   /** Şekilli odanın zemin parçaları [x, y, en, boy]; yoksa bütün w×h */
   rects?: [number, number, number, number][];
 }
 
-/** Alçalan bölme duvarının yüksekliği */
-const LOW_WALL = 0.32;
+/** Zeminin kalınlığı (Habbo'daki gibi adanın kenarı görünür) */
+const SLAB = 0.42;
 
-export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view, lowLeft, rects }: RoomProps) {
+export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = [], reading = [], onBook, view, rects }: RoomProps) {
   const c1 = floor?.color ?? '#c89a6a';
   const c2 = floor?.color2 ?? c1;
   const wc = wall?.color ?? '#f3e6cf';
@@ -62,34 +60,34 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
   const gapsLeft = fixed.filter((f) => f.kind === 'door' && f.edge === 'w' && f.x === 0).map((f) => f.y);
   // Eski tip (kenarsız) kapılar duvara çizilir; kenarlı kapılardan yalnızca açıklık olanlar kasa ister
   const doors = fixed.filter((f) => f.kind === 'door' && !f.edge);
-  const openings = fixed.filter((f) => f.kind === 'door' && ((f.edge === 'n' && f.y === 0) || (f.edge === 'w' && f.x === 0 && !lowLeft)));
+  const openings = fixed.filter((f) => f.kind === 'door' && ((f.edge === 'n' && f.y === 0) || (f.edge === 'w' && f.x === 0)));
+  const mats = fixed.filter((f) => f.kind === 'door' && (f.edge === 'e' || f.edge === 's'));
   const windows = fixed.filter((f) => f.kind === 'window');
+  const side = new Color(c2).multiplyScalar(0.55).getStyle();
   const shelves = fixed.filter((f) => f.kind === 'shelf');
   return (
     <group>
       {/* Zemin (şekilli odada parça parça) */}
       {parts.map(([x, y, pw, ph], i) => (
         <group key={`${x},${y}`}>
-          <mesh position={[x + pw / 2, -0.05, y + ph / 2]} receiveShadow>
-            <boxGeometry args={[pw, 0.1, ph]} />
-            <meshStandardMaterial color={c2} />
+          <mesh position={[x + pw / 2, -SLAB / 2, y + ph / 2]} receiveShadow>
+            <boxGeometry args={[pw, SLAB, ph]} />
+            <meshStandardMaterial color={side} />
           </mesh>
           <mesh position={[x + pw / 2, 0.001, y + ph / 2]} rotation-x={-Math.PI / 2} receiveShadow>
             <planeGeometry args={[pw, ph]} />
-            <meshStandardMaterial map={floorMaps[i]} />
+            <meshStandardMaterial map={floorMaps[i]} roughness={0.82} polygonOffset polygonOffsetFactor={-1} />
           </mesh>
         </group>
       ))}
       {/* Arka duvar (z = 0) ve sol duvar (x = 0), kapı açıklıklarıyla parça parça */}
       <WallStrip len={w} gaps={gapsBack} side="back" wall={wall} c1={wc} c2={wc2} />
-      <group scale-y={lowLeft ? LOW_WALL / WALL_H : 1}>
-        <WallStrip len={h} gaps={gapsLeft} side="left" wall={wall} c1={wc} c2={wc2} />
-      </group>
       <mesh position={[w / 2 - T / 2, WALL_H + 0.03, -T / 2]}>
         <boxGeometry args={[w + T * 2, 0.06, T + 0.04]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>
-      <mesh position={[-T / 2, (lowLeft ? LOW_WALL : WALL_H) + 0.03, h / 2]}>
+      <WallStrip len={h} gaps={gapsLeft} side="left" wall={wall} c1={wc} c2={wc2} />
+      <mesh position={[-T / 2, WALL_H + 0.03, h / 2]}>
         <boxGeometry args={[T + 0.04, 0.06, h]} />
         <meshStandardMaterial color="#8a6a4a" />
       </mesh>
@@ -101,6 +99,9 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
       ))}
       {openings.map((d) => (
         <Doorway key={`o${d.x},${d.y}`} d={d} onDoor={onDoor} />
+      ))}
+      {mats.map((d) => (
+        <DoorMat key={`m${d.x},${d.y}`} d={d} onDoor={onDoor} />
       ))}
       {shelves.map((f) => (
         <group key={`${f.x},${f.y}`} position={[f.x + (f.w ?? 1) / 2, 0, 0.42]}>
@@ -157,7 +158,7 @@ function WallStrip({ len, gaps, side, wall, c1, c2 }: { len: number; gaps: numbe
             </mesh>
             <mesh position={at(a, b, WALL_H / 2, 0.001)} rotation-y={back ? 0 : Math.PI / 2} receiveShadow>
               <planeGeometry args={[n, WALL_H]} />
-              <meshStandardMaterial map={maps[i]} color={back ? '#ffffff' : '#e6e6e6'} />
+              <meshStandardMaterial map={maps[i]} color={back ? '#ffffff' : '#e6e6e6'} polygonOffset polygonOffsetFactor={-1} />
             </mesh>
             {/* Süpürgelik */}
             <mesh position={at(a, b, 0.06, 0.012)}>
@@ -211,6 +212,36 @@ function Doorway({ d, onDoor }: { d: FixedTile; onDoor: (d: FixedTile) => void }
       <mesh position={[0, 0.006, 0.35]} rotation-x={-Math.PI / 2}>
         <planeGeometry args={[0.8, 0.5]} />
         <meshStandardMaterial color={d.to === 'library' ? '#c9b6ff' : '#9fd39a'} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Duvarı olmayan kenardaki kapı (doğu/güney, terasta hepsi): yerde ok işaretli bir paspas. Dokununca karakter oraya
+ * yürür, sayfa kapının götürdüğü odayı açar.
+ */
+export function DoorMat({ d, onDoor }: { d: FixedTile; onDoor: (d: FixedTile) => void }) {
+  const click = (e: ThreeEvent<MouseEvent>) => {
+    if (!isTap(e)) return;
+    e.stopPropagation();
+    onDoor(d);
+  };
+  // Okun yönü: kapının açıldığı kenar
+  const rot = { n: Math.PI, s: 0, e: Math.PI / 2, w: -Math.PI / 2 }[d.edge ?? 's'];
+  return (
+    <group position={[d.x + 0.5, 0.012, d.y + 0.5]} onClick={click}>
+      <mesh rotation-x={-Math.PI / 2}>
+        <planeGeometry args={[0.86, 0.86]} />
+        <meshStandardMaterial color="#6b4a2f" />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.004}>
+        <planeGeometry args={[0.74, 0.74]} />
+        <meshStandardMaterial color="#9fd39a" />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, rot]} position-y={0.008}>
+        <circleGeometry args={[0.22, 3]} />
+        <meshStandardMaterial color="#ffffff" />
       </mesh>
     </group>
   );

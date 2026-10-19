@@ -12,7 +12,7 @@ export function B({ p, s, c, glow, line = true }: { p: V3; s: V3; c: string; glo
   return (
     <mesh position={p} castShadow receiveShadow>
       <boxGeometry args={s} />
-      <meshStandardMaterial color={c} emissive={glow ? c : '#000000'} emissiveIntensity={glow ? 0.8 : 0} />
+      <meshStandardMaterial color={c} roughness={0.68} emissive={glow ? c : '#000000'} emissiveIntensity={glow ? 0.8 : 0} />
       {line && <Outlines thickness={0.018} color={INK} />}
     </mesh>
   );
@@ -23,7 +23,7 @@ export function C({ p, r, h, c, r2, seg = 16, glow }: { p: V3; r: number; h: num
   return (
     <mesh position={p} castShadow>
       <cylinderGeometry args={[r2 ?? r, r, h, seg]} />
-      <meshStandardMaterial color={c} emissive={glow ? c : '#000000'} emissiveIntensity={glow ? 0.8 : 0} />
+      <meshStandardMaterial color={c} roughness={0.6} emissive={glow ? c : '#000000'} emissiveIntensity={glow ? 0.8 : 0} />
       <Outlines thickness={0.018} color={INK} />
     </mesh>
   );
@@ -34,7 +34,7 @@ export function S({ p, r, c, sy = 1 }: { p: V3; r: number; c: string; sy?: numbe
   return (
     <mesh position={p} scale={[1, sy, 1]} castShadow>
       <sphereGeometry args={[r, 16, 12]} />
-      <meshStandardMaterial color={c} flatShading />
+      <meshStandardMaterial color={c} roughness={0.6} flatShading />
       <Outlines thickness={0.018} color={INK} />
     </mesh>
   );

@@ -26,7 +26,7 @@ export function sampleInput(over: Partial<ReportInput> = {}): ReportInput {
     ],
     reading: [{ book: 'Küçük Prens', pages: 12, minutes: 15 }],
     finishedBooks: [],
-    trees: [{ minutes: 20 }],
+    trees: [{ minutes: 85 }],
     ...over,
   };
 }

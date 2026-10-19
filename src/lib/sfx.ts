@@ -86,7 +86,7 @@ export const sfx = {
     tone(330, 440, 0.12, 0, 'triangle', 0.1);
     tone(440, 554, 0.16, 0.1, 'triangle', 0.1);
   },
-  /** Kuru ağaç */
+  /** Hüzünlü kısa ses */
   sad() {
     tone(392, 300, 0.35, 0, 'triangle', 0.1);
   },

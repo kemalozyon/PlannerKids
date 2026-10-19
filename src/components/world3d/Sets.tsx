@@ -5,8 +5,10 @@
 import { Outlines } from '@react-three/drei';
 import type { Item } from '../../lib/catalog';
 import { footSize } from '../../lib/world';
+import { Hinge } from './motion';
 import { B, C, INK, legs, S, type Piece, type V3 } from './setParts';
 import { MORE_PIECES } from './SetsMore';
+import { NEW_PIECES } from './SetsNew';
 
 /** Parçalar: çizim ve üst yüzey yüksekliği (masa üstüne küçük eşya konur) */
 const BASE: Record<string, Piece> = {
@@ -182,7 +184,7 @@ const BASE: Record<string, Piece> = {
             ))}
           </>
         )}
-        <group position={[-0.42, 0, 0.37]} rotation-y={open ? -1.9 : 0}>
+        <Hinge open={open} to={-1.9} position={[-0.42, 0, 0.37]}>
           <group position={[0.42, 0, 0]}>
             <B p={[0, 0.95, 0]} s={[0.84, 1.9, 0.06]} c={a} />
             <B p={[0, 1.32, 0.035]} s={[0.8, 0.02, 0.02]} c={b} line={false} />
@@ -190,7 +192,7 @@ const BASE: Record<string, Piece> = {
               <B key={y} p={[0.3, y, 0.06]} s={[0.05, 0.36, 0.05]} c={c} />
             ))}
           </group>
-        </group>
+        </Hinge>
       </>
     ),
   },
@@ -289,10 +291,10 @@ const BASE: Record<string, Piece> = {
           </>
         )}
         {[-1, 1].map((s) => (
-          <group key={s} position={[(s * (w - 0.08)) / 2, 0, 0.26]} rotation-y={open ? s * 1.7 : 0}>
+          <Hinge key={s} open={open} to={s * 1.7} position={[(s * (w - 0.08)) / 2, 0, 0.26]}>
             <B p={[(-s * (w - 0.08)) / 4, 0.85, 0.02]} s={[(w - 0.1) / 2, 1.56, 0.04]} c={a} />
             <B p={[(-s * (w - 0.08)) / 2 + s * 0.08, 0.9, 0.06]} s={[0.04, 0.22, 0.04]} c={c} />
-          </group>
+          </Hinge>
         ))}
       </>
     ),
@@ -353,23 +355,19 @@ const BASE: Record<string, Piece> = {
   },
 };
 
-const PIECES: Record<string, Piece> = { ...BASE, ...MORE_PIECES };
+const PIECES: Record<string, Piece> = { ...BASE, ...MORE_PIECES, ...NEW_PIECES };
 
 /** Setteki parçanın üst yüzey yüksekliği (OnSurface) */
 export const pieceTop = (item: Item): number => PIECES[item.piece ?? '']?.top ?? 0.6;
 
-/** Set parçası; seçili renk (CHANGE_COLOR) ana rengin yerine geçer */
-export function SetPiece({ item, on, lit, open = false, color }: { item: Item; on: boolean; lit: boolean; open?: boolean; color?: string }) {
+/** Set parçası; seçili renk (CHANGE_COLOR) ana rengin yerine geçer. Açık lambaların gerçek ışığı WorldScene'deki
+ * ışık havuzundan gelir (LightPool) */
+export function SetPiece({ item, on, open = false, color }: { item: Item; on: boolean; open?: boolean; color?: string }) {
   const piece = PIECES[item.piece ?? ''];
   if (!piece) return null;
   const [w, d] = footSize(item, 0);
   const [a, b, c] = [color ?? item.colors?.[0] ?? '#8fc1e8', item.colors?.[1] ?? '#ffffff', item.colors?.[2] ?? '#5a6b7a'];
-  return (
-    <group>
-      {piece.draw({ w, d, a, b, c, on, open })}
-      {on && lit && item.fx === 'light' && <pointLight position={[0, piece.top * 0.9, 0.15]} color={color ?? '#ffd9a0'} intensity={2.6} distance={4.5} decay={1.5} />}
-    </group>
-  );
+  return <group>{piece.draw({ w, d, a, b, c, on, open })}</group>;
 }
 
 /** Parçanın adı tanımlı mı (testler) */

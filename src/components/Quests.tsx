@@ -1,5 +1,6 @@
 // Görevlerim: bugünün ve bu haftanın ders görevleri (ödülü 💎) ve haftalık sandık.
-// Görevler kendiliğinden tamamlanır; Elmas'ı sunucu hesaplayıp deftere yazar (GameContext yenilenince).
+// Görevler kendiliğinden tamamlanır; Elmas'ı sunucu hesaplar: günlük görevin Elması o günün ağacına düşer
+// (Bahçem'de alınır), haftalık görevinki kendiliğinden kumbaraya geçer.
 import { useState } from 'react';
 import { RARITY, type Item } from '../lib/catalog';
 import { CHEST_DAYS, CHEST_MINUTES, chestPrize, type ChestState, type QuestState } from '../lib/economy';
@@ -81,8 +82,8 @@ function QuestRow({ q }: { q: QuestState }) {
           </span>
         )}
       </span>
-      <span className="quest-reward">
-        +{q.reward} 💎
+      <span className="quest-reward" title={q.scope === 'day' ? 'Elması ağacına düşer' : undefined}>
+        +{q.reward} 💎{q.scope === 'day' ? ' 🌳' : ''}
       </span>
     </li>
   );

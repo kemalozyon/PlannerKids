@@ -1,9 +1,11 @@
 // Kodla çizilen işlevli eşyalar: salıncak (karakter oturunca sallanır), şömine ve ateş alevi (yakınca titrer,
 // sıcak bir ışık saçar). Ayak izinin ortasında, önleri yerel +z'ye bakar (items.tsx → ItemModel döndürür).
-// Sahne istek üzerine çizildiğinden (frameloop="demand") alev yanarken ~12 kare/sn kare istenir.
+// Sahne istek üzerine çizildiğinden (frameloop="demand") alev yanarken ~30 kare/sn kare istenir. Ateşin ışığı
+// WorldScene'deki ışık havuzundan gelir (LightPool).
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
-import type { Group, PointLight } from 'three';
+import type { Group, Mesh, MeshStandardMaterial } from 'three';
+import { damp } from './motion';
 
 /** Salıncağın ipi (kirişten oturağa) */
 export const SWING_ROPE = 1.5;
@@ -15,9 +17,16 @@ export const swingAngle = (t: number) => Math.sin(t * 2.4) * 0.5;
 export function Swing({ active }: { active?: boolean }) {
   const seat = useRef<Group>(null);
   const wood = '#a8743f';
-  useFrame(({ clock }) => {
-    if (!seat.current) return;
-    seat.current.rotation.x = active ? -swingAngle(clock.elapsedTime) : 0;
+  const invalidate = useThree((s) => s.invalidate);
+  useFrame(({ clock }, dt) => {
+    const g = seat.current;
+    if (!g) return;
+    if (active) g.rotation.x = -swingAngle(clock.elapsedTime);
+    else if (Math.abs(g.rotation.x) > 0.001) {
+      // Kalkınca birden durmaz: yavaşça dikleşir
+      g.rotation.x = damp(g.rotation.x, 0, 3, Math.min(dt, 0.05));
+      invalidate();
+    } else g.rotation.x = 0;
   });
   return (
     <group>
@@ -94,29 +103,26 @@ export function Fireplace({ on }: { on: boolean }) {
           {mat('#6b4a2f')}
         </mesh>
       ))}
-      {on && <Flame y={0.16} light />}
+      {on && <Flame y={0.16} />}
     </group>
   );
 }
 
-/**
- * Titreyen alev: üç koni, sıcak renkli; `light` açıksa sıcak bir nokta ışığı. Görünürken ~12 kare/sn kare ister.
- */
-export function Flame({ y = 0.1, scale = 1, light }: { y?: number; scale?: number; light?: boolean }) {
+/** Titreyen alev: üç koni, sıcak renkli; yalımlar hafifçe eğilip kıvrılır. Görünürken ~30 kare/sn kare ister. */
+export function Flame({ y = 0.1, scale = 1 }: { y?: number; scale?: number }) {
   const g = useRef<Group>(null);
-  const lamp = useRef<PointLight>(null);
   const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
-    const id = setInterval(() => document.visibilityState === 'visible' && invalidate(), 80);
+    const id = setInterval(() => document.visibilityState === 'visible' && invalidate(), 33);
     return () => clearInterval(id);
   }, [invalidate]);
   useFrame(({ clock }) => {
     const t = clock.elapsedTime;
     g.current?.children.forEach((c, i) => {
-      const k = 1 + Math.sin(t * (9 + i * 3) + i * 2) * 0.16;
-      c.scale.set(1, k, 1);
+      const k = 1 + Math.sin(t * (9 + i * 3) + i * 2) * 0.16 + Math.sin(t * 17 + i) * 0.05;
+      c.scale.set(1 - (k - 1) * 0.4, k, 1 - (k - 1) * 0.4);
+      c.rotation.z = Math.sin(t * (5 + i) + i * 1.7) * 0.08;
     });
-    if (lamp.current) lamp.current.intensity = 3.2 + Math.sin(t * 13) * 0.5 + Math.sin(t * 7.3) * 0.4;
   });
   return (
     <group position={[0, y, 0]} scale={scale}>
@@ -132,7 +138,41 @@ export function Flame({ y = 0.1, scale = 1, light }: { y?: number; scale?: numbe
           </mesh>
         ))}
       </group>
-      {light && <pointLight ref={lamp} position={[0, 0.5, 0.3]} color="#ff9a3c" intensity={3.2} distance={5} decay={1.6} />}
     </group>
   );
 }
+
+/** Buhar (TOGGLE fx steam: kahve makinesi): yükselip genişleyen, solan yumuşak bulutçuklar (~20 fps) */
+export function Steam({ y = 0.4, scale = 1 }: { y?: number; scale?: number }) {
+  const g = useRef<Group>(null);
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => {
+    const id = setInterval(() => document.visibilityState === 'visible' && invalidate(), 50);
+    return () => clearInterval(id);
+  }, [invalidate]);
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    g.current?.children.forEach((c, i) => {
+      // Her bulutçuk kendi evresinde 0 → 1 yükselir, sonra baştan
+      const f = (t * 0.45 + i / STEAM_N) % 1;
+      c.position.set(Math.sin(t * 1.3 + i * 2.1) * 0.05 * f, f * 0.55, Math.cos(t * 1.1 + i) * 0.04 * f);
+      const s = 0.05 + f * 0.09;
+      c.scale.setScalar(s / 0.1);
+      const m = (c as Mesh).material as MeshStandardMaterial;
+      m.opacity = Math.sin(f * Math.PI) * 0.55;
+    });
+  });
+  return (
+    <group position={[0, y, 0]} scale={scale}>
+      <group ref={g}>
+        {Array.from({ length: STEAM_N }, (_, i) => (
+          <mesh key={i}>
+            <sphereGeometry args={[0.1, 10, 8]} />
+            <meshStandardMaterial color="#ffffff" transparent opacity={0} depthWrite={false} roughness={1} />
+          </mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+const STEAM_N = 6;

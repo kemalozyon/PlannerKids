@@ -1,5 +1,5 @@
 // Eşya kataloğu: mobilya (alt kategorili), ışık, bitki, halı, duvar süsü, zemin/duvar kaplaması, dış mekân
-// dekoru, kıyafet (parça parça avatar), canlılar (evcil) ve seri dondurma. Eşyalar yalnızca 💎 Elmasla (çalışarak kazanılır) ya da başarıyla
+// dekoru, kıyafet (parça parça avatar), canlılar (evcil), ağaç tohumları ve seri dondurma. Eşyalar yalnızca 💎 Elmasla (çalışarak kazanılır) ya da başarıyla
 // (toplam saat, ağaç sayısı, seri, plan, ders altını, seviye) alınır; sandık eşyaları ve canlılar satın alınamaz.
 // Tanımlar src/config/items.json'da; sunucu fiyatı ve karo ölçüsünü item_defs tablosundan okur.
 
@@ -7,7 +7,7 @@ import { CFG, ITEM_DEFS, type Behavior, type Dispense, type Fx, type ItemDef, ty
 import type { Currency } from './types';
 
 export type { Behavior, Currency };
-export type Category = 'mobilya' | 'isik' | 'bitki' | 'hali' | 'duvarsus' | 'zemin' | 'duvar' | 'dis' | 'kiyafet' | 'evcil' | 'diger';
+export type Category = 'mobilya' | 'isik' | 'bitki' | 'hali' | 'duvarsus' | 'zemin' | 'duvar' | 'dis' | 'kiyafet' | 'evcil' | 'tohum' | 'diger';
 export type Slot = NonNullable<ItemDef['slot']>;
 export type Rarity = 'yaygin' | 'nadir' | 'efsanevi';
 /** streak: en iyi seri (gün) · plans: tamamlanan planlı gün · gold: altın seviyedeki ders sayısı · level: seviye sırası ·
@@ -18,7 +18,8 @@ export type Acquire =
   | { kind: 'free' }
   | { kind: 'buy'; currency: Currency; price: number }
   | { kind: 'unlock'; by: UnlockKind; target: number }
-  | { kind: 'chest' };
+  | { kind: 'chest' }
+  | { kind: 'drop' };
 
 export interface Item {
   id: string;
@@ -39,6 +40,8 @@ export interface Item {
   pitch?: number;
   /** Aynı eşyadan birden fazla alınabilir (mobilya, süsler) */
   repeat?: boolean;
+  /** Masa üstünde karonun bir çeyreğine oturur (kupa, masa lambası, küçük saksı: bir karoya 4 tane); 1×1 ON_SURFACE */
+  quarter?: boolean;
   /** Karo ölçüsü (w × h), izinli dönüşler, iç/dış mekân */
   w?: number;
   h?: number;
@@ -69,9 +72,21 @@ export interface Item {
   slot?: Slot;
   style?: string;
   fixed?: boolean;
+  /** Kataloğa eklendiği gün: dükkânda NEW_DAYS boyunca "YENİ" */
+  since?: string;
 }
 
-/** items.json satırını uygulamanın kullandığı biçime çevirir (fiyat → satın alma, unlock → başarı, chest → sandık) */
+/** Yeni eşyalar dükkânda bu kadar gün "YENİ" rozetiyle görünür (bu cihazda açılıp bakılana kadar) */
+export const NEW_DAYS = 45;
+/** Eşya yeni mi (bugüne göre) */
+export const isNewItem = (it: Item, today: string): boolean => {
+  if (!it.since || it.since > today) return false;
+  const days = (Date.parse(today) - Date.parse(it.since)) / 86_400_000;
+  return days <= NEW_DAYS;
+};
+
+/** items.json satırını uygulamanın kullandığı biçime çevirir (fiyat → satın alma, unlock → başarı, chest → sandık,
+ *  drop → nadir ağaç ödülü) */
 function toItem(d: ItemDef): Item {
   const acquire: Acquire =
     d.price != null
@@ -80,8 +95,10 @@ function toItem(d: ItemDef): Item {
         ? { kind: 'unlock', by: d.unlock.by as UnlockKind, target: d.unlock.target }
         : d.chest
           ? { kind: 'chest' }
-          : { kind: 'free' };
-  const { price: _p, unlock: _u, chest: _c, ...rest } = d;
+          : d.drop
+            ? { kind: 'drop' }
+            : { kind: 'free' };
+  const { price: _p, unlock: _u, chest: _c, drop: _d, ...rest } = d;
   return { ...rest, behaviors: d.behaviors ?? [], category: d.category as Category, rarity: d.rarity as Rarity, acquire };
 }
 
@@ -106,6 +123,7 @@ export const CATEGORIES: { id: string; name: string; icon: string; cats: Categor
   { id: 'dis', name: 'Dış mekân', icon: '🌼', cats: ['dis'] },
   { id: 'kiyafet', name: 'Kıyafet', icon: '👕', cats: ['kiyafet'] },
   { id: 'evcil', name: 'Canlılar', icon: '🐾', cats: ['evcil'] },
+  { id: 'tohum', name: 'Tohum', icon: '🌱', cats: ['tohum'] },
   { id: 'diger', name: 'Diğer', icon: '🧊', cats: ['diger'] },
 ];
 
@@ -137,6 +155,12 @@ export const SUBS: Record<string, string> = {
   cicek: '🌼 Çiçek',
   bostan: '🎃 Bostan',
   doga: '🌳 Doğa',
+  uzay: '🚀 Uzay seti',
+  okyanus: '🐠 Okyanus seti',
+  muzik: '🎸 Müzik stüdyosu',
+  kis: '❄️ Kış seti',
+  japon: '🏯 Japon bahçesi',
+  oyunparki: '🛝 Oyun parkı',
   kamp: '🔥 Oturma ve kamp',
   heykel: '🗿 Heykel',
   zemin: '🟫 Zemin',
@@ -166,7 +190,7 @@ const BEHAVIOR_TEXT: Partial<Record<Behavior, (i: Item) => string>> = {
   SIT: () => '🪑 oturulur',
   LAY: () => '🛏️ uzanılır',
   SWING: () => '🎠 sallanılır',
-  TOGGLE: (i) => (i.fx === 'fire' ? '🔥 yakılır' : i.fx === 'tv' ? '📺 açılır' : i.fx === 'anim' ? '▶️ çalışır' : '💡 açılıp kapanır'),
+  TOGGLE: (i) => (i.fx === 'fire' ? '🔥 yakılır' : i.fx === 'tv' ? '📺 açılır' : i.fx === 'anim' ? '▶️ çalışır' : i.fx === 'steam' ? '♨️ buharı tüter' : '💡 açılıp kapanır'),
   OPEN_CLOSE: () => '🔓 kapağı açılır',
   GATE: () => '🚪 kapı gibi açılıp kapanır',
   WALK_THROUGH: () => '👣 üstünden yürünür',
@@ -179,6 +203,10 @@ const BEHAVIOR_TEXT: Partial<Record<Behavior, (i: Item) => string>> = {
   CHANGE_COLOR: (i) => `🎨 ${i.palette?.length ?? 0} renk`,
   INTERACT_PET: () => '🐾 canlılar yanına gelir',
   BOOKS: () => '📚 kitapların dizilir',
+  MUSIC: () => '🎧 Lo-Fi ve doğa sesleri çalar',
+  NOTES: () => '📌 not ve hatırlatıcı asılır',
+  STATS: () => '📊 çalışma kayıtların görünür',
+  STUDY: () => '📖 kronometre açıkken karakterin burada çalışır',
 };
 
 /** Eşya ne yapar (dükkân): "oturulur · açılıp kapanır" */

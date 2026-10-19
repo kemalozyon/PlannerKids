@@ -18,6 +18,7 @@ import EndDay from '../components/EndDay';
 import { MOODS, dailyPrompt } from '../lib/mood';
 import { CORE_SUBJECTS } from '../lib/presets';
 import { CFG } from '../lib/config';
+import { paidTasks } from '../lib/economy';
 import { startTour, TOUR_KEY } from '../lib/tour';
 
 interface Props {
@@ -25,6 +26,7 @@ interface Props {
   goCourses: () => void;
   goProfile: () => void;
   goForest: () => void;
+  goGarden: () => void;
   goPlan: () => void;
   goRewards: () => void;
   goShop: () => void;
@@ -33,7 +35,7 @@ interface Props {
   demo: boolean;
 }
 
-export default function Today({ courses, goCourses, goProfile, goForest, goPlan, goRewards, goShop, reloadCourses, goLibrary, demo }: Props) {
+export default function Today({ courses, goCourses, goProfile, goForest, goGarden, goPlan, goRewards, goShop, reloadCourses, goLibrary, demo }: Props) {
   const api = useApi();
   const game = useGame();
   const [date, setDate] = useState(toLocalDate);
@@ -97,7 +99,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
       setError((e as Error).message);
     }
   };
-  /** Seansı bırak: uzun sürdüyse (o gün başka kayıt yoksa) bahçede kuru ağaç kalır */
+  /** Seansı bırak: kaydedilmez */
   const abandon = async () => {
     setFocusOpen(false);
     setFinishing(false);
@@ -156,7 +158,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goPlan,
 
       <ParentNoteCard />
 
-      <GameStrip goForest={goForest} />
+      <GameStrip goForest={goForest} goGarden={goGarden} />
 
       {error && <div className="error">{error}</div>}
 
@@ -407,7 +409,7 @@ function TimerCard({
           </div>
         )}
         <div className="actions center">
-          <ConfirmButton className="btn ghost" confirmLabel={elapsedMs >= CFG.session.wiltMinutes * 60_000 ? 'Kuru ağaç kalsın mı?' : 'Kaydetmeden sil?'} onConfirm={onCancel}>
+          <ConfirmButton className="btn ghost" confirmLabel="Kaydetmeden sil?" onConfirm={onCancel}>
             İptal
           </ConfirmButton>
           {paused ? (
@@ -485,7 +487,7 @@ function TimerCard({
           <button className="btn primary big full" onClick={() => onStart(courseId)}>
             ▶ Başlat
           </button>
-          <p className="muted small center">Sekmeden çıkınca ya da uzun süre dokunmayınca sayaç durur. 💎 Elmas ve 🌳 ağaç sayaçla kazanılır.</p>
+          <p className="muted small center">Sekmeden çıkınca ya da uzun süre dokunmayınca sayaç durur. Sayaçla çalışınca %{Math.round(CFG.elmas.live.bonus * 100)} canlı bonus 💎 ve seri kazanırsın.</p>
         </>
       ) : (
         <form
@@ -506,7 +508,9 @@ function TimerCard({
               });
           }}
         >
-          <p className="manual-note small">✏️ Elle yazılan süre kaydına ve raporuna geçer, ama 💎 Elmas ve 🌳 ağaç kazandırmaz.</p>
+          <p className="manual-note small">
+            ✏️ Elle yazılan süre kaydına, raporuna ve ağacına geçer; günde en çok {CFG.elmas.manual.capPerDay} 💎 verir. Seri, sandık ve canlı bonus yalnızca sayaçla.
+          </p>
           <label className="field">
             <span>Kaç dakika?</span>
             <input
@@ -803,6 +807,11 @@ function TasksCard({
   const [title, setTitle] = useState('');
   const [courseId, setCourseId] = useState('');
   const doneCount = tasks.filter((t) => t.done).length;
+  // Elmas veren aile görevleri: günün ilk perDay aile görevi (bitince); sıralama economy.ts → paidTasks ile aynı
+  const paidIds = useMemo(
+    () => new Set(paidTasks(tasks.map((t) => ({ ...t, done: true })), date).map((t) => t.id)),
+    [tasks, date],
+  );
 
   return (
     <section className="card">
@@ -817,8 +826,9 @@ function TasksCard({
       <ul className="list">
         {tasks.map((t) => {
           const c = t.course_id ? byId.get(t.course_id) : undefined;
+          const paid = t.from_parent && paidIds.has(t.id);
           return (
-            <li key={t.id} className="row">
+            <li key={t.id} className={`row${t.from_parent ? ' parent-task' : ''}`}>
               <label className="check grow">
                 <input
                   type="checkbox"
@@ -830,21 +840,28 @@ function TasksCard({
                 />
                 <span className={t.done ? 'done' : ''}>{t.title}</span>
               </label>
+              {t.from_parent && (
+                <span className="tag parent" title="Ailenin verdiği görev">
+                  🏠 {paid ? `Aileden · +${CFG.elmas.task.each} 💎` : 'Aileden'}
+                </span>
+              )}
               {c && (
                 <span className="tag" style={{ color: c.color, borderColor: c.color }}>
                   {c.name}
                 </span>
               )}
-              <button
-                className="icon-btn"
-                aria-label="Görevi sil"
-                onClick={async () => {
-                  await api.deleteTask(t.id);
-                  reload();
-                }}
-              >
-                ×
-              </button>
+              {!t.from_parent && (
+                <button
+                  className="icon-btn"
+                  aria-label="Görevi sil"
+                  onClick={async () => {
+                    await api.deleteTask(t.id);
+                    reload();
+                  }}
+                >
+                  ×
+                </button>
+              )}
             </li>
           );
         })}

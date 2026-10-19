@@ -8,21 +8,22 @@
 // - Küçük eşya bir yüzeyin üstündeyse (masa, sehpa) o yüzeyin yüksekliğine kalkar (OnSurface).
 // Yerleştirme modunda aynı görünüş yarı saydam yeşil (konabilir) ya da kırmızı (konamaz) önizleme olur.
 import { useGLTF } from '@react-three/drei';
-import { useThree, type ThreeEvent } from '@react-three/fiber';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Box3, Color, Mesh, MeshStandardMaterial, Object3D, Vector3, type Material, type Texture } from 'three';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Box3, Color, Mesh, MeshStandardMaterial, Object3D, Vector3, type Group, type Material, type Texture } from 'three';
 import { has, type Item } from '../../lib/catalog';
 import type { Book } from '../../lib/types';
-import { footSize, wallSlots } from '../../lib/world';
+import { footSize, subOffset, wallSlots } from '../../lib/world';
 import { modelUrl } from '../forest3d/models';
 import { ART_HEIGHT, artTexture, clockTexture } from './art';
 import { Bookcase } from './Books';
 import { WALL_ART } from './WallArts';
-import { Fireplace, Flame, Swing } from './Proc';
+import { Fireplace, Flame, Steam, Swing } from './Proc';
+import { damp, dampAngle, Hinge, useReducedMotion } from './motion';
 import { pieceTop, SetPiece } from './Sets';
 
 /** Duvar eşyalarının orta yüksekliği */
-const WALL_Y = 1.45;
+export const WALL_Y = 1.45;
 
 /** Model + boya için hazırlanmış şablon ve ayak izine oturtma bilgisi (bir kez hesaplanır) */
 const templates = new Map<string, { obj: Object3D; center: Vector3; minY: number; maxY: number; minZ: number; size: Vector3 }>();
@@ -126,12 +127,14 @@ export interface ItemModelProps {
   open?: boolean;
   /** CHANGE_COLOR: seçili renk */
   color?: string;
-  /** Açık lamba gerçek bir ışık da saçsın (sahnede sınırlı sayıda) */
-  lit?: boolean;
+  /** Yeni kondu: yukarıdan düşüp yerine oturur */
+  appear?: boolean;
   /** Açık TV'nin ekranı */
   screen?: Texture | null;
   /** Salıncakta biri sallanıyor */
   active?: boolean;
+  /** Masa üstünde karonun bir çeyreğinde (küçültülmüş) */
+  sub?: number;
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
   onClick?: (e: ThreeEvent<MouseEvent>) => void;
 }
@@ -139,7 +142,10 @@ export interface ItemModelProps {
 export function ItemModel(p: ItemModelProps) {
   const { item } = p;
   if (item.placement === 'wall') return <WallItem {...p} />;
-  const [cx, cz] = footCenter(item, p.x, p.y, p.rot);
+  const [fx, fz] = footCenter(item, p.x, p.y, p.rot);
+  const [ox, oz] = p.sub === undefined ? [0, 0] : subOffset(p.sub);
+  const cx = fx + ox;
+  const cz = fz + oz;
   const [fw, fh] = footSize(item, 0);
   const on = p.on ?? (has(item, 'TOGGLE') && item.fx === 'light');
   const inner =
@@ -153,7 +159,7 @@ export function ItemModel(p: ItemModelProps) {
           <GhostBox w={fw - 0.1} h={Math.max(0.3, pieceTop(item))} d={fh - 0.1} ok={p.ghost === 'ok'} />
         </group>
       ) : (
-        <SetPiece item={item} on={on} lit={!!p.lit} open={!!p.open} color={p.color} />
+        <SetPiece item={item} on={on} open={!!p.open} color={p.color} />
       )
     ) : item.proc === 'swing' || item.proc === 'fireplace' ? (
       p.ghost ? (
@@ -171,32 +177,117 @@ export function ItemModel(p: ItemModelProps) {
         </group>
       )
     ) : (
-      <FloorModel item={item} ghost={p.ghost} on={on} lit={!!p.lit} screen={p.screen ?? null} color={p.color} />
+      <FloorModel item={item} ghost={p.ghost} on={on} screen={p.screen ?? null} color={p.color} />
     );
   return (
-    <group position={[cx, p.lift ?? 0, cz]} rotation-y={(-p.rot * Math.PI) / 180} onPointerDown={p.onPointerDown} onClick={p.onClick}>
+    <Motion x={cx} y={p.lift ?? 0} z={cz} rot={(-p.rot * Math.PI) / 180} lifted={!!p.lift} appear={p.appear} ghost={!!p.ghost} onPointerDown={p.onPointerDown} onClick={p.onClick}>
       {/* Açık kapı (GATE) menteşesinden döner */}
-      {has(item, 'GATE') && item.model && p.open ? (
-        <group position={[-fw / 2, 0, 0]} rotation-y={1.35}>
+      {has(item, 'GATE') && item.model ? (
+        <Hinge open={!!p.open} to={1.35} position={[-fw / 2, 0, 0]}>
           <group position={[fw / 2, 0, 0]}>{inner}</group>
-        </group>
+        </Hinge>
+      ) : p.sub !== undefined ? (
+        <group scale={SUB_SCALE}>{inner}</group>
       ) : (
         inner
       )}
+      {/* Kahve makinesi açıkken buhar tüter */}
+      {on && item.fx === 'steam' && !p.ghost && <Steam y={surfaceTop(item) * (p.sub !== undefined ? SUB_SCALE : 1) * 0.9} scale={p.sub !== undefined ? SUB_SCALE : 1} />}
+    </Motion>
+  );
+}
+
+/** Çeyreğe konan eşyanın ölçeği */
+export const SUB_SCALE = 0.55;
+
+/** Düşüş süresi (sn): düşüş + ezilip esneyen yaylanma */
+const APPEAR_S = 0.7;
+/** Düşüşün süreye oranı (sonrası yaylanma) */
+const FALL = 0.4;
+
+/**
+ * Eşyanın yeri ve dönüşü yumuşakça değişir: seçilince havalanıp hafifçe salınır, döndürülünce en kısa yoldan
+ * döner, önizleme karodan karoya kayar; yeni konan eşya yukarıdan düşüp esneyerek yerine oturur.
+ */
+function Motion({
+  x,
+  y,
+  z,
+  rot,
+  lifted,
+  appear,
+  ghost,
+  children,
+  onPointerDown,
+  onClick,
+}: {
+  x: number;
+  y: number;
+  z: number;
+  rot: number;
+  lifted: boolean;
+  appear?: boolean;
+  ghost: boolean;
+  children: ReactNode;
+  onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
+  onClick?: (e: ThreeEvent<MouseEvent>) => void;
+}) {
+  const g = useRef<Group>(null);
+  const reduced = useReducedMotion();
+  const invalidate = useThree((s) => s.invalidate);
+  const st = useRef({ x, y, z, rot, t: appear && !reduced ? 0 : 1, wob: 0 });
+  useFrame((_, rawDt) => {
+    const o = g.current;
+    if (!o) return;
+    const dt = Math.min(rawDt, 0.05);
+    const S = st.current;
+    const fast = reduced ? 60 : ghost ? 28 : 16;
+    S.x = damp(S.x, x, fast, dt);
+    S.z = damp(S.z, z, fast, dt);
+    S.y = damp(S.y, y, reduced ? 60 : 14, dt);
+    S.rot = dampAngle(S.rot, rot, reduced ? 60 : 14, dt);
+    let busy = Math.abs(S.x - x) + Math.abs(S.z - z) + Math.abs(S.y - y) + Math.abs(S.rot - rot) > 0.001;
+    let dy = 0;
+    let sx = 1;
+    let sy = 1;
+    if (S.t < 1) {
+      S.t = Math.min(1, S.t + dt / APPEAR_S);
+      // Hızlanarak düşerken boyuna uzar (stretch); yere değince ezilir (squash), sönen bir yay gibi birkaç kez
+      // esneyip yerine oturur. Hacim korunur gibi: boy kısalınca en genişler.
+      const f = Math.min(1, S.t / FALL);
+      dy = (1 - f * f) * 0.9;
+      const k = S.t < FALL ? 0.1 * f * f : -0.22 * Math.exp(-5 * ((S.t - FALL) / (1 - FALL))) * Math.cos(3 * Math.PI * ((S.t - FALL) / (1 - FALL)));
+      sy = S.t >= 1 ? 1 : 1 + k;
+      sx = S.t >= 1 ? 1 : 1 - k * 0.5;
+      busy = true;
+    }
+    // Seçiliyken hafif nefes (yalnızca o sırada kare ister)
+    if (lifted && !reduced) {
+      S.wob += dt;
+      dy += Math.sin(S.wob * 3.2) * 0.025;
+      busy = true;
+    } else S.wob = 0;
+    o.position.set(S.x, S.y + dy, S.z);
+    o.rotation.y = S.rot;
+    o.scale.set(sx, sy, sx);
+    if (busy) invalidate();
+  });
+  const S = st.current;
+  return (
+    <group ref={g} position={[S.x, S.y + (S.t < 1 ? 0.9 : 0), S.z]} rotation-y={S.rot} onPointerDown={onPointerDown} onClick={onClick}>
+      {children}
     </group>
   );
 }
 
-function FloorModel({ item, ghost, on, lit, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null; color?: string }) {
+function FloorModel({ item, ghost, on, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; screen: Texture | null; color?: string }) {
   const t = useTemplate(item, ghost ? true : on, color);
   const obj = useMemo(() => ghostify(t.obj.clone(true), ghost), [t, ghost]);
   const s = item.scale ?? 1;
-  const top = (t.maxY - t.minY) * s;
   return (
     <group>
       <primitive object={obj} scale={s} position={[-t.center.x * s, -t.minY * s + 0.01, -t.center.z * s]} />
-      {!ghost && on && item.fx === 'light' && lit && <pointLight position={[0, top * 0.85, 0.15]} color={color ?? '#ffd9a0'} intensity={2.6} distance={4.5} decay={1.5} />}
-      {!ghost && on && item.fx === 'fire' && <Flame y={0.06} scale={0.9} light />}
+      {!ghost && on && item.fx === 'fire' && <Flame y={0.06} scale={0.9} />}
       {!ghost && on && screen && <Screen item={item} size={t.size} s={s} z={(t.size.z * s) / 2} y={t.size.y * s * (item.screen?.[2] ?? 0.6)} map={screen} />}
     </group>
   );
@@ -227,33 +318,33 @@ function WallItem(p: ItemModelProps) {
   const n = item.w ?? 1;
   const back = p.y === -1 && p.x >= 0;
   const along = n / 2;
-  const pos: [number, number, number] = back ? [p.x + along, WALL_Y, 0.02 + (p.lift ?? 0)] : [0.02 + (p.lift ?? 0), WALL_Y, p.y + along];
+  const lift = p.lift ? 0.12 : 0;
+  const pos: [number, number, number] = back ? [p.x + along, WALL_Y, 0.02 + lift] : [0.02 + lift, WALL_Y, p.y + along];
   return (
-    <group position={pos} rotation-y={back ? 0 : Math.PI / 2} onPointerDown={p.onPointerDown} onClick={p.onClick}>
+    <Motion x={pos[0]} y={pos[1]} z={pos[2]} rot={back ? 0 : Math.PI / 2} lifted={false} appear={p.appear} ghost={!!p.ghost} onPointerDown={p.onPointerDown} onClick={p.onClick}>
       {item.model ? (
-        <WallModel item={item} ghost={p.ghost} on={p.on ?? item.fx === 'light'} lit={!!p.lit} screen={p.screen ?? null} color={p.color} />
+        <WallModel item={item} ghost={p.ghost} on={p.on ?? item.fx === 'light'} screen={p.screen ?? null} color={p.color} />
       ) : (
-        <WallArt item={item} ghost={p.ghost} on={p.on ?? true} color={p.color} />
+        <WallArt item={item} ghost={p.ghost} on={p.on ?? true} color={p.color} screen={p.screen ?? null} />
       )}
-    </group>
+    </Motion>
   );
 }
 
-function WallModel({ item, ghost, on, lit, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; lit: boolean; screen: Texture | null; color?: string }) {
+function WallModel({ item, ghost, on, screen, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; screen: Texture | null; color?: string }) {
   const t = useTemplate(item, ghost ? true : on, color);
   const obj = useMemo(() => ghostify(t.obj.clone(true), ghost), [t, ghost]);
   const s = item.scale ?? 1;
   return (
     <group>
       <primitive object={obj} scale={s} position={[-t.center.x * s, -t.center.y * s, -t.minZ * s]} />
-      {!ghost && on && item.fx === 'light' && lit && <pointLight position={[0, 0, 0.5]} color={color ?? '#ffd9a0'} intensity={2.2} distance={4} decay={1.5} />}
       {!ghost && on && screen && <Screen item={item} size={t.size} s={s} z={t.size.z * s} y={t.size.y * s * ((item.screen?.[2] ?? 0.5) - 0.5)} map={screen} />}
     </group>
   );
 }
 
-/** Kodla çizilen resim ya da süs: çerçeveli tuval, saat, raf, ışık zinciri */
-function WallArt({ item, ghost, on, color }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; color?: string }) {
+/** Kodla çizilen resim ya da süs: çerçeveli tuval, saat, raf, ışık zinciri; mantar panoda gerçek notlar (screen) */
+function WallArt({ item, ghost, on, color, screen }: { item: Item; ghost?: 'ok' | 'bad'; on: boolean; color?: string; screen?: Texture | null }) {
   const n = item.w ?? 1;
   const w = n - 0.16;
   const h = ART_HEIGHT;
@@ -269,11 +360,12 @@ function WallArt({ item, ghost, on, color }: { item: Item; ghost?: 'ok' | 'bad';
   if (item.art === 'isiklar') return <StringLights w={n - 0.1} on={on} />;
   const Extra = WALL_ART[item.art ?? ''];
   if (Extra) return <Extra w={w} n={n} on={on} color={color ?? item.palette?.[0] ?? item.colors?.[0] ?? '#ff4fa3'} />;
-  return <Framed art={item.art!} w={w} h={h} n={n} />;
+  return <Framed art={item.art!} w={w} h={h} n={n} map={screen && has(item, 'NOTES') ? screen : undefined} />;
 }
 
-function Framed({ art, w, h, n }: { art: string; w: number; h: number; n: number }) {
-  const map = useMemo(() => artTexture(art, n), [art, n]);
+function Framed({ art, w, h, n, map: given }: { art: string; w: number; h: number; n: number; map?: Texture }) {
+  const drawn = useMemo(() => artTexture(art, n), [art, n]);
+  const map = given ?? drawn;
   return (
     <group>
       <mesh position={[0, 0, 0.015]} castShadow>
@@ -365,7 +457,7 @@ function StringLights({ w, on }: { w: number; on: boolean }) {
 }
 
 /** Ayak izi karoları (yerleştirmede yeşil/kırmızı zemin); duvar eşyasında duvardaki şerit */
-export function FootTiles({ item, x, y, rot, ok }: { item: Item; x: number; y: number; rot: number; ok: boolean }) {
+export function FootTiles({ item, x, y, rot, ok, sub }: { item: Item; x: number; y: number; rot: number; ok: boolean; sub?: number }) {
   const color = ok ? '#3fcf6b' : '#ef4b4b';
   if (item.placement === 'wall') {
     const slots = wallSlots(item, x, y);
@@ -381,6 +473,15 @@ export function FootTiles({ item, x, y, rot, ok }: { item: Item; x: number; y: n
     );
   }
   const [w, h] = footSize(item, rot);
+  if (sub !== undefined) {
+    const [ox, oy] = subOffset(sub);
+    return (
+      <mesh position={[x + 0.5 + ox, 0.02, y + 0.5 + oy]} rotation-x={-Math.PI / 2}>
+        <planeGeometry args={[0.46, 0.46]} />
+        <meshBasicMaterial color={color} transparent opacity={0.55} depthWrite={false} />
+      </mesh>
+    );
+  }
   return (
     <mesh position={[x + w / 2, 0.02, y + h / 2]} rotation-x={-Math.PI / 2}>
       <planeGeometry args={[w - 0.06, h - 0.06]} />

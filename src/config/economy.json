@@ -20,6 +20,23 @@
       ],
       "dailyCap": 300
     },
+    "live": {
+      "bonus": 0.25,
+      "from": "2026-10-18"
+    },
+    "manual": {
+      "minutesPer": 1,
+      "capPerDay": 60,
+      "lateDays": 1,
+      "from": "2026-10-18"
+    },
+    "task": {
+      "each": 15,
+      "perDay": 3
+    },
+    "claim": {
+      "from": "2026-10-18"
+    },
     "streak": {
       "minMinutes": 20,
       "tiers": [
@@ -126,7 +143,7 @@
         "name": "Açıklık",
         "icon": "🌼",
         "hours": 0,
-        "desc": "Ormanın ortasında küçük bir açıklık ve sevimli bir ev.",
+        "desc": "Ormanın ortasında küçük, sevimli bir ev: bir oda ve bir kütüphane.",
         "theme": {
           "scenery": "meadow",
           "ground": "#7ccf5a",
@@ -139,13 +156,6 @@
           "w": 12,
           "h": 10,
           "fixed": [
-            {
-              "kind": "door",
-              "x": 3,
-              "y": 9,
-              "edge": "s",
-              "to": "garden"
-            },
             {
               "kind": "door",
               "x": 0,
@@ -198,26 +208,6 @@
               "h": 2
             }
           ]
-        },
-        "garden": {
-          "w": 24,
-          "h": 12,
-          "fixed": [
-            {
-              "kind": "door",
-              "x": 12,
-              "y": 0,
-              "edge": "n",
-              "to": "room"
-            },
-            {
-              "kind": "gate",
-              "x": 23,
-              "y": 6,
-              "edge": "e",
-              "to": "forest"
-            }
-          ]
         }
       },
       {
@@ -225,7 +215,7 @@
         "name": "Dere Kenarı",
         "icon": "🏞️",
         "hours": 15,
-        "desc": "Bahçenin yanından bir dere akıyor, üstünde tahta bir köprü var. Ev de büyüdü.",
+        "desc": "Evin büyüdü: odan ve kütüphanen genişledi. Pencereden bir dere görünüyor.",
         "theme": {
           "scenery": "forest",
           "ground": "#82d16a",
@@ -238,13 +228,6 @@
           "w": 14,
           "h": 11,
           "fixed": [
-            {
-              "kind": "door",
-              "x": 3,
-              "y": 10,
-              "edge": "s",
-              "to": "garden"
-            },
             {
               "kind": "door",
               "x": 0,
@@ -297,40 +280,6 @@
               "h": 2
             }
           ]
-        },
-        "garden": {
-          "w": 30,
-          "h": 13,
-          "fixed": [
-            {
-              "kind": "door",
-              "x": 12,
-              "y": 0,
-              "edge": "n",
-              "to": "room"
-            },
-            {
-              "kind": "gate",
-              "x": 29,
-              "y": 6,
-              "edge": "e",
-              "to": "forest"
-            },
-            {
-              "kind": "water",
-              "x": 25,
-              "y": 0,
-              "w": 2,
-              "h": 13
-            },
-            {
-              "kind": "bridge",
-              "x": 25,
-              "y": 6,
-              "w": 2,
-              "h": 1
-            }
-          ]
         }
       },
       {
@@ -338,7 +287,7 @@
         "name": "Tepe",
         "icon": "⛰️",
         "hours": 40,
-        "desc": "Derenin ötesinde bir tepe ve bir koru açıldı. Evin iki katlı oldu.",
+        "desc": "Odana yeni karolar eklendi, pencereden tepe ve koru görünüyor.",
         "theme": {
           "scenery": "mountain",
           "ground": "#6cc05a",
@@ -351,13 +300,6 @@
           "w": 16,
           "h": 12,
           "fixed": [
-            {
-              "kind": "door",
-              "x": 3,
-              "y": 11,
-              "edge": "s",
-              "to": "garden"
-            },
             {
               "kind": "door",
               "x": 0,
@@ -416,54 +358,6 @@
               "h": 2
             }
           ]
-        },
-        "garden": {
-          "w": 36,
-          "h": 14,
-          "fixed": [
-            {
-              "kind": "door",
-              "x": 12,
-              "y": 0,
-              "edge": "n",
-              "to": "room"
-            },
-            {
-              "kind": "gate",
-              "x": 35,
-              "y": 6,
-              "edge": "e",
-              "to": "forest"
-            },
-            {
-              "kind": "water",
-              "x": 25,
-              "y": 0,
-              "w": 2,
-              "h": 14
-            },
-            {
-              "kind": "bridge",
-              "x": 25,
-              "y": 6,
-              "w": 2,
-              "h": 1
-            },
-            {
-              "kind": "hill",
-              "x": 30,
-              "y": 1,
-              "w": 4,
-              "h": 4
-            },
-            {
-              "kind": "grove",
-              "x": 31,
-              "y": 9,
-              "w": 3,
-              "h": 3
-            }
-          ]
         }
       },
       {
@@ -471,7 +365,7 @@
         "name": "Göl",
         "icon": "🦆",
         "hours": 80,
-        "desc": "Tepenin yanında masmavi bir göl oluştu.",
+        "desc": "Odan iyice büyüdü; pencereden masmavi bir göl görünüyor.",
         "theme": {
           "scenery": "lake",
           "ground": "#79c26a",
@@ -484,13 +378,6 @@
           "w": 18,
           "h": 13,
           "fixed": [
-            {
-              "kind": "door",
-              "x": 3,
-              "y": 12,
-              "edge": "s",
-              "to": "garden"
-            },
             {
               "kind": "door",
               "x": 0,
@@ -549,61 +436,6 @@
               "h": 2
             }
           ]
-        },
-        "garden": {
-          "w": 42,
-          "h": 15,
-          "fixed": [
-            {
-              "kind": "door",
-              "x": 12,
-              "y": 0,
-              "edge": "n",
-              "to": "room"
-            },
-            {
-              "kind": "gate",
-              "x": 41,
-              "y": 6,
-              "edge": "e",
-              "to": "forest"
-            },
-            {
-              "kind": "water",
-              "x": 25,
-              "y": 0,
-              "w": 2,
-              "h": 15
-            },
-            {
-              "kind": "bridge",
-              "x": 25,
-              "y": 6,
-              "w": 2,
-              "h": 1
-            },
-            {
-              "kind": "hill",
-              "x": 30,
-              "y": 1,
-              "w": 4,
-              "h": 4
-            },
-            {
-              "kind": "grove",
-              "x": 31,
-              "y": 9,
-              "w": 3,
-              "h": 3
-            },
-            {
-              "kind": "water",
-              "x": 37,
-              "y": 8,
-              "w": 4,
-              "h": 5
-            }
-          ]
         }
       },
       {
@@ -611,7 +443,7 @@
         "name": "Sahil",
         "icon": "🏖️",
         "hours": 150,
-        "desc": "Arazin denize ulaştı: kumsal ve denize uzanan bir iskele.",
+        "desc": "Evin en büyük hâlinde: pencereden kumsal ve deniz görünüyor.",
         "theme": {
           "scenery": "beach",
           "ground": "#8fd46f",
@@ -624,13 +456,6 @@
           "w": 20,
           "h": 14,
           "fixed": [
-            {
-              "kind": "door",
-              "x": 3,
-              "y": 13,
-              "edge": "s",
-              "to": "garden"
-            },
             {
               "kind": "door",
               "x": 0,
@@ -695,75 +520,6 @@
               "h": 2
             }
           ]
-        },
-        "garden": {
-          "w": 42,
-          "h": 19,
-          "fixed": [
-            {
-              "kind": "door",
-              "x": 12,
-              "y": 0,
-              "edge": "n",
-              "to": "room"
-            },
-            {
-              "kind": "gate",
-              "x": 41,
-              "y": 6,
-              "edge": "e",
-              "to": "forest"
-            },
-            {
-              "kind": "water",
-              "x": 25,
-              "y": 0,
-              "w": 2,
-              "h": 16
-            },
-            {
-              "kind": "bridge",
-              "x": 25,
-              "y": 6,
-              "w": 2,
-              "h": 1
-            },
-            {
-              "kind": "hill",
-              "x": 30,
-              "y": 1,
-              "w": 4,
-              "h": 4
-            },
-            {
-              "kind": "grove",
-              "x": 31,
-              "y": 9,
-              "w": 3,
-              "h": 3
-            },
-            {
-              "kind": "water",
-              "x": 37,
-              "y": 8,
-              "w": 4,
-              "h": 5
-            },
-            {
-              "kind": "water",
-              "x": 0,
-              "y": 16,
-              "w": 42,
-              "h": 3
-            },
-            {
-              "kind": "bridge",
-              "x": 12,
-              "y": 16,
-              "w": 1,
-              "h": 3
-            }
-          ]
         }
       }
     ],
@@ -823,6 +579,15 @@
         "floor": "zemin:ahsap",
         "wall": "duvar:krem",
         "desc": "Ne olacağına sen karar ver."
+      },
+      {
+        "id": "teras",
+        "name": "Teras",
+        "icon": "🌿",
+        "floor": "",
+        "wall": "",
+        "outdoor": true,
+        "desc": "Açık hava: çit, çiçek, bostan, heykel ve kamp eşyaları için. Duvarı yok, zemini çim."
       }
     ],
     "roomShapes": [
@@ -1122,6 +887,10 @@
       }
     ],
     "maxRooms": 12,
+    "roomMax": {
+      "w": 42,
+      "h": 20
+    },
     "library": {
       "perShelf": 12
     },
@@ -1150,36 +919,33 @@
         "scale": 0.45
       },
       {
-        "id": "kucuk",
-        "name": "Küçük",
-        "label": "Küçük {s}",
+        "id": "genc",
+        "name": "Genç",
+        "label": "Genç {s}",
         "icon": "🌿",
-        "min": 20,
-        "scale": 0.65
+        "min": 60,
+        "scale": 0.75
       },
       {
-        "id": "orta",
-        "name": "Orta boy",
-        "label": "Orta boy {s}",
-        "min": 45,
-        "scale": 0.85
-      },
-      {
-        "id": "buyuk",
-        "name": "Büyük",
-        "label": "Büyük {s}",
-        "min": 90,
+        "id": "tam",
+        "name": "Tam",
+        "label": "Tam boy {s}",
+        "min": 120,
         "scale": 1.05
       },
       {
-        "id": "dev",
-        "name": "Dev",
-        "label": "Dev {s}",
-        "min": 150,
+        "id": "nadir",
+        "name": "Nadir",
+        "label": "Nadir {s}",
+        "min": 180,
         "scale": 1.3
       }
     ],
     "glowMinutes": 180,
+    "drop": {
+      "minutes": 180,
+      "from": "2026-10-18"
+    },
     "species": [
       {
         "id": "mese",
@@ -1318,14 +1084,6 @@
         ]
       }
     ],
-    "dry": {
-      "id": "kuru",
-      "name": "Kuru ağaç",
-      "icon": "🪵",
-      "model": "tree_thin_fall",
-      "leaf": "#a8987e",
-      "wood": "#7a6a5a"
-    },
     "creatures": [
       {
         "id": "kelebek",

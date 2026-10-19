@@ -15,9 +15,12 @@ export default function ItemCard({
   footer,
   silhouette,
   selected,
+  badge,
   onClick,
 }: {
   item: Item;
+  /** Köşedeki rozet (YENİ) */
+  badge?: string;
   have: boolean;
   count?: number;
   footer: string;
@@ -36,6 +39,7 @@ export default function ItemCard({
       onClick={onClick}
       aria-label={`${item.name}, ${r.name}${have ? ', sende' : ''}`}
     >
+      {badge && <span className="item-badge">{badge}</span>}
       <span className="item-icon" aria-hidden>
         {silhouette ? '❔' : <ItemIcon item={item} />}
       </span>
@@ -53,6 +57,7 @@ export function priceText(item: Item): string {
   const a = item.acquire;
   if (a.kind === 'buy') return `💎 ${a.price}`;
   if (a.kind === 'chest') return '📦 Sandık';
+  if (a.kind === 'drop') return '🌟 Nadir ağaç';
   if (a.kind === 'free') return 'Ücretsiz';
   return '🔒 Başarı';
 }

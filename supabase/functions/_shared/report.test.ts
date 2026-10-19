@@ -39,7 +39,7 @@ test('buildFacts: dersleri toplar, ortalamayı bugünü hariç tutarak hesaplar'
   assert.equal(f.tasksDone, 1);
   assert.equal(f.tasksTotal, 2);
   assert.equal(f.readingPages, 12);
-  assert.deepEqual(f.plants, ['Küçük ağaç']);
+  assert.deepEqual(f.plants, ['Genç ağaç']);
   assert.deepEqual(f.notes, ['kesirler']);
 });
 

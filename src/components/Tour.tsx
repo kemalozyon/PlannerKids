@@ -54,14 +54,8 @@ export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onC
     setWords([]);
     audio.current?.pause();
     audio.current = null;
-    if (scene.view) {
-      try {
-        localStorage.setItem('ct-world-view-v1', scene.view);
-      } catch {
-        /* yok say */
-      }
-      window.dispatchEvent(new CustomEvent(VIEW_EVENT, { detail: scene.view }));
-    }
+    // Dünyam'da hangi oda açılsın (World.tsx dinler)
+    if (scene.view) window.dispatchEvent(new CustomEvent(VIEW_EVENT, { detail: scene.view }));
     if (location.hash !== `#${scene.hash}`) location.hash = scene.hash;
     (async () => {
       const el = await waitFor(`[data-tour="${scene.target}"]`);

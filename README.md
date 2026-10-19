@@ -36,15 +36,16 @@ src/
     api.ts         supabaseApi (gerçek) ve localApi (demo) — aynı arayüz
     SessionContext.tsx  Çalışma seansı (süre sunucuda): buradayım, sekme/hareketsizlikte duraklatma
     world.ts       Dünya: arazi aşamaları, karo ızgarası, yerleştirme kuralları (masa üstü, duvar), A*, eşya kullanma, günlük ağaçlar
-    worldPlan.ts   Tek bağlı dünya: alanların dünyadaki yeri, kapılar (bölgeler arası geçiş), orman yolu
+    worldPlan.ts   Tek oda planı (Habbo gibi): seçilen oda, kapının götürdüğü oda, ay bahçesi planı
     avatar.ts      Parça parça avatar: görünüş, parçalar, renkler, sahiplik
     date.ts        Yerel tarih yardımcıları (YYYY-MM-DD, hafta pazartesi başlar)
-  components/world3d/  3D dünya (react-three-fiber): tek sahne (WorldScene), çatısı açılan ev, bahçe, orman yolu, ağaç bahçeleri, eşyalar
+  components/world3d/  3D (react-three-fiber): seçilen oda ya da teras (WorldScene), Bahçem'in ay bahçesi (GardenView), eşyalar
   components/avatar/   Kodla çizilen avatar, önizleme ve karakter düzenleyici
   components/Tour.tsx  Tanıtım turu (driver.js + kelime kelime altyazı)
   pages/
     Today.tsx      Sayaç / elle giriş, bugünkü kayıtlar, görevler, günlük değerlendirme
-    World.tsx      Dünyam: tek bağlı dünya; Habbo tarzı düzenleme, eşya kullanma çubuğu, arazinin büyümesi
+    World.tsx      Dünyam: Habbo gibi tek tek odalar, oda şeridi, alttaki panel (eşya, Envanter, Dükkân, Oda)
+    Garden.tsx     Bahçem: her gün bir ağaç; ağaca dokunup o günün Elmasını al
     Library.tsx    Kitaplığım: Open Library araması, raf, şu an okuduklarım, okunacaklar, okuma hedefleri
     History.tsx    Aylık takvim (ısı haritası + ruh hali), gün detayı, haftalık çubuk grafik, ders dağılımı
     Courses.tsx    Ders ekle / düzenle / sil
@@ -52,70 +53,69 @@ src/
     Rewards.tsx    Ödül hedefleri (çocuğun gördüğü)
     ParentPanel.tsx Aile paneli (PIN): haftalık özet, plan onayı, not, ödüller, oyun ve Elmas, rapor ayarları
     Shop.tsx       Dükkân: 💎 ile mobilya, ışık, bitki, halı, duvar süsü, kaplama, dış mekân, kıyafet (alt başlıklarla)
-    Collection.tsx Koleksiyon defteri ve ağaç bahçeleri
+    Collection.tsx Koleksiyon defteri ve ağaç bahçelerinin özeti
   demo/script.json  Tanıtım turunun sahneleri
-supabase/migrations/0001_init.sql … 0018_config.sql
+supabase/migrations/0001_init.sql … 0036_tree_claim.sql (sırayla çalıştır)
 public/demo/       Tanıtım sesleri ve kelime zamanları (npm run demo:audio, ElevenLabs)
 ASSETS_LICENSES.md 3D modellerin lisansları (Kenney, CC0)
 src/config/economy.json, items.json   Ekonominin tek kaynağı (npm run config:sql → yeni migration)
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
 ```
 
-## Oyunlaştırma: çalıştıkça büyüyen dünya (10–14 yaş)
+## Oyunlaştırma: çalıştıkça büyüyen ev ve bahçe (10–14 yaş)
 
-Ana döngü: **çalış → bugünün ağacı büyür → arazin genişler → kazandığın Elmasla evini, bahçeni ve karakterini
-süsle.** Dünyanın büyüklüğü yalnızca çalışmayla, güzelliği Elmasla artar; arazi satın alınamaz. Tek oyunculu; ev,
-bahçe ve harita verisi `user_id`'ye bağlı (ileride salt okunur ziyaret eklenebilir).
+Ana döngü: **çalış → bugünün ağacı büyür → ağacından Elmasını al → Elmasla odalarını ve karakterini süsle.**
+Evin büyüklüğü yalnızca çalışmayla, güzelliği Elmasla artar. Tek oyunculu; ev ve bahçe verisi `user_id`'ye bağlı.
 
-### Dünyam: tek bağlı dünya (ev, bahçe, orman yolu, aylık ağaç bahçeleri)
+### Dünyam: Habbo gibi odalar
 
-Alt menüdeki **Dünyam** sekmesi, react-three-fiber ile çizilen low-poly **tek, büyük bir dünya**: kütüphane ve oda
-yan yana bir evin içi, evin önünde bahçe, bahçe kapısından doğuya uzanan orman yolu ve yolun iki yanında aylık ağaç
-bahçeleri. Karakter kapılardan **yürüyerek** geçer; sahne değişmez, ekran kararmaz. İzometrik hisli ortografik kamera
-karakteri izler; döndürme, yakınlaştırma ve kaydırma serbest. Sahne yalnızca bir şey değişince çizilir
-(`frameloop="demand"`); kameradan uzak alanlar sade çizilir (eşya, canlı yok); aynı türdeki ağaçlar tek çizimde;
-telefonda gölgeler varsayılan kapalı (🌗), ⛶ büyütür.
+Alt menüdeki **Dünyam**, react-three-fiber ile çizilen odalar: Habbo'daki gibi **odalara tek tek girilir**. Seçilen
+oda koyu bir boşlukta yüzen bir ada; yalnızca arkadaki iki duvarı var, kamera hep aynı açıdan bakar (yakınlaştırma
+ve kaydırma var). Sahne yalnızca bir şey değişince çizilir (`frameloop="demand"`); ⛶ tam ekran açar.
 
-- **Ev, Sims gibi:** dışarıdan çatısı ve ön duvarlarıyla bir ev; karakter içeri girince çatı silikleşir, ön ve doğu
-  duvarları alçalır, içerisi görünür. Oda ile kütüphane arasında açık bir kapı var.
-- **Sekmeler hedeftir:** 🏠 Odam · 📚 Kütüphane · 🏡 Bahçe · 🌳 Ağaç bahçeleri ve ay çipleri karakteri oraya yürütür
-  (uzun yolda koşar). Karakterin yeri bu cihazda saklanır.
-- **Arazi yerinde büyür:** toplam (sayaçla ölçülen) çalışmayla aşama aşama: 🌼 Açıklık → 🏞️ Dere Kenarı (15 sa,
-  dere ve köprü) → ⛰️ Tepe (40, tepe ve koru, iki katlı ev) → 🦆 Göl (80) → 🏖️ Sahil (150, deniz ve iskele). Ev
-  (oda 12×10 → 20×14) ve bahçe yalnızca doğuya ve güneye büyür, yeni özellikler yalnızca yeni açılan karolarda çıkar:
-  **eşyalar yerinde kalır**, taşınma yok. Aşama saklanmaz, saatten türer (`0017_world_v3.sql → world_ctx`).
-- **Oda ve kütüphane:** karoya dokununca karakter oraya **A\* ile** yürür; alanlar arasında yalnızca kapılardan geçer.
-  Kütüphane odası baştan açık: arka duvardaki gömme raflarda ve odaya konan kitaplıklarda **bitirilen kitaplar 3D**
-  durur (sırtında adı); kitaba dokununca kitap kartı (kapak, en sevdiğin kısım) açılır.
-- **Eşyalar işlevli:** bir eşyaya dokununca karakter yanına yürür ve kullanma çubuğu açılır. Sandalye, koltuk, kanepe
-  ve banka **oturulur**, yatağa **yatılır**, salıncakta **sallanılır** (boş bir yere dokununca kalkar). Lamba, fener,
-  ışık zinciri, şömine, kamp ateşi ve TV **açılıp kapanır** (bu cihazda saklanır); açık lambaların en yakın dördü
-  gerçek ışık saçar. **TV** açılınca ekranda iki kanal var: 📊 bugünkü ve haftalık çalışma, seri, toplam saat; 🌳 bu
-  ayın ormanı. **Pencerelerden** dışarısı görünür; gökyüzü gerçek saate göre sabah, gündüz, akşam ve gecedir.
-  Kitaplığın çubuğunda "📚 Rafları aç".
-- **Gezerken düzenle:** kullanma çubuğundaki ✋ Taşı ile eşya ele alınır, karoya dokununca yerine konur; ↻ döndürür,
-  📦 envantere kaldırır. Her biri hemen kaydedilir (sunucu doğrular).
-- **Düzenle (✏️), Habbo gibi kare kare:** karakterin bulunduğu alan düzenlenir; kamera o alana sığar ve sabit açıya
-  kilitlenir, ızgara ve imlecin altındaki karo görünür. Eşyaya dokun → seç (↻ Döndür, ✋ Taşı, 📦 Envantere); sürükle
-  → taşı. Envanter kategorili; aynı eşyadan daha varsa elde kalır (çit, yol döşemek kolay). **Küçük eşyalar** (laptop,
-  lamba, kaktüs…) masa ve sehpaların üstüne, **duvar süsleri** (poster, tablo, gerçek saati gösteren saat, ayna, raf…)
-  duvara konur. Yerleşim her alan için `user_spaces`'te jsonb olarak durur ve **sunucuda doğrulanır**: alan sınırı,
-  kapı/ekim yeri gibi sabit karolar, katmanlar (zemin, eşya, masa üstü, duvar), çakışma ve envanter (`save_space`).
-- **Her gün bir ağaç:** çalışılan her gün (sayaç ya da elle yazılan süre) o ayın bahçesine bir ağaç dikilir. Türü
-  tarihten seçilir (14 tür: meşe, çam, kiraz, akçaağaç, elma, limon, palmiye…; mevsimine uygun türler daha sık),
-  büyüklüğü günün toplamından: fidan, 20 dk küçük, 45 orta, 90 büyük, 150 dev; 3 saati geçen gün ışıltılı, seri günü
-  dibinde çiçek. Yalnızca yarıda bırakılmış seansı olan gün kuru ağaç olur. Gün içinde çalıştıkça ağaç büyür (animasyonla).
-- **Aylık ağaç bahçeleri:** Eylül 2026 – Haziran 2027 arası her ay bir bahçe. Takvim düzeni: sütun haftanın günü,
-  satır ayın haftası; çalışılmayan günün yerinde numaralı taş. Günü gelmemiş aylar kilitli. Bahçeler de süslenebilir.
-  Ağaca dokununca (ya da gezintide yaklaşınca) **o günün kartı**: süre, dersler ve notlar, ruh hâli, bitirilen görevler ve kitap.
-  Bahçeler orman yolunun iki yanında, iki sıra halinde; kilitli bahçeler sisli görünür.
-- **Canlılar:** ağaçlar (çalışılan günler) çoğaldıkça kendiliğinden gelir; satın alınamaz.
-- **🚶 Yakından gez:** bütün dünyada üçüncü şahıs kamerayla yürü (joystick / WASD): evden çık, bahçeden ormana koş;
-  duvarlardan geçilmez, kapılardan geçilir. Ağaca yaklaşınca o günün özeti çıkar, dünyaya saklanan 8 yıldızı topla.
-- **Çalışırken oyun kapalı:** sayaç çalışırken Dünyam, Dükkân ve Koleksiyon yerine "Çalışırken dünyan kapalı" kartı
-  çıkar: sayaca dön ya da ☕ ara ver (sayaç durur) ve gir.
+- **Oda şeridi:** 🛋️ Odam · 📚 Kütüphane · eklediğin odalar ve teraslar · ➕ Oda ekle. Kapıya dokununca karakter
+  kapıya yürür ve yan odaya geçer (evin sırası: kütüphane | oda | eklenen odalar). Karakterin yeri her odada saklanır.
+- **Alttaki panel (pop-up yok):** bir eşyaya dokununca panelde resmi, adı, nadirliği, ne işe yaradığı ve düğmeleri
+  çıkar: kullan (otur, yat, sallan, aç-kapa, renk, depo, raflar, müzik, pano…; karakter yanına yürür, sonra yapar),
+  ✋ Taşı, ↻ Döndür, 📦 Kaldır. Karaktere dokununca dans, el sallama, hayvan ve kıyafet düğmeleri. Sekmeler:
+  **🎒 Envanter** (eşya seç, sonra karoya dokun; çit gibi eşyalar elde kalır), **🛍️ Dükkân** (katalog; "🏠 Hemen
+  yerleştir" eşyayı ele verir), **🎨 Oda** (zemin/duvar kaplaması, şekil, oda ekle, yakından gez). Kaydet tuşu
+  yok: her değişiklik hemen kaydedilir, sunucu doğrular (`save_space`); kaldırma ve taşımada ↶ Geri al.
+- **Odalar ve teras:** istediğin türde (mutfak, yatak odası, banyo, salon… ya da **🌿 Teras**) en çok 12 oda eklenir.
+  Teras açık havadır: çim zemin, duvar yok; çit, çiçek, bostan, kamp ve heykel gibi dış eşyalar buraya konur.
+- **Blok düzenleyici:** eklenen odanın şekli bir şablonla (Kare, L, Basamak…) başlar, sonra **karo karo** değişir:
+  karoya dokun, zemin eklensin ya da çıksın; en/boy düğmeleri kutuyu büyütür (en çok 42×20). Arka sıra ve sol sütun
+  duvar dibidir, hep dolu kalır; karolar birbirine bağlı olmalı. Yeni şekle sığmayan eşyalar envantere döner.
+- **Ev yerinde büyür:** toplam (sayaçla ölçülen) çalışmayla aşama aşama: 🌼 Açıklık → 🏞️ Dere Kenarı (15 sa) →
+  ⛰️ Tepe (40) → 🦆 Göl (80) → 🏖️ Sahil (150). Oda (12×10 → 20×14) ve kütüphane yalnızca doğuya ve güneye büyür:
+  **eşyalar yerinde kalır**. Pencereden görünen manzara aşamaya göre değişir.
+- **Kütüphane:** gömme raflarda ve odaya konan kitaplıklarda **bitirilen kitaplar 3D** durur; kitaba dokununca kitap
+  kartı açılır.
+- **Eşyalar işlevli:** lamba, şömine, TV açılıp kapanır (açık lambaların en yakın dördü gerçek ışık saçar); **TV**'de
+  📊 çalışman ve 🌳 bu ayın ormanı; radyo/pikap müzik çalar, mantar panoya not asılır, masada ders çalışılır.
+- **🚶 Yakından gez:** seçili odada üçüncü şahıs kamerayla yürü (joystick / WASD), odaya saklanan 8 yıldızı topla;
+  eşyalara dokununca aynı düğmeler alttaki çubukta.
+- **Çalışırken oyun kapalı:** sayaç çalışırken Dünyam ve Koleksiyon yerine karakterinin masada çalıştığı oda görünür:
+  sayaca dön ya da ☕ ara ver ve gir.
+
+### Bahçem: her gün bir ağaç
+
+Alt menüdeki **Bahçem** ayrı bir sayfa ve süslenmez: yalnızca ağaçlar.
+
+- **Her gün bir ağaç:** çalışılan her gün (sayaç ya da elle yazılan süre) o ayın bahçesine bir ağaç dikilir. Türü o
+  gün seçilen tohumdan (Bugün → 🌱 Tohum seç), seçilmediyse tarihten. Büyüklüğü günün toplamından: Fidan, 60 dk Genç,
+  120 dk Tam, 180 dk Nadir (ışıltılı); seri günü dibinde çiçek. Yarıda bırakılan seans ağaç dikmez.
+- **Ağaçtan Elmas:** o günün Elması (ders, canlı bonus, elle yazılan, seri, plan, "nasıl geçti", günlük görev, aile
+  görevi) **ağacında bekler**; üstünde 💎 parlar. Ağaca dokun → gün kartı → "💎 N Elmas'ı al". Hiç kaybolmaz; o gün
+  daha çok çalışırsan yeni Elmas yine ağaçta birikir. Haftalık görevler ve kitaplar kendiliğinden gelir.
+  (`0036_tree_claim.sql → claim_day`; 18 Ekim 2026'dan önceki günler kendiliğinden yazılmıştı.)
+- **Nadir ağaç ödülü:** bir günde 180 dk **sayaçla** çalışınca ağacın dibinden yalnızca bu yolla bulunan nadir bir
+  eşya çıkar (gün kartında "🎁 Ödülünü al").
+- **Aylık bahçeler:** Eylül 2026 – Haziran 2027 arası her ay bir bahçe; takvim düzeni (sütun haftanın günü, satır
+  ayın haftası), çalışılmayan günün yerinde numaralı taş, günü gelmemiş aylar kilitli. Altında aynı ay bir takvim
+  olarak da durur (3D yoksa yalnızca takvim). **Canlılar** ağaçlar çoğaldıkça kendiliğinden gelir.
 - Modeller Kenney Nature Kit, Furniture Kit ve Cube Pets (CC0); avatar, posterler ve kitaplar kodla çizilir. Ayrıntı
-  `ASSETS_LICENSES.md`. WebGL yoksa ağaçlar aylara göre düz liste olarak görünür.
+  `ASSETS_LICENSES.md`.
 
 ### Karakterim (Profil)
 
@@ -145,6 +145,7 @@ Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığ
   - Planı tamamlanan gün +3. Biten kitap +5, haftada en çok 2 kitap.
   - Ders görevleri +2–5: bugün 30 dk; bu hafta 5 gün, 3 planlı gün, 3 farklı ders, bir kitap.
   - Geçmiş kayıtlar da sayılır.
+  - **Ağaçtan alınır:** güne bağlı Elmas o günün ağacında bekler, Bahçem'de ağaca dokununca kumbaraya geçer.
 - **⭐ Yıldız** gezintide toplanır (günde 8). Para değildir, koleksiyonda birikir.
 - **Dükkân:** mobilya (oturma, masa, yatak odası, kitaplık, mutfak, banyo, elektronik, oyuncak), ışık, bitki, halı,
   duvar süsü, zemin/duvar kaplaması (desenli), dış mekân (çit, yol, çiçek, bostan, doğa, kamp, heykel) ve kıyafet;
@@ -155,7 +156,7 @@ Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığ
 - **Seviye ve ders yetenekleri (Profil):**
   - Toplam saate göre Çırak → Kâşif → Orman Bekçisi → Bahçıvan → Orman Ustası → Orman Bilgesi → Efsane.
   - Her ders bronz/gümüş/altın olur; unvanlar Bilge, Hikâyeci, Mucit, Gezgin… En az çalışılan ders "bunu da büyüt" diye vurgulanır.
-- **Koleksiyon defteri:** bütün eşyalar (eksikler gölge gibi) ve ağaç bahçelerinin özeti.
+- **Koleksiyon defteri:** bütün eşyalar (eksikler gölge gibi) ve ağaç bahçelerinin özeti (Bahçem'e bağlantı).
 - **Aile paneli → Oyun ve Elmas:** bakiye, son hareketler, hediye Elmas (1–50), kuralların özeti.
 - **Kopya önlemi:** süreyi ve kazancı sunucu hesaplar. Deftere ve sayaç kayıtlarına yalnızca sunucu fonksiyonları yazar; kaydın süresi sonradan değiştirilemez. Bakiyeyi aşan alışveriş, sandık havuzunda olmayan eşya ve defter silme reddedilir.
 
@@ -174,7 +175,7 @@ Değerli şeyler yalnızca ders çalışarak alınır; oyun paranın harcandığ
 - **Aile paneli** (Profil › Aile paneli): 4 haneli PIN ile açılır (çocuk kilidi; aynı hesap). Haftalık özet,
   "zordu" uyarısı, plan onayı, çocuğa not (Bugün ekranında 3 gün görünür, çocuk teşekkür/kalp ile yanıtlar),
   ödül ekleme ve günlük rapor ayarları.
-- **Alt menü:** Bugün · Dünyam · Kitaplık · Geçmiş · Profil. Dersler, Ödüller, Aile paneli ve Tanıtım Profil'in altında.
+- **Alt menü:** Bugün · Dünyam · Bahçem · Kitaplık · Geçmiş · Profil. Dersler, Ödüller, Aile paneli ve Tanıtım Profil'in altında.
 
 ## Okuma ve kitaplık
 

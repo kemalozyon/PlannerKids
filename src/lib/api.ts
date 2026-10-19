@@ -3,20 +3,40 @@ import { buildFacts, fallbackNarrative, renderEmail } from '../../supabase/funct
 import { gatherReportInput } from './reportInput';
 import { itemById } from './catalog';
 import { CFG } from './config';
-import { toLocalDate } from './date';
-import { balances, bestStreakOf, chestOf, dayTotalsOf, earnedEntries, inChestPool, ownedCount, pendingEarnings, trusted } from './economy';
+import { addDays, toLocalDate } from './date';
+import {
+  balances,
+  bestStreakOf,
+  chestOf,
+  dayEarnings,
+  dayTotalsOf,
+  DROP_MINUTES,
+  dropsOf,
+  earnedEntries,
+  inChestPool,
+  inDropPool,
+  ownedCount,
+  pendingEarnings,
+  treeElmasOf,
+  trusted,
+} from './economy';
 import { levelOf } from './level';
 import { dayTrees, isHome, isMonthSpace, itemCounts, layoutProblem, mapFor, roomInputProblem, roomSpace, type SpaceId, type SpaceLayout } from './world';
+import { seedProblem } from './seeds';
 import { beat, newSession, noteProblem, pause, resume, sessionMinutes, type SessionState, type StudySession } from './session';
 import {
   DEFAULT_FAMILY,
   DEFAULT_READING_GOALS,
   type FamilySettings,
   type ParentNote,
+  type BoardNote,
+  BOARD_MAX,
+  BOARD_TEXT_MAX,
   type PlanItem,
   type Reward,
   type Abandoned,
   type Api,
+  type NewLedgerEntry,
   type Book,
   type Course,
   type DailyReport,
@@ -27,6 +47,7 @@ import {
   type Reflection,
   type StudyLog,
   type Task,
+  type DaySeed,
   type Equipped,
   type UserRoom,
   type LedgerEntry,
@@ -103,6 +124,9 @@ export function supabaseApi(sb: SupabaseClient): Api {
     },
     async addTask(task) {
       return check(await sb.from('tasks').insert(task).select().single()) as Task;
+    },
+    async listParentTasks(from, to) {
+      return check(await sb.from('tasks').select('*').eq('from_parent', true).gte('date', from).lte('date', to).order('date').order('created_at')) as Task[];
     },
     async setTaskDone(id, done) {
       check(await sb.from('tasks').update({ done }).eq('id', id));
@@ -237,6 +261,24 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async deleteNote(id) {
       check(await sb.from('parent_notes').delete().eq('id', id));
     },
+    async listBoardNotes() {
+      return check(await sb.from('board_notes').select('id,text,color,done,created_at').order('created_at').order('id').limit(BOARD_MAX)) as BoardNote[];
+    },
+    async addBoardNote(text, color) {
+      return check(await sb.from('board_notes').insert({ text, color }).select('id,text,color,done,created_at').single()) as BoardNote;
+    },
+    async updateBoardNote(id, patch) {
+      check(await sb.from('board_notes').update(patch).eq('id', id));
+    },
+    async deleteBoardNote(id) {
+      check(await sb.from('board_notes').delete().eq('id', id));
+    },
+    async listDaySeeds() {
+      return all<DaySeed>((a, b) => sb.from('day_seeds').select('date,species').order('date').range(a, b));
+    },
+    async setDaySeed(date, species) {
+      check(await sb.from('day_seeds').upsert({ date, species }, { onConflict: 'user_id,date' }));
+    },
     async listAbandoned() {
       return all<Abandoned>((a, b) => sb.from('abandoned_sessions').select('id,date,minutes,created_at').order('created_at').order('id').range(a, b));
     },
@@ -284,6 +326,18 @@ export function supabaseApi(sb: SupabaseClient): Api {
         await sb.from('owned_items').insert({ item_id: itemId, via: 'chest', ref: week }).select('id,item_id,via,ref,created_at').single(),
       ) as OwnedItem;
     },
+    async openDrop(date, itemId) {
+      return check(
+        await sb.from('owned_items').insert({ item_id: itemId, via: 'drop', ref: date }).select('id,item_id,via,ref,created_at').single(),
+      ) as OwnedItem;
+    },
+    async listTreeElmas() {
+      const rows = check(await sb.rpc('economy_pending')) as { d: string; amount: number }[] | null;
+      return (rows ?? []).map((r) => ({ date: r.d, amount: r.amount }));
+    },
+    async claimDay(date) {
+      return (check(await sb.rpc('claim_day', { p_date: date })) as number | null) ?? 0;
+    },
     async getEquipped() {
       const row = check(await sb.from('family_settings').select('equipped').maybeSingle()) as { equipped: Equipped | null } | null;
       return row?.equipped ?? null;
@@ -299,13 +353,13 @@ export function supabaseApi(sb: SupabaseClient): Api {
       check(await sb.rpc('save_space', { p_space: space, p_layout: layout }));
     },
     async listRooms() {
-      return check(await sb.from('user_rooms').select('id,kind,shape,size,name,pos').order('pos')) as UserRoom[];
+      return check(await sb.from('user_rooms').select('id,kind,shape,size,cells,name,pos').order('pos')) as UserRoom[];
     },
     async addRoom(r) {
-      return check(await sb.rpc('add_room', { p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim() })) as UserRoom;
+      return check(await sb.rpc('add_room', { p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim(), p_cells: r.cells ?? null })) as UserRoom;
     },
     async updateRoom(id, r) {
-      check(await sb.rpc('update_room', { p_id: id, p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim() }));
+      check(await sb.rpc('update_room', { p_id: id, p_kind: r.kind, p_shape: r.shape, p_size: r.size, p_name: r.name.trim(), p_cells: r.cells ?? null }));
     },
     async deleteRoom(id) {
       check(await sb.rpc('delete_room', { p_id: id }));
@@ -318,6 +372,7 @@ interface DemoDb {
   courses: Course[];
   logs: StudyLog[];
   tasks: Task[];
+  daySeeds?: DaySeed[];
   reflections: Reflection[];
   books?: Book[];
   readingLogs?: ReadingLog[];
@@ -327,6 +382,7 @@ interface DemoDb {
   plans?: PlanItem[];
   family?: FamilySettings;
   notes?: ParentNote[];
+  boardNotes?: BoardNote[];
   rewards?: Reward[];
   abandoned?: Abandoned[];
   ledger?: LedgerEntry[];
@@ -337,7 +393,24 @@ interface DemoDb {
   rooms?: UserRoom[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v16';
+export const DEMO_KEY = 'ct-demo-db-v17';
+
+/** Demo: kayıtların hak ettirdiği kazançlar (sunucudaki economy_entries) */
+function earnedOf(db: DemoDb) {
+  return earnedEntries({
+    logs: db.logs, plans: db.plans ?? [], books: db.books ?? [], reflections: db.reflections, owned: db.owned ?? [], tasks: db.tasks, today: toLocalDate(),
+  });
+}
+
+/** Demo: kazancı deftere yaz (yeni ya da artan); artışı döner */
+function writeEarned(db: DemoDb, e: NewLedgerEntry): number {
+  db.ledger ??= [];
+  const old = db.ledger.find((x) => x.currency === e.currency && x.kind === e.kind && x.ref === e.ref);
+  const gain = e.amount - (old?.amount ?? 0);
+  if (old) old.amount = e.amount;
+  else db.ledger.push({ id: uid(), currency: e.currency, kind: e.kind, ref: e.ref, amount: e.amount, note: null, created_at: new Date().toISOString() });
+  return Math.max(0, gain);
+}
 
 function uid(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -485,10 +558,15 @@ export function localApi(seed: () => DemoDb): Api {
       return load().tasks.filter((t) => t.date === date);
     },
     async addTask(task) {
-      const t: Task = { ...task, id: uid(), done: false, created_at: now() };
+      const t: Task = { ...task, from_parent: !!task.from_parent, id: uid(), done: false, created_at: now() };
       load().tasks.push(t);
       save();
       return t;
+    },
+    async listParentTasks(from, to) {
+      return load()
+        .tasks.filter((t) => t.from_parent && t.date >= from && t.date <= to)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at));
     },
     async setTaskDone(id, done) {
       const t = load().tasks.find((x) => x.id === id);
@@ -627,6 +705,38 @@ export function localApi(seed: () => DemoDb): Api {
       db.notes = (db.notes ?? []).filter((n) => n.id !== id);
       save();
     },
+    async listBoardNotes() {
+      return [...(load().boardNotes ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, BOARD_MAX);
+    },
+    async addBoardNote(text, color) {
+      const db = load();
+      db.boardNotes ??= [];
+      if (db.boardNotes.length >= BOARD_MAX) throw new Error('Pano doldu');
+      const n: BoardNote = { id: uid(), text: text.trim().slice(0, BOARD_TEXT_MAX), color, done: false, created_at: now() };
+      db.boardNotes.push(n);
+      save();
+      return n;
+    },
+    async updateBoardNote(id, patch) {
+      const n = load().boardNotes?.find((x) => x.id === id);
+      if (n) Object.assign(n, patch);
+      save();
+    },
+    async deleteBoardNote(id) {
+      const db = load();
+      db.boardNotes = (db.boardNotes ?? []).filter((n) => n.id !== id);
+      save();
+    },
+    async listDaySeeds() {
+      return [...(load().daySeeds ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+    },
+    async setDaySeed(date, species) {
+      const db = load();
+      const bad = seedProblem(date, species, db.owned ?? [], toLocalDate());
+      if (bad) throw new Error(bad);
+      db.daySeeds = [...(db.daySeeds ?? []).filter((s) => s.date !== date), { date, species }];
+      save();
+    },
     async listAbandoned() {
       return [...(load().abandoned ?? [])];
     },
@@ -666,15 +776,21 @@ export function localApi(seed: () => DemoDb): Api {
     async syncEconomy() {
       const db = load();
       db.ledger ??= [];
-      const earned = earnedEntries({
-        logs: db.logs, plans: db.plans ?? [], books: db.books ?? [], reflections: db.reflections, owned: db.owned ?? [], today: toLocalDate(),
-      });
-      for (const e of pendingEarnings(db.ledger, earned)) {
-        const old = db.ledger.find((x) => x.currency === e.currency && x.kind === e.kind && x.ref === e.ref);
-        if (old) old.amount = e.amount;
-        else db.ledger.push({ id: uid(), currency: e.currency, kind: e.kind, ref: e.ref, amount: e.amount, note: null, created_at: now() });
-      }
+      for (const e of pendingEarnings(db.ledger, earnedOf(db))) writeEarned(db, e);
       save();
+    },
+    async listTreeElmas() {
+      const db = load();
+      return [...treeElmasOf(db.ledger ?? [], earnedOf(db))].map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date));
+    },
+    async claimDay(date) {
+      const db = load();
+      db.ledger ??= [];
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > addDays(toLocalDate(), 1)) throw new Error('Bu günün ağacı yok');
+      let gain = 0;
+      for (const e of dayEarnings(db.ledger, earnedOf(db), date)) gain += writeEarned(db, e);
+      save();
+      return gain;
     },
     async collectStar(date, index) {
       const db = load();
@@ -725,6 +841,19 @@ export function localApi(seed: () => DemoDb): Api {
       save();
       return { ...row };
     },
+    async openDrop(date, itemId) {
+      const db = load();
+      db.owned ??= [];
+      const item = itemById(itemId);
+      if (!item || !inDropPool(item)) throw new Error('Bu eşya nadir ağaçtan çıkmaz');
+      const d = dropsOf(dayTotalsOf(db.logs), db.owned, toLocalDate()).find((x) => x.date === date);
+      if (!d) throw new Error(`Bu gün nadir ağaç ödülü yok (bir günde ${DROP_MINUTES} dk sayaçla çalışmak gerekir)`);
+      if (d.opened) throw new Error('Bu günün ödülü zaten alındı');
+      const row: OwnedItem = { id: uid(), item_id: itemId, via: 'drop', ref: date, created_at: now() };
+      db.owned.push(row);
+      save();
+      return { ...row };
+    },
     async getEquipped() {
       const e = load().equipped;
       return e ? structuredClone(e) : null;
@@ -746,7 +875,7 @@ export function localApi(seed: () => DemoDb): Api {
       const today = toLocalDate();
       const best = bestStreakOf(db.logs, db.owned ?? [], today);
       const ctx = { map: mapFor(minutes).id, today, rooms: db.rooms ?? [] };
-      const trees = dayTrees(db.logs, []).length;
+      const trees = dayTrees(db.logs).length;
       const progress = { bestStreak: best, planDays: 0, gold: 0, level: levelOf(minutes).index, hours: minutes / 60, trees };
       const elsewhere = (id: string) =>
         Object.entries(db.spaces!)
@@ -767,7 +896,15 @@ export function localApi(seed: () => DemoDb): Api {
       const bad = roomInputProblem(r);
       if (bad) throw new Error(bad);
       if (db.rooms.length >= CFG.world.maxRooms) throw new Error(`En çok ${CFG.world.maxRooms} oda eklenebilir`);
-      const row: UserRoom = { id: uid().replace(/[^a-z0-9]/g, '').slice(0, 8), kind: r.kind, shape: r.shape, size: r.size, name: r.name.trim(), pos: Math.max(-1, ...db.rooms.map((x) => x.pos)) + 1 };
+      const row: UserRoom = {
+        id: uid().replace(/[^a-z0-9]/g, '').slice(0, 8),
+        kind: r.kind,
+        shape: r.shape,
+        size: r.size,
+        ...(r.cells ? { cells: structuredClone(r.cells) } : {}),
+        name: r.name.trim(),
+        pos: Math.max(-1, ...db.rooms.map((x) => x.pos)) + 1,
+      };
       db.rooms.push(row);
       save();
       return { ...row };
@@ -779,6 +916,8 @@ export function localApi(seed: () => DemoDb): Api {
       const bad = roomInputProblem(r);
       if (bad) throw new Error(bad);
       Object.assign(row, { kind: r.kind, shape: r.shape, size: r.size, name: r.name.trim() });
+      if (r.cells) row.cells = structuredClone(r.cells);
+      else delete row.cells;
       save();
     },
     async deleteRoom(id) {

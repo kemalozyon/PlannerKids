@@ -198,6 +198,42 @@ function Aquarium({ w, on }: { w: number; on: boolean }) {
   );
 }
 
+/** Aplik: duvara tutturulmuş kol ve küçük abajur; açıkken yanar */
+function Sconce({ on, color }: { on: boolean; color: string }) {
+  return (
+    <group>
+      <mesh position={[0, -0.12, 0.03]}>
+        <boxGeometry args={[0.12, 0.2, 0.04]} />
+        <meshStandardMaterial color="#c9a227" roughness={0.4} metalness={0.5} />
+      </mesh>
+      <mesh position={[0, -0.05, 0.12]} rotation-x={Math.PI / 2}>
+        <cylinderGeometry args={[0.02, 0.02, 0.18, 6]} />
+        <meshStandardMaterial color="#c9a227" roughness={0.4} metalness={0.5} />
+      </mesh>
+      <mesh position={[0, 0.06, 0.2]}>
+        <cylinderGeometry args={[0.1, 0.15, 0.18, 14, 1, true]} />
+        <meshStandardMaterial color={on ? '#fff3d0' : color} emissive="#ffd27a" emissiveIntensity={on ? 0.9 : 0} side={DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+/** Neon şerit: duvar boyunca parlayan çubuk; renk seçilebilir */
+function NeonStrip({ w, on, color }: { w: number; on: boolean; color: string }) {
+  return (
+    <group position={[0, 0.55, 0]}>
+      <mesh position={[0, 0, 0.02]}>
+        <boxGeometry args={[w, 0.05, 0.03]} />
+        <meshStandardMaterial color="#2b2622" />
+      </mesh>
+      <mesh position={[0, 0, 0.045]}>
+        <boxGeometry args={[w - 0.04, 0.025, 0.02]} />
+        <meshStandardMaterial color={on ? color : '#9aa5ad'} emissive={color} emissiveIntensity={on ? 1.6 : 0} toneMapped={!on} />
+      </mesh>
+    </group>
+  );
+}
+
 /** art adı → çizim (Framed'in resimlerinden ayrı, kendi biçimi olanlar) */
 export const WALL_ART: Record<string, ComponentType<WallArtProps>> = {
   'ayna-yuvarlak': () => <Mirror />,
@@ -208,4 +244,6 @@ export const WALL_ART: Record<string, ComponentType<WallArtProps>> = {
   'neon-yildiz': ({ on, color }) => <Neon shape="yildiz" on={on} color={color} />,
   asma: ({ color }) => <Hanging color={color} />,
   akvaryum: ({ w, on }) => <Aquarium w={w} on={on} />,
+  aplik: ({ on, color }) => <Sconce on={on} color={color} />,
+  'neon-serit': ({ w, on, color }) => <NeonStrip w={w} on={on} color={color} />,
 };

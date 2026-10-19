@@ -1,59 +1,110 @@
-// Dükkân penceresi: eşyalar 💎 Elmasla alınır (yalnızca çalışarak kazanılır, tek para).
-// Efsanevi eşyalar yalnızca başarıyla ya da sandıktan gelir.
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+// Dükkân (Dünyam'ın alttaki panelinde, WorldDock): eşyalar 💎 Elmasla alınır (yalnızca çalışarak kazanılır, tek
+// para). Efsanevi eşyalar yalnızca başarıyla, sandıktan ya da nadir ağaç gününden gelir.
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import ItemCard, { priceText } from '../components/ItemCard';
 import Sheet from '../components/Sheet';
-import { behaviorText, CATEGORIES, companionSlots, groupOf, groupTitle, ITEMS, placeable, RARITY, type Category, type Item } from '../lib/catalog';
+import { behaviorText, CATEGORIES, companionSlots, groupOf, groupTitle, isNewItem, ITEMS, placeable, RARITY, SUBS, type Category, type Item } from '../lib/catalog';
+import { toLocalDate } from '../lib/date';
 import { lookParts, SLOT_KEY, wear } from '../lib/avatar';
 import { buyCheck, owns, unlockHint, unlockValue } from '../lib/economy';
 import { useGame } from '../lib/GameContext';
 import { useSession } from '../lib/SessionContext';
 import { sfx } from '../lib/sfx';
-import { setShopOpen } from '../lib/shop';
 import type { Equipped } from '../lib/types';
 import { hasWebGL } from '../lib/webgl';
 
 const ItemPreview = lazy(() => import('../components/forest3d/ItemPreview'));
 
+/** Bu cihazda bakılmış yeni eşyalar (YENİ rozeti kalkar) */
+const SEEN_KEY = 'ct-seen-v1';
+const loadSeen = (): Set<string> => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+};
+
+type Filter = 'hepsi' | 'alabilir' | 'sende' | 'yeni';
+const FILTERS: [Filter, string][] = [
+  ['hepsi', 'Hepsi'],
+  ['alabilir', '💎 Alabildiklerim'],
+  ['sende', '✓ Sende'],
+  ['yeni', '✨ Yeni'],
+];
+type Sort = 'sira' | 'ucuz' | 'pahali';
+const SORTS: [Sort, string][] = [
+  ['sira', 'Gruplara göre'],
+  ['ucuz', 'Ucuzdan pahalıya'],
+  ['pahali', 'Pahalıdan ucuza'],
+];
+const priceOf = (i: Item) => (i.acquire.kind === 'buy' ? i.acquire.price : i.acquire.kind === 'free' ? 0 : Infinity);
+
 const WHAT: Record<Category, string> = {
   mobilya: 'Odana yerleştirirsin: Dünyam → 🎒 Envanter. Küçük eşyalar masa ve sehpaların üstüne de konur.',
   isik: 'Akşamları etrafını aydınlatır.',
-  bitki: 'Odana ya da bahçene koyabilirsin.',
+  bitki: 'Odana ya da terasına koyabilirsin.',
   hali: 'Yere serilir; üstüne mobilya koyabilirsin.',
   duvarsus: 'Odanın duvarına asarsın: Dünyam → 🎒 Envanter, sonra duvara dokun.',
   zemin: 'Odanın zemini olur: Dünyam → 🎒 Envanter.',
   duvar: 'Odanın duvarlarını kaplar: Dünyam → 🎒 Envanter.',
-  dis: 'Bahçene ya da ağaç bahçelerine yerleştirirsin: Dünyam → 🎒 Envanter.',
+  dis: 'Terasına yerleştirirsin: Dünyam → teras odası → 🎒 Envanter (terasın yoksa 🎨 Oda → ➕ Oda ekle → Teras).',
   kiyafet: 'Karakterin giyer: Profil → Karakterim.',
-  evcil: 'Satın alınamaz: bahçelerinde ağaçlar çoğaldıkça kendiliğinden gelir. Gelince yanına alabilirsin.',
+  evcil: 'Satın alınamaz: Bahçem’de ağaçlar çoğaldıkça kendiliğinden gelir. Gelince yanına alabilirsin.',
+  tohum: 'Bugünün ağacını sen seçersin: Bugün → 🌱 Tohum seç. Mevsimi olan tohumlar yalnızca mevsiminde ekilir.',
   diger: 'Hafta içi bir gün çalışamazsan serin bir kademe düşmez (en çok 7 gün öncesini kapatır).',
 };
 
 /**
- * Dükkân penceresi (Habbo kataloğu gibi): her sayfanın üstünde açılır, sayfa değişmez. Üstte seçili eşyanın
- * önizlemesi ve satın alma, altta kategori sekmeleri ve eşyaların kendi resimleriyle ızgara.
+ * Dükkân paneli (Habbo kataloğu gibi, Dünyam'ın alttaki panelinde): üstte seçili eşyanın önizlemesi ve satın alma,
+ * altta kategori sekmeleri ve eşyaların kendi resimleriyle ızgara. "Hemen yerleştir" eşyayı odada ele verir.
  */
-export default function ShopWindow({ onClose, goCollection, onPlace }: { onClose: () => void; goCollection: () => void; onPlace: (id: string) => void }) {
+export default function ShopPanel({ goCollection, onPlace }: { goCollection: () => void; onPlace: (id: string) => void }) {
   const { stats, buy, equip, celebrate } = useGame();
   const ses = useSession();
   const [tab, setTab] = useState('mobilya');
   const [open, setOpen] = useState<Item | null>(null);
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<Filter>('hepsi');
+  const [sort, setSort] = useState<Sort>('sira');
+  const [seen, setSeen] = useState(loadSeen);
+  const today = toLocalDate();
+  const fresh = (i: Item) => isNewItem(i, today) && !seen.has(i.id);
+  const pick = (i: Item) => {
+    setOpen(i);
+    if (fresh(i)) {
+      const next = new Set(seen).add(i.id);
+      setSeen(next);
+      try {
+        localStorage.setItem(SEEN_KEY, JSON.stringify([...next]));
+      } catch {
+        /* depolama kapalı */
+      }
+    }
+  };
   const can3D = useMemo(hasWebGL, []);
-  useEffect(() => {
-    setShopOpen(true);
-    return () => setShopOpen(false);
-  }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const cats = CATEGORIES.find((c) => c.id === tab)?.cats ?? [];
-  const list = ITEMS.filter((i) => cats.includes(i.category));
-  // Alt kategorilere göre (mobilya: oturma, masa…; kıyafet: saç, üst…)
-  const groups = [...list.reduce((m, i) => m.set(groupOf(i), [...(m.get(groupOf(i)) ?? []), i]), new Map<string, Item[]>())];
+  // Arama bütün kataloğu tarar; yoksa seçili tür
+  const needle = q.trim().toLocaleLowerCase('tr');
+  const base = needle
+    ? ITEMS.filter((i) => i.name.toLocaleLowerCase('tr').includes(needle) || (i.sub && SUBS[i.sub]?.toLocaleLowerCase('tr').includes(needle)))
+    : ITEMS.filter((i) => cats.includes(i.category));
+  const mineOf = (i: Item) => !!stats && owns(i, stats.owned, stats.unlock);
+  const list = base
+    .filter((i) => {
+      if (filter === 'yeni') return fresh(i);
+      if (filter === 'sende') return mineOf(i);
+      if (filter === 'alabilir') return !!stats && i.acquire.kind === 'buy' && (!mineOf(i) || !!i.repeat) && !buyCheck(i.id, stats.crystals, stats.owned, stats.freezesLeft);
+      return true;
+    })
+    .sort((a, b) => (sort === 'ucuz' ? priceOf(a) - priceOf(b) : sort === 'pahali' ? priceOf(b) - priceOf(a) : 0));
+  // Alt kategorilere göre (mobilya: oturma, masa…; kıyafet: saç, üst…); sıralama ya da arama varken tek liste
+  const groups: [string, Item[]][] =
+    sort === 'sira' && !needle ? [...list.reduce((m, i) => m.set(groupOf(i), [...(m.get(groupOf(i)) ?? []), i]), new Map<string, Item[]>())] : [['', list]];
   const sel = open ?? list[0] ?? null;
+  const newCount = ITEMS.filter(fresh).length;
+  const jump = (g: string) => document.getElementById(`shop-g-${g}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   let body: ReactNode;
   if (!stats) body = <div className="splash">Yükleniyor…</div>;
@@ -88,25 +139,55 @@ export default function ShopWindow({ onClose, goCollection, onPlace }: { onClose
             onPlace={placeable(sel) ? () => onPlace(sel.id) : undefined}
           />
         )}
-        <div className="tabs shop-tabs" role="tablist" aria-label="Eşya türü" data-tour="shop">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.id}
-              role="tab"
-              aria-selected={tab === c.id}
-              className={tab === c.id ? 'on' : ''}
-              onClick={() => {
-                setTab(c.id);
-                setOpen(null);
-              }}
-            >
-              <span aria-hidden>{c.icon}</span> {c.name}
+        <div className="shop-tools">
+          <input className="shop-search" type="search" placeholder="🔎 Bütün dükkânda ara…" aria-label="Dükkânda ara" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="shop-sort" aria-label="Sırala" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+            {SORTS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="shop-filters" role="group" aria-label="Süz">
+          {FILTERS.filter(([f]) => f !== 'yeni' || newCount > 0).map(([f, l]) => (
+            <button key={f} className={`chip${filter === f ? ' on' : ''}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>
+              {l}
+              {f === 'yeni' && <span className="shop-new-n">{newCount}</span>}
             </button>
           ))}
         </div>
+        {!needle && (
+          <div className="tabs shop-tabs" role="tablist" aria-label="Eşya türü" data-tour="shop">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                role="tab"
+                aria-selected={tab === c.id}
+                className={tab === c.id ? 'on' : ''}
+                onClick={() => {
+                  setTab(c.id);
+                  setOpen(null);
+                }}
+              >
+                <span aria-hidden>{c.icon}</span> {c.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="shop-scroll">
+          {groups.length > 2 && (
+            <div className="shop-jump" role="navigation" aria-label="Gruplara atla">
+              {groups.map(([g]) => (
+                <button key={g} className="chip" onClick={() => jump(g)}>
+                  {groupTitle(g)}
+                </button>
+              ))}
+            </div>
+          )}
+          {list.length === 0 && <p className="muted center">{needle ? `"${q}" için eşya bulunamadı.` : 'Bu süzgeçte eşya yok.'}</p>}
           {groups.map(([g, items]) => (
-            <section key={g} className="shop-group">
+            <section key={g || 'hepsi'} id={g ? `shop-g-${g}` : undefined} className="shop-group">
               {groups.length > 1 && <h3 className="shop-sub">{groupTitle(g)}</h3>}
               <div className="item-grid">
                 {items.map((i) => {
@@ -114,7 +195,16 @@ export default function ShopWindow({ onClose, goCollection, onPlace }: { onClose
                   const a = i.acquire;
                   const foot = mine && !i.repeat ? (isEquipped(stats.equipped, i) ? '✓ Kullanıyorsun' : '✓ Sende') : a.kind === 'unlock' ? unlockShort(i, stats.unlock) : priceText(i);
                   return (
-                    <ItemCard key={i.id} item={i} have={mine} count={i.repeat ? count(i.id) : 0} footer={foot} selected={sel?.id === i.id} onClick={() => setOpen(i)} />
+                    <ItemCard
+                      key={i.id}
+                      item={i}
+                      have={mine}
+                      count={i.repeat ? count(i.id) : 0}
+                      footer={foot}
+                      selected={sel?.id === i.id}
+                      badge={fresh(i) ? 'YENİ' : undefined}
+                      onClick={() => pick(i)}
+                    />
                   );
                 })}
               </div>
@@ -126,20 +216,15 @@ export default function ShopWindow({ onClose, goCollection, onPlace }: { onClose
   }
 
   return (
-    <div className="shop-backdrop" onClick={onClose}>
-      <div className="shop-window" role="dialog" aria-modal="true" aria-label="Dükkân" onClick={(e) => e.stopPropagation()}>
-        <div className="shop-titlebar">
-          <strong className="grow">🛍️ Dükkân</strong>
-          {stats && <span className="wallet-gem small-gem">💎 {stats.crystals}</span>}
-          <button className="link small" onClick={goCollection}>
-            📒 Koleksiyon
-          </button>
-          <button className="icon-btn" aria-label="Kapat" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        {body}
+    <div className="shop-window shop-panel" role="region" aria-label="Dükkân">
+      <div className="shop-titlebar">
+        <strong className="grow">🛍️ Dükkân</strong>
+        {stats && <span className="wallet-gem small-gem">💎 {stats.crystals}</span>}
+        <button className="link small" onClick={goCollection}>
+          📒 Koleksiyon
+        </button>
       </div>
+      {body}
     </div>
   );
 }

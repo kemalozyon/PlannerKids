@@ -36,7 +36,7 @@
       "view": "room",
       "target": "world",
       "title": "Senin odan",
-      "text": "Burası senin odan. Bir yere dokun, karakterin oraya yürüsün; kapıdan çıkıp bahçeye, oradan ağaç bahçelerine yürüyebilirsin. Bir eşyaya dokununca oturabilir, ışığı ya da televizyonu açabilirsin."
+      "text": "Burası senin odan. Üstten başka bir odaya geçebilir, ya da kapıya dokunup yan odaya gidebilirsin. Bir yere dokun, karakterin oraya yürüsün; bir eşyaya dokununca alttaki panelde neler yapabileceğin çıkar."
     },
     {
       "id": "06-duzenle",
@@ -44,30 +44,29 @@
       "view": "room",
       "target": "edit",
       "title": "Odanı düzenle",
-      "text": "Envanter'e dokun, bir eşya seç, sonra koymak istediğin kareye dokun. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Bir eşyaya dokununca karakterin yanına gider: kullan, taşı, döndür ya da kaldır."
+      "text": "Alttaki Envanter'e dokun, bir eşya seç, sonra koymak istediğin kareye dokun. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Oda sekmesinden zemini, duvarı ve yeni odaların şeklini değiştirirsin."
     },
     {
       "id": "07-orman",
-      "hash": "forest",
-      "view": "month",
-      "target": "world",
+      "hash": "garden",
+      "target": "garden",
       "title": "Her gün bir ağaç",
-      "text": "Çalıştığın her gün, o ayın bahçesine bir ağaç dikilir. Ne kadar çok çalışırsan ağaç o kadar büyür. Bir ağaca yaklaşınca o gün neler yaptığını görürsün. Gelecek ayların bahçeleri günü gelince açılır."
+      "text": "Burası Bahçem. Çalıştığın her gün o ayın bahçesine bir ağaç dikilir; ne kadar çok çalışırsan o kadar büyür. O günün Elması ağacında bekler: parlayan taşı olan ağaca dokun ve Elmasını al."
     },
     {
       "id": "08-arazi",
       "hash": "forest",
-      "view": "garden",
+      "view": "room",
       "target": "lands",
-      "title": "Arazin büyür",
-      "text": "Toplam çalışman arttıkça arazin kendiliğinden genişler: önce bir dere ve köprü, sonra tepe, göl ve sahil. Evin de büyür, eşyaların yerinde kalır. Arazi yalnızca çalışarak büyür."
+      "title": "Evin büyür",
+      "text": "Toplam çalışman arttıkça odan ve kütüphanen kendiliğinden genişler, eşyaların yerinde kalır. İstediğin kadar yeni oda ve teras da ekleyebilirsin."
     },
     {
       "id": "09-dukkan",
       "hash": "shop",
       "target": "shop",
       "title": "Dükkân",
-      "text": "Kazandığın Elmasla odana mobilya, bahçene süs, karakterine kıyafet alabilirsin. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+      "text": "Kazandığın Elmasla odana mobilya, terasına süs, karakterine kıyafet alabilirsin. Dükkân, odanın altındaki panelde açılır. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
     },
     {
       "id": "09b-karakter",

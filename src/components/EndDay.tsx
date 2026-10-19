@@ -136,7 +136,7 @@ function EndDaySheet({
   }, [api, date]);
 
   const wrote = !!ref && (ref.rating != null || !!ref.note?.trim());
-  const grown = trees.filter((t) => !t.dry);
+  const grown = trees;
   const treeText = grown.length
     ? `Bugünün ağacı bahçende: ${grown[0].name} ${grown[0].species.icon}`
     : 'Bugün henüz ağaç yok: çalışınca bu ayın bahçesine bugünün ağacı dikilir.';

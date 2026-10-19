@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
+import { CFG } from '../lib/config';
 import { formatDay, formatMinutes } from '../lib/date';
 import { MOODS } from '../lib/mood';
 import type { Book, Course, Reflection, StudyLog, Task } from '../lib/types';
 import type { DayTree } from '../lib/world';
+import DropReward from './DropReward';
+import TreeClaim from './TreeClaim';
 import Sheet from './Sheet';
 
 /**
  * Bir günün kartı: o günün ağacı (her çalışılan gün bir ağaç), ders ders süreler ve notlar, "nasıl geçti",
- * tamamlanan görevler ve bitirilen kitap. Geçmiş takviminden ve bahçede ağaca yaklaşınca açılır.
+ * tamamlanan görevler, bitirilen kitap, ağacında bekleyen Elmas ve nadir ağaç ödülü. Bahçem'de ağaca dokununca ve
+ * Geçmiş takviminden açılır.
  */
 export default function DaySheet({
   date,
@@ -48,16 +52,18 @@ export default function DaySheet({
     <Sheet title={formatDay(date)} onClose={onClose}>
       <div className="detail-top">
         <div className="day-trees" aria-hidden>
-          {tree ? <span>{tree.dry ? tree.icon : tree.species.icon}</span> : <span className="gs-soil day-soil" />}
+          {tree ? <span>{tree.species.icon}</span> : <span className="gs-soil day-soil" />}
         </div>
         <div>
           <div className="detail-time">{formatMinutes(minutes)}</div>
           <div className="muted">
-            {tree ? (tree.dry ? 'Kuru ağaç: o gün başlayan seans yarıda kaldı' : `${tree.name}${tree.glow ? ' ✨' : ''}${tree.flowers ? ' · seri günü 🌼' : ''}`) : 'Bu gün ağaç dikilmedi'}
+            {tree ? `${tree.name}${tree.glow ? ' ✨' : ''}${tree.flowers ? ' · seri günü 🌼' : ''}` : 'Bu gün ağaç dikilmedi'}
           </div>
-          {manual > 0 && <div className="muted small">{formatMinutes(manual)} elle yazıldı (ağaç verir, Elmas vermez)</div>}
+          {manual > 0 && <div className="muted small">{formatMinutes(manual)} elle yazıldı (ağaç ve az 💎 verir; seri saymaz)</div>}
         </div>
       </div>
+      <TreeClaim date={date} studied={minutes > 0} />
+      <DropReward date={date} />
       {logs && byCourse.size > 0 && (
         <ul className="list detail-courses">
           {[...byCourse.entries()]
@@ -115,7 +121,12 @@ export default function DaySheet({
           </ul>
         </div>
       )}
-      {tree && !tree.dry && <p className="muted small">Ağacın türü güne göre seçilir; büyüklüğü o gün ne kadar çalıştığına bağlı: {'🌱 0+ · 🌿 20+ · 🌳 45+ · 90+ · 150+ dk'}.</p>}
+      {tree && (
+        <p className="muted small">
+          Ağacın türü o günün tohumundan; büyüklüğü o gün ne kadar çalıştığına bağlı: {CFG.world.stages.map((s) => `${s.name} ${s.min}+`).join(' · ')} dk.
+          {' '}Bir günde {CFG.world.drop.minutes} dk sayaçla çalışınca ağacın dibinden nadir bir eşya çıkar.
+        </p>
+      )}
     </Sheet>
   );
 }

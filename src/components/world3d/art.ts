@@ -22,6 +22,57 @@ function texture(key: string, w: number, h: number, draw: (g: Ctx, w: number, h:
   return t;
 }
 
+/**
+ * Zemin dokusu (çim, kum): ana renk üstünde açık-koyu benekler ve kısa çim çizgileri; tek renk zemin düz
+ * görünmesin. Doku karo başına bir kez tekrarlanır (`repeat` çağıran tarafta: tekrar sayısı alana göre).
+ */
+export function groundTexture(color: string, kind: 'grass' | 'sand' = 'grass'): CanvasTexture {
+  return texture(
+    `ground:${kind}:${color}`,
+    128,
+    128,
+    (g, w, h) => {
+      g.fillStyle = color;
+      g.fillRect(0, 0, w, h);
+      const r = rng(`zemin:${kind}`);
+      // Yumuşak lekeler
+      for (let i = 0; i < 14; i++) {
+        const x = r() * w;
+        const y = r() * h;
+        const rad = 10 + r() * 22;
+        const grd = g.createRadialGradient(x, y, 0, x, y, rad);
+        const light = r() < 0.5;
+        grd.addColorStop(0, light ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)');
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grd;
+        g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+      }
+      // Benekler / çim çizgileri
+      for (let i = 0; i < (kind === 'grass' ? 90 : 120); i++) {
+        const x = r() * w;
+        const y = r() * h;
+        g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.09)';
+        if (kind === 'grass') g.fillRect(x, y, 1.5, 3 + r() * 3);
+        else g.fillRect(x, y, 1.5, 1.5);
+      }
+    },
+    true,
+  );
+}
+
+/** Tekrar sayısı farklı yüzeyler için aynı görüntüyü paylaşan kopya */
+export function repeated(t: CanvasTexture, rx: number, ry: number): CanvasTexture {
+  const k = `${t.uuid}:${rx}x${ry}`;
+  let c = cache.get(k);
+  if (!c) {
+    c = t.clone();
+    c.repeat.set(rx, ry);
+    c.needsUpdate = true;
+    cache.set(k, c);
+  }
+  return c;
+}
+
 const star = (g: Ctx, x: number, y: number, r: number, color: string) => {
   g.fillStyle = color;
   g.beginPath();
@@ -462,6 +513,114 @@ export function patternTexture(pattern: string | undefined, c1: string, c2: stri
       g.fillRect(0, h * 0.55, w, 3);
       g.fillStyle = c1;
       g.fillRect(w * 0.15, h * 0.62, w * 0.7, h * 0.3);
+    } else if (p === 'herringbone') {
+      // Balıksırtı parke: çapraz dizilmiş tahtalar
+      g.save();
+      g.strokeStyle = c2;
+      g.lineWidth = 2;
+      const u = w / 4;
+      for (let y = -h; y < h * 2; y += u)
+        for (let x = 0; x < w; x += u) {
+          g.beginPath();
+          const up = (x / u) % 2 === 0;
+          g.moveTo(x, y + (up ? u : 0));
+          g.lineTo(x + u, y + (up ? 0 : u));
+          g.stroke();
+          g.beginPath();
+          g.moveTo(x, y + (up ? u : 0) + u * 0.5);
+          g.lineTo(x + u, y + (up ? 0 : u) + u * 0.5);
+          g.stroke();
+        }
+      g.restore();
+    } else if (p === 'hex') {
+      g.strokeStyle = c2;
+      g.lineWidth = 3;
+      const R = w / 6;
+      const hh = Math.sqrt(3) * R;
+      for (let row = -1; row < h / hh + 1; row++)
+        for (let col = -1; col < w / (R * 1.5) + 1; col++) {
+          const cx = col * R * 1.5;
+          const cy = row * hh + (col % 2 ? hh / 2 : 0);
+          g.beginPath();
+          for (let i = 0; i <= 6; i++) g.lineTo(cx + Math.cos((i * Math.PI) / 3) * R, cy + Math.sin((i * Math.PI) / 3) * R);
+          g.stroke();
+        }
+    } else if (p === 'mosaic') {
+      const n = 8;
+      for (let y = 0; y < n * (h / w); y++)
+        for (let x = 0; x < n; x++) {
+          g.fillStyle = r() < 0.5 ? c2 : r() < 0.5 ? c1 : '#ffffff55';
+          g.fillRect((x * w) / n + 1, (y * w) / n + 1, w / n - 2, w / n - 2);
+        }
+    } else if (p === 'terrazzo') {
+      for (let i = 0; i < 70; i++) {
+        g.fillStyle = [c2, '#ffffff99', '#00000022'][i % 3];
+        g.beginPath();
+        const x = r() * w;
+        const y = r() * h;
+        const s2 = 2 + r() * 5;
+        g.moveTo(x, y);
+        g.lineTo(x + s2, y + r() * s2);
+        g.lineTo(x + r() * s2, y + s2);
+        g.fill();
+      }
+    } else if (p === 'plaid') {
+      g.globalAlpha = 0.5;
+      g.fillStyle = c2;
+      for (let i = 0; i < 4; i++) {
+        g.fillRect((i * w) / 4 + w / 16, 0, w / 10, h);
+        g.fillRect(0, (i * h) / 4 + h / 16, w, h / 10);
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = '#ffffff55';
+      for (let i = 0; i < 4; i++) {
+        g.fillRect((i * w) / 4 + w / 5, 0, 2, h);
+        g.fillRect(0, (i * h) / 4 + h / 5, w, 2);
+      }
+    } else if (p === 'chevron') {
+      g.strokeStyle = c2;
+      g.lineWidth = 7;
+      for (let y = -w / 4; y < h + w / 4; y += w / 4) {
+        g.beginPath();
+        for (let x = 0; x <= w; x += w / 4) g.lineTo(x, y + ((x / (w / 4)) % 2 ? w / 8 : 0));
+        g.stroke();
+      }
+    } else if (p === 'floral') {
+      for (let y = 0; y < 4 * (h / w); y++)
+        for (let x = 0; x < 3; x++) {
+          const cx = (x + (y % 2) * 0.5 + 0.2) * (w / 3);
+          const cy = (y + 0.5) * (w / 4);
+          for (let k = 0; k < 5; k++) circle(g, cx + Math.cos((k * Math.PI * 2) / 5) * 6, cy + Math.sin((k * Math.PI * 2) / 5) * 6, 4.5, c2);
+          circle(g, cx, cy, 3.5, '#ffd166');
+        }
+    } else if (p === 'wainscot') {
+      // Lambri: alt yarısı dikey tahtalar, üstte ince bordür
+      g.fillStyle = c2;
+      g.fillRect(0, h * 0.5, w, h * 0.5);
+      g.fillStyle = '#00000022';
+      for (let x = w / 6; x < w; x += w / 6) g.fillRect(x, h * 0.5, 2, h * 0.5);
+      g.fillStyle = '#ffffff44';
+      g.fillRect(0, h * 0.5, w, 4);
+      g.fillStyle = '#00000018';
+      g.fillRect(0, h * 0.5 + 4, w, 2);
+    } else if (p === 'stone') {
+      g.fillStyle = c2;
+      for (let y = 0; y < h; y += w / 4) {
+        const off = ((y / (w / 4)) % 2) * (w / 8);
+        for (let x = -off; x < w; x += w / 4) {
+          g.beginPath();
+          g.roundRect(x + 2 + r() * 2, y + 2 + r() * 2, w / 4 - 5, w / 4 - 5, 6);
+          g.fill();
+        }
+      }
+    } else if (p === 'galaxy') {
+      const grd = g.createRadialGradient(w * 0.3, h * 0.4, 4, w * 0.5, h * 0.5, w);
+      grd.addColorStop(0, c2);
+      grd.addColorStop(1, c1);
+      g.fillStyle = grd;
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 50; i++) circle(g, r() * w, r() * h, 0.6 + r() * 1.4, '#ffffff');
+      star(g, w * 0.7, h * 0.25, 5, '#fff3b0');
     }
   }, true);
 }
@@ -541,7 +700,7 @@ export interface TvData {
   /** Toplam saat (sayaçla) */
   hours: number;
   /** Bu ayın günleri: ağacın rengi ve boyu (0–1); boş gün null */
-  month: { label: string; lead: number; days: ({ color: string; size: number; dry: boolean } | null)[] };
+  month: { label: string; lead: number; days: ({ color: string; size: number } | null)[] };
 }
 
 const tvCache = new Map<string, CanvasTexture>();
@@ -593,7 +752,7 @@ export function tvTexture(channel: number, d: TvData): CanvasTexture {
       g.fillStyle = '#1d5a40';
       g.fillRect(x - 1, y - 1, cell + 2, cell + 2);
       if (!day) return;
-      circle(g, x + cell / 2, y + cell / 2, 3 + day.size * 6, day.dry ? '#a8987e' : day.color);
+      circle(g, x + cell / 2, y + cell / 2, 3 + day.size * 6, day.color);
     });
   }
   t = new CanvasTexture(c);
@@ -604,5 +763,74 @@ export function tvTexture(channel: number, d: TvData): CanvasTexture {
     tvCache.delete(first);
   }
   tvCache.set(k, t);
+  return t;
+}
+
+/** Mantar panodaki notlar (NOTES): son 6 not, renkli kâğıtta; yapılanların üstü çizili */
+export interface BoardCard {
+  text: string;
+  color: string;
+  done: boolean;
+}
+const boardCache = new Map<string, CanvasTexture>();
+export function boardTexture(notes: BoardCard[], n: number): CanvasTexture {
+  const shown = notes.slice(-6);
+  const k = `${n}:${JSON.stringify(shown)}`;
+  let t = boardCache.get(k);
+  if (t) return t;
+  // Eski panolar birikmesin (her not değişikliği yeni bir doku)
+  if (boardCache.size > 12) {
+    for (const old of boardCache.values()) old.dispose();
+    boardCache.clear();
+  }
+  const c = document.createElement('canvas');
+  const w = (c.width = Math.round(256 * n));
+  const h = (c.height = Math.round(256 * ART_HEIGHT));
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#c8955f';
+  g.fillRect(0, 0, w, h);
+  {
+    const r = rng('pano-notlar');
+    const cols = 3;
+    shown.forEach((note, i) => {
+      const nw = w * 0.29;
+      const nh = h * 0.4;
+      const x = w * (0.035 + (i % cols) * 0.325) + r() * 6;
+      const y = h * (0.06 + Math.floor(i / cols) * 0.48) + r() * 6;
+      g.save();
+      g.translate(x + nw / 2, y + nh / 2);
+      g.rotate((r() - 0.5) * 0.12);
+      g.fillStyle = 'rgba(0,0,0,0.18)';
+      g.fillRect(-nw / 2 + 3, -nh / 2 + 4, nw, nh);
+      g.fillStyle = note.color;
+      g.fillRect(-nw / 2, -nh / 2, nw, nh);
+      g.fillStyle = note.done ? '#7a7a7a' : '#2b2d42';
+      const size = Math.max(11, Math.round(nh * 0.17));
+      g.font = `700 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      g.textBaseline = 'top';
+      // Kelime kelime satıra böl (en fazla 4 satır)
+      const lines: string[] = [];
+      let line = '';
+      for (const word of note.text.split(/\s+/)) {
+        const next = line ? `${line} ${word}` : word;
+        if (g.measureText(next).width > nw - 12 && line) {
+          lines.push(line);
+          line = word;
+        } else line = next;
+      }
+      if (line) lines.push(line);
+      lines.slice(0, 4).forEach((l, j) => {
+        const s = j === 3 && lines.length > 4 ? `${l.slice(0, -1)}…` : l;
+        g.fillText(s, -nw / 2 + 6, -nh / 2 + 10 + j * size * 1.12, nw - 12);
+        if (note.done) g.fillRect(-nw / 2 + 6, -nh / 2 + 10 + j * size * 1.12 + size * 0.55, Math.min(nw - 12, g.measureText(s).width), 2);
+      });
+      circle(g, 0, -nh / 2 + 4, 5, '#ef476f');
+      g.restore();
+    });
+  }
+  t = new CanvasTexture(c);
+  t.colorSpace = SRGBColorSpace;
+  t.anisotropy = 4;
+  boardCache.set(k, t);
   return t;
 }

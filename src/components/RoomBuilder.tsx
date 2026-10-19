@@ -1,10 +1,11 @@
-// Oda ekle / değiştir: türü (adı, simgesi, varsayılan zemin ve duvarı), şekli (Habbo'daki oda modelleri gibi şablon:
-// Kare, L, Basamak…) ve boyutu seçilir. Kilit yok, ücretsiz; en çok world.maxRooms oda. Şekil küçülünce sığmayan
-// eşyalar envantere döner; oda silinince içindekilerin hepsi envantere döner.
+// Oda ekle / değiştir: türü (adı, simgesi, varsayılan zemin ve duvarı; teras açık havadır) ve adı; yeni odada
+// başlangıç şekli (Habbo'daki oda modelleri gibi şablon: Kare, L, Basamak…) ve boyutu. Sonra şekil blok
+// düzenleyicide (RoomBlocks) karo karo değişir. Kilit yok, ücretsiz; en çok world.maxRooms oda. Tür değişince
+// uymayan eşyalar (terasta iç eşyalar…) envantere döner; oda silinince içindekilerin hepsi envantere döner.
 import { useState } from 'react';
 import { CFG } from '../lib/config';
 import type { RoomInput, UserRoom } from '../lib/types';
-import { cellsOf, inCells, kindById, ROOM_KINDS, ROOM_SHAPES, ROOM_SIZES, roomInputProblem, type RoomCells, type RoomSize } from '../lib/world';
+import { cellsOf, doorRow, inCells, kindById, roomCells, ROOM_KINDS, ROOM_SHAPES, ROOM_SIZES, roomInputProblem, type RoomCells, type RoomSize } from '../lib/world';
 import Sheet from './Sheet';
 
 /** Şeklin kuşbakışı küçük resmi: arka duvar üstte, kapılar yanlarda */
@@ -14,7 +15,7 @@ export function ShapePreview({ cells, cell = 6 }: { cells: RoomCells; cell?: num
       {Array.from({ length: cells.w * cells.h }, (_, i) => {
         const x = i % cells.w;
         const y = Math.floor(i / cells.w);
-        const door = y === 5 && (x === 0 || x === cells.w - 1);
+        const door = y === doorRow(cells) && (x === 0 || x === cells.w - 1);
         return <span key={i} className={inCells(cells, x, y) ? (door ? 'door' : 'on') : ''} />;
       })}
     </span>
@@ -45,7 +46,7 @@ export default function RoomBuilder({
   const [busy, setBusy] = useState(false);
   const [sure, setSure] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const input: RoomInput = { kind, shape, size, name };
+  const input: RoomInput = { kind, shape, size, name, cells: room?.cells ?? null };
   const problem = roomInputProblem(input);
   const full = !room && count >= CFG.world.maxRooms;
   const run = async (f: () => Promise<unknown>) => {
@@ -59,7 +60,7 @@ export default function RoomBuilder({
       setBusy(false);
     }
   };
-  const cells = cellsOf(shape, size);
+  const cells = room ? roomCells(room) : cellsOf(shape, size);
   return (
     <Sheet title={room ? `${kindById(room.kind).icon} ${room.name}` : '➕ Yeni oda'} onClose={onClose}>
       {full ? (
@@ -83,7 +84,9 @@ export default function RoomBuilder({
               </button>
             ))}
           </div>
-          <div className="rb-label">Şekli</div>
+          {!room && (
+            <>
+          <div className="rb-label">Başlangıç şekli</div>
           <div className="shape-grid">
             {ROOM_SHAPES.map((s) => (
               <button key={s.id} className={`shape-btn${shape === s.id ? ' on' : ''}`} aria-pressed={shape === s.id} onClick={() => setShape(s.id)}>
@@ -103,9 +106,13 @@ export default function RoomBuilder({
               );
             })}
           </div>
+            </>
+          )}
           <div className="rb-preview">
             <ShapePreview cells={cells} cell={10} />
-            <span className="muted small">Üst kenar arka duvar; yanlardaki koyu karolar kapılar (komşu odalara açılır).</span>
+            <span className="muted small">
+              Üst kenar arka duvar; yanlardaki koyu karolar kapılar (komşu odalara açılır). {room ? 'Şekli 🎨 Oda → 🧱 Şekli karo karo çiz ile değiştirirsin.' : 'Ekledikten sonra şeklini karo karo değiştirebilirsin.'}
+            </span>
           </div>
           <label className="rb-label" htmlFor="rb-name">
             Adı
@@ -119,7 +126,9 @@ export default function RoomBuilder({
               setNamed(true);
             }}
           />
-          {room && (room.shape !== shape || room.size !== size) && <p className="muted small">Yeni şekle sığmayan eşyalar envanterine döner.</p>}
+          {room && kindById(room.kind).outdoor !== kindById(kind).outdoor && (
+            <p className="muted small">{kindById(kind).outdoor ? 'Terasa iç eşyalar ve duvar süsleri konmaz: envanterine dönerler.' : 'Odaya dış eşyalar konmaz: envanterine dönerler.'}</p>
+          )}
           {error && <p className="error">{error}</p>}
           <div className="rb-actions">
             {room && onDelete && (

@@ -9,19 +9,16 @@ import { useGame } from '../lib/GameContext';
 import { hasWebGL } from '../lib/webgl';
 import { ItemSheet } from './Shop';
 
-export default function Collection({ goWorld }: { goWorld: () => void }) {
+export default function Collection({ goGarden }: { goGarden: () => void }) {
   const { stats, equip, buy } = useGame();
   const [open, setOpen] = useState<Item | null>(null);
   const can3D = useMemo(hasWebGL, []);
   const months = useMemo(() => {
-    const m = new Map<string, { trees: number; dry: number; icons: string[] }>();
+    const m = new Map<string, { trees: number; icons: string[] }>();
     for (const t of stats?.forest ?? []) {
-      const e = m.get(t.month) ?? { trees: 0, dry: 0, icons: [] };
-      if (t.dry) e.dry++;
-      else {
-        e.trees++;
-        e.icons.push(t.species.icon);
-      }
+      const e = m.get(t.month) ?? { trees: 0, icons: [] };
+      e.trees++;
+      e.icons.push(t.species.icon);
       m.set(t.month, e);
     }
     return [...m].sort((a, b) => b[0].localeCompare(a[0]));
@@ -78,8 +75,8 @@ export default function Collection({ goWorld }: { goWorld: () => void }) {
       <section className="card">
         <div className="card-head">
           <h2>🌳 Ağaç bahçelerin</h2>
-          <button className="link small" onClick={goWorld}>
-            Dünyamda gez →
+          <button className="link small" onClick={goGarden}>
+            Bahçemde gör →
           </button>
         </div>
         {months.length === 0 ? (
@@ -96,7 +93,7 @@ export default function Collection({ goWorld }: { goWorld: () => void }) {
                   </span>
                 </span>
                 <span className="muted small nowrap">
-                  {e.trees} ağaç · {new Set(stats.forest.filter((t) => t.month === m && !t.dry).map((t) => t.species.id)).size} tür{e.dry ? ` · ${e.dry} kuru` : ''}
+                  {e.trees} ağaç · {new Set(stats.forest.filter((t) => t.month === m).map((t) => t.species.id)).size} tür
                 </span>
               </li>
             ))}

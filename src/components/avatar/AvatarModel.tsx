@@ -12,12 +12,14 @@ import { useMemo, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { Color, DoubleSide, ExtrudeGeometry, Shape, type Group } from 'three';
 import { BODIES, styleOf, type AvatarLook } from '../../lib/avatar';
 
-export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'dance' | 'sit' | 'lie' | 'swing';
+export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'dance' | 'sit' | 'lie' | 'swing' | 'study';
 
 /** Kalçanın yüksekliği: oturunca kalça oturağa gelsin diye çağıran taraf karakteri bu kadar indirir */
 export const HIP_Y = 0.38;
 export interface AvatarAnim {
   state: AvatarState;
+  /** Yürüme/koşma hızı (birim/sn): adım sıklığı buna göre (ayak kaymaz) */
+  speed?: number;
 }
 
 const HIP = 0.38;
@@ -72,11 +74,17 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
   const invalidate = useThree((s) => s.invalidate);
   const scale = BODIES.find((b) => b.id === look.body)?.scale ?? 1;
 
+  /** Adım fazı: katedilen yola göre ilerler (hız verilince ayak kaymaz) */
+  const stride = useRef(0);
+  const blink = useRef(1);
+
   useFrame(({ clock }, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
     const t = clock.elapsedTime;
-    const s = anim?.current.state ?? 'idle';
-    const k = Math.min(1, dt * 14);
+    const A = anim?.current;
+    const s = A?.state ?? 'idle';
+    // Kare hızından bağımsız yumuşatma
+    const k = 1 - Math.exp(-dt * 12);
     const ease = (g: Group | null, x: number, z = 0) => {
       if (!g) return 0;
       g.rotation.x += (x - g.rotation.x) * k;
@@ -92,21 +100,36 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     // Dansta gövde sağa sola salınır ve döner
     let sway = 0;
     let turn = 0;
+    let nod = 0;
     // Oturunca iki bacak birden öne (diz yok: bacaklar öne uzanır), yatınca düz
     let seated = 0;
-    if (s === 'sit' || s === 'swing') {
+    // Ders çalışıyor (masada): oturur, kollar masada, sağ el yazar, baş deftere eğik; arada başını kaldırır
+    let write = 0;
+    if (s === 'study') {
+      seated = -1.35;
+      arm = -1.15;
+      armZ = 0.1;
+      write = Math.sin(t * 8) * 0.07 + Math.sin(t * 2.3) * 0.04;
+      nod = t % 9 < 1.2 ? -0.05 : 0.3;
+      bob = Math.sin(t * 1.6) * 0.006;
+    } else if (s === 'sit' || s === 'swing') {
       seated = -1.35;
       arm = s === 'swing' ? -2.3 : -0.45;
       armZ = s === 'swing' ? 0.25 : 0.12;
     } else if (s === 'lie') {
       armZ = 0.12;
     } else if (s === 'walk' || s === 'run') {
-      const f = s === 'run' ? 14 : 9;
-      const a = s === 'run' ? 0.95 : 0.6;
-      leg = Math.sin(t * f) * a;
+      const run = s === 'run';
+      // Bir tam adım döngüsünde alınan yol (iki adım); hız verilmezse sabit sıklık
+      const f = A?.speed != null ? Math.min(17, Math.max(7, (A.speed * Math.PI * 2) / (run ? 3.2 : 2.2))) : run ? 14 : 9;
+      stride.current += f * dt;
+      const ph = stride.current;
+      const a = run ? 0.95 : 0.6;
+      leg = Math.sin(ph) * a;
       arm = -leg * 0.9;
-      bob = Math.abs(Math.cos(t * f)) * (s === 'run' ? 0.05 : 0.03);
-      lean = s === 'run' ? 0.12 : 0.03;
+      bob = Math.abs(Math.cos(ph)) * (run ? 0.06 : 0.035);
+      lean = run ? 0.14 : 0.04;
+      sway = Math.sin(ph) * (run ? 0.04 : 0.03);
     } else if (s === 'jump' || s === 'fall') {
       leg = 0.5;
       arm = -2.5;
@@ -117,14 +140,16 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
       leg = 0.15;
     } else if (s === 'wave') {
       wave = 1;
+      bob = Math.sin(t * 5) * 0.01;
     } else if (s === 'dance') {
       const b = t * 7;
       leg = Math.sin(b) * 0.35;
       arm = Math.sin(b) * 0.5;
       armZ = 2.1 + Math.sin(b * 2) * 0.45;
-      bob = Math.abs(Math.sin(b)) * 0.07;
-      sway = Math.sin(b) * 0.14;
-      turn = Math.sin(b / 2) * 0.5;
+      bob = Math.abs(Math.sin(b)) * 0.08;
+      sway = Math.sin(b) * 0.16;
+      turn = Math.sin(b / 2) * 0.55;
+      nod = Math.sin(b * 2) * 0.12;
     } else if (live) {
       bob = Math.sin(t * 2) * 0.008;
       arm = Math.sin(t * 2) * 0.04;
@@ -136,20 +161,35 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     if (wave) {
       if (armR.current) {
         armR.current.rotation.x += (-0.2 - armR.current.rotation.x) * k;
-        armR.current.rotation.z = -2.6 + Math.sin(t * 10) * 0.35;
+        armR.current.rotation.z += (-2.6 + Math.sin(t * 10) * 0.35 - armR.current.rotation.z) * Math.min(1, k * 2);
+        moving += 1;
       }
-    } else if (holding && s !== 'lie') moving += ease(armR.current, -1.05, -0.1);
+    } else if (s === 'study') moving += ease(armR.current, arm - 0.12 + write, -0.04 + write * 0.6);
+    else if (holding && s !== 'lie') moving += ease(armR.current, -1.05, -0.1);
     else moving += ease(armR.current, seated ? arm : -arm, -armZ);
     if (body.current) {
-      body.current.position.y = bob;
-      body.current.rotation.x += (lean - body.current.rotation.x) * k;
-      body.current.rotation.z += (sway - body.current.rotation.z) * k;
-      body.current.rotation.y += (turn - body.current.rotation.y) * k;
-      moving += Math.abs(body.current.rotation.z) + Math.abs(body.current.rotation.y);
+      const b = body.current;
+      b.position.y += (bob - b.position.y) * Math.min(1, k * 2.5);
+      b.rotation.x += (lean - b.rotation.x) * k;
+      b.rotation.z += (sway - b.rotation.z) * k;
+      b.rotation.y += (turn - b.rotation.y) * k;
+      moving += Math.abs(b.rotation.z) + Math.abs(b.rotation.y) + Math.abs(b.position.y - bob);
     }
-    if (back.current) back.current.rotation.x = -0.1 - Math.abs(leg) * 0.35 - (s === 'fall' || s === 'glide' ? 0.6 : 0);
-    if (eyes.current) eyes.current.scale.y = s === 'lie' || (live && t % 3.7 < 0.13) ? 0.15 : 1;
-    if (head.current && live && s === 'idle') head.current.rotation.y = Math.sin(t * 0.7) * 0.12;
+    if (back.current) {
+      const to = -0.1 - Math.abs(leg) * 0.35 - (s === 'fall' || s === 'glide' ? 0.6 : 0);
+      back.current.rotation.x += (to - back.current.rotation.x) * k;
+    }
+    // Göz kırpma kısa ama ani değil
+    const open = s === 'lie' || (live && t % 3.7 < 0.13) ? 0.15 : 1;
+    blink.current += (open - blink.current) * (1 - Math.exp(-dt * 40));
+    if (eyes.current) eyes.current.scale.y = blink.current;
+    if (head.current) {
+      const h = head.current;
+      const look = live && s === 'idle' ? Math.sin(t * 0.7) * 0.12 : 0;
+      h.rotation.y += (look - h.rotation.y) * k;
+      h.rotation.x += (nod - h.rotation.x) * k;
+      moving += Math.abs(h.rotation.y - look) + Math.abs(h.rotation.x - nod);
+    }
     // İstek üzerine çizilen sahnede pozun yerine oturması için birkaç kare daha
     if (!live && moving > 0.01) invalidate();
   });

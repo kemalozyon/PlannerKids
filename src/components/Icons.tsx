@@ -24,6 +24,13 @@ export const IconForest = () => (
     <path d="M12 8l7 9H5z" />
   </svg>
 );
+export const IconHome = () => (
+  <svg {...base}>
+    <path d="M3 11l9-7 9 7" />
+    <path d="M5 10v10h14V10" />
+    <path d="M10 20v-6h4v6" />
+  </svg>
+);
 export const IconBook = () => (
   <svg {...base}>
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z" />

@@ -6,21 +6,31 @@
 // "istek üzerine" çizilmeye devam eder.
 import { useFrame, useThree } from '@react-three/fiber';
 import { useRef, type ReactNode } from 'react';
-import type { Group, Mesh, MeshStandardMaterial } from 'three';
+import { Color, type Group, type Mesh, type MeshStandardMaterial } from 'three';
+import { damp, Hinge } from './motion';
 import { B, C, legs, S, type Piece } from './setParts';
 
-/** Açıkken her karede çalışan hareket; kare ister (frameloop="demand") */
-function useTick(on: boolean, f: (t: number) => void) {
+/**
+ * Açıkken çalışan hareket; kare ister (frameloop="demand"). Zaman eşyanın kendi saatidir ve "güç" (0…1) ile
+ * akar: açınca yavaşça hızlanır, kapatınca yavaşlayıp durur (birden donmaz). f(zaman, güç).
+ */
+function useTick(on: boolean, f: (t: number, power: number) => void) {
   const invalidate = useThree((s) => s.invalidate);
-  useFrame(({ clock }) => {
-    if (!on) return;
-    f(clock.elapsedTime);
+  const t = useRef(0);
+  const power = useRef(on ? 1 : 0);
+  useFrame((_, rawDt) => {
+    const dt = Math.min(rawDt, 0.05);
+    if (!on && power.current === 0) return;
+    power.current = damp(power.current, on ? 1 : 0, 2.5, dt);
+    if (!on && power.current < 0.003) power.current = 0;
+    t.current += dt * power.current;
+    f(t.current, power.current);
     invalidate();
   });
 }
 
 /** Açıkken döner */
-function Spin({ on, speed = 1, children, y = 0 }: { on: boolean; speed?: number; children: ReactNode; y?: number }) {
+export function Spin({ on, speed = 1, children, y = 0 }: { on: boolean; speed?: number; children: ReactNode; y?: number }) {
   const g = useRef<Group>(null);
   useTick(on, (t) => g.current && (g.current.rotation.y = t * speed));
   return (
@@ -30,25 +40,32 @@ function Spin({ on, speed = 1, children, y = 0 }: { on: boolean; speed?: number;
   );
 }
 
-/** Açıkken aşağı yukarı gider */
-function Bob({ on, amp = 0.05, freq = 2, phase = 0, children }: { on: boolean; amp?: number; freq?: number; phase?: number; children: ReactNode }) {
+/** Açıkken aşağı yukarı gider; kapanınca yerine iner */
+export function Bob({ on, amp = 0.05, freq = 2, phase = 0, children }: { on: boolean; amp?: number; freq?: number; phase?: number; children: ReactNode }) {
   const g = useRef<Group>(null);
-  useTick(on, (t) => g.current && (g.current.position.y = Math.sin(t * freq + phase) * amp));
+  useTick(on, (t, k) => g.current && (g.current.position.y = Math.sin(t * freq + phase) * amp * k));
   return <group ref={g}>{children}</group>;
 }
 
-/** Açıkken rengi sırayla değişen parlak kutu (dans pisti, arcade ekranı) */
+const tmpA = new Color();
+const tmpB = new Color();
+/** Açıkken rengi sırayla, yumuşak geçişle değişen parlak kutu (dans pisti, arcade ekranı) */
 function Cycle({ on, colors, p, s, phase = 0, speed = 2 }: { on: boolean; colors: string[]; p: [number, number, number]; s: [number, number, number]; phase?: number; speed?: number }) {
   const m = useRef<MeshStandardMaterial>(null);
-  useTick(on, (t) => {
-    const c = colors[Math.floor(t * speed + phase) % colors.length];
-    m.current?.color.set(c);
-    m.current?.emissive.set(c);
+  useTick(on, (t, k) => {
+    const x = t * speed + phase;
+    const i = Math.floor(x);
+    // Her rengin çoğu süre durur, sonra hızlıca sonrakine akar
+    const f = Math.min(1, Math.max(0, (x - i - 0.7) / 0.3));
+    tmpA.set(colors[i % colors.length]).lerp(tmpB.set(colors[(i + 1) % colors.length]), f * f * (3 - 2 * f));
+    m.current?.color.copy(tmpA);
+    m.current?.emissive.copy(tmpA);
+    if (m.current) m.current.emissiveIntensity = 0.7 * k;
   });
   return (
     <mesh position={p}>
       <boxGeometry args={s} />
-      <meshStandardMaterial ref={m} color={colors[phase % colors.length]} emissive={on ? colors[phase % colors.length] : '#000000'} emissiveIntensity={on ? 0.7 : 0} />
+      <meshStandardMaterial ref={m} color={colors[phase % colors.length]} emissive={colors[phase % colors.length]} emissiveIntensity={on ? 0.7 : 0} />
     </mesh>
   );
 }
@@ -195,10 +212,10 @@ export const MORE_PIECES: Record<string, Piece> = {
           <B key={s} p={[(s * (w - 0.3)) / 2, 0.25, 0.31]} s={[0.06, 0.46, 0.02]} c={b} line={false} />
         ))}
         {open && <B p={[0, 0.44, 0]} s={[w - 0.26, 0.04, 0.5]} c="#5a3a20" line={false} />}
-        <group position={[0, 0.48, -0.3]} rotation-x={open ? -1.9 : 0}>
+        <Hinge open={open} to={-1.9} axis="x" position={[0, 0.48, -0.3]}>
           <B p={[0, 0.06, 0.3]} s={[w - 0.14, 0.12, 0.62]} c={a} />
           <B p={[0, 0.03, 0.61]} s={[0.12, 0.12, 0.04]} c={c} />
-        </group>
+        </Hinge>
       </>
     ),
   },
@@ -218,10 +235,10 @@ export const MORE_PIECES: Record<string, Piece> = {
           </>
         )}
         {[-1, 1].map((s) => (
-          <group key={s} position={[(s * (w - 0.08)) / 2, 0, 0.3]} rotation-y={open ? s * 1.7 : 0}>
+          <Hinge key={s} open={open} to={s * 1.7} position={[(s * (w - 0.08)) / 2, 0, 0.3]}>
             <B p={[(-s * (w - 0.08)) / 4, 0.98, 0.02]} s={[(w - 0.1) / 2, 1.85, 0.04]} c={a} />
             <B p={[(-s * (w - 0.2)) / 2 + s * 0.02, 1.0, 0.06]} s={[0.04, 0.24, 0.04]} c={c} />
-          </group>
+          </Hinge>
         ))}
       </>
     ),
@@ -233,10 +250,10 @@ export const MORE_PIECES: Record<string, Piece> = {
         <B p={[0, 0.47, -0.04]} s={[w - 0.08, 0.92, 0.66]} c={a} />
         <B p={[0, 0.95, -0.04]} s={[w, 0.05, 0.7]} c={b} />
         {[0.18, 0.45, 0.72].map((y, i) => (
-          <group key={y} position={[0, y, open && i === 1 ? 0.25 : 0]}>
+          <Hinge key={y} open={open && i === 1} to={0.25} axis="z" slide position={[0, y, 0]}>
             <B p={[0, 0, 0.3]} s={[w - 0.18, 0.22, 0.04]} c={b} />
             <B p={[0, 0, 0.34]} s={[0.2, 0.04, 0.04]} c={c} />
-          </group>
+          </Hinge>
         ))}
       </>
     ),
@@ -695,8 +712,10 @@ export const MORE_PIECES: Record<string, Piece> = {
         <B p={[-0.38, 0.5, 0]} s={[0.2, 1.0, 0.7]} c={a} />
         <B p={[-0.38, 1.02, 0]} s={[0.2, 0.04, 0.7]} c={open ? '#3fcf6b' : '#ef4b4b'} glow line={false} />
         {[0, 1, 2].map((i) => (
-          <group key={i} position={[-0.28, 0.75, 0]} rotation-x={(i * 2 * Math.PI) / 3 + (open ? 0.5 : 0)}>
-            <B p={[0.28, 0.2, 0]} s={[0.56, 0.04, 0.04]} c={b} />
+          <group key={i} position={[-0.28, 0.75, 0]} rotation-x={(i * 2 * Math.PI) / 3}>
+            <Hinge open={open} to={0.5} axis="x">
+              <B p={[0.28, 0.2, 0]} s={[0.56, 0.04, 0.04]} c={b} />
+            </Hinge>
           </group>
         ))}
       </>

@@ -6,7 +6,7 @@ import type { LedgerEntry } from './types';
 
 /**
  * Demo modu için ~5 haftalık örnek geçmiş. Çalışılan her gün bahçede bir ağaç (türü tarihten, büyüklüğü günün
- * toplamından); iki gün elle yazılmış süre (ağaç verir, Elmas vermez), bir gün yalnızca yarım seans (kuru ağaç).
+ * toplamından); iki gün elle yazılmış süre (ağaç ve düşük tavanlı 💎 verir, seri saymaz), iki yarım seans (ağaç dikmez).
  * Toplam ~45 saat: Göl Kıyısı ve Orman Köyü haritaları açık, ev hâlâ Çayır Evi'nde (taşınmayı denemek için).
  * Odada, bahçede ve bu ayın ağaç bahçesinde birkaç satın alınmış eşya yerleştirilmiş.
  */
@@ -66,25 +66,27 @@ export function demoSeed(): DemoDb {
     { id: 'tk-1', course_id: 'c-mat', title: 'Sayfa 42 alıştırmaları', date: today, done: false, created_at: t },
     { id: 'tk-2', course_id: 'c-tr', title: 'Kitaptan 10 sayfa oku', date: today, done: true, created_at: t },
     { id: 'tk-3', course_id: 'c-ing', title: 'Renkleri tekrar et', date: today, done: false, created_at: t },
+    // Aile panelinden verilen görev: bitince Elmas
+    { id: 'tk-4', course_id: 'c-mat', title: 'Kesirler testinin 10 sorusunu çöz', date: today, done: false, created_at: t, from_parent: true },
   ];
-  // Yarıda bırakılan seanslar: o gün başka kayıt yoksa kuru ağaç (-10. gün)
+  // Yarıda bırakılan seanslar (yalnızca kayıt; ağaç dikmez)
   const abandoned: NonNullable<DemoDb['abandoned']> = [
     { id: 'a-1', date: addDays(today, -5), minutes: 12, created_at: `${addDays(today, -5)}T06:00:00.000Z` },
     { id: 'a-2', date: addDays(today, -10), minutes: 8, created_at: `${addDays(today, -10)}T15:00:00.000Z` },
   ];
 
   return {
-    courses, logs, tasks, reflections, abandoned, ...demoReading(today, t), ...demoFamily(today, logs), ...demoGame(t, today),
+    courses, logs, tasks, reflections, abandoned, ...demoReading(today, t), ...demoFamily(today, logs), ...demoGame(t),
     reportSettings: { parent_email: 'ebeveyn@ornek.com', child_name: 'Ece', send_hour: 21, timezone: 'Europe/Istanbul', enabled: true },
   };
 }
 
 /**
- * Oyun ekonomisi: odada kanepe, sehpa, masada laptop ve lamba, duvarda poster, saat ve harita; bahçede çit,
- * çiçek, bank ve fener; bu ayın ağaç bahçesinde taş yol ve bostan. Elmaslar ilk açılışta geçmiş kayıtlardan
+ * Oyun ekonomisi: odada kanepe, sehpa, masada laptop ve lamba, duvarda poster, saat ve harita; terasta çit,
+ * çiçek, bank, fener, salıncak, taş yol ve bostan. Elmaslar ilk açılışta geçmiş kayıtlardan
  * kazanılır (syncEconomy); burada yalnızca harcamalar var.
  */
-function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped' | 'rooms'> {
+function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equipped' | 'rooms'> {
   const bought = [
     'mob:koltuk-mavi', 'mob:sehpa', 'mob:laptop', 'isik:masa-lambasi', 'mob:radyo', 'duvar:gezegenler', 'duvar:saat', 'duvar:harita',
     'dis:cit', 'dis:cit', 'dis:cit', 'dis:cicek-sari', 'dis:cicek-mor', 'dis:bank', 'isik:fener',
@@ -101,8 +103,11 @@ function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | '
   return {
     owned,
     ledger,
-    // Odanın doğusunda L biçimli bir mutfak (oda ekle/şeklini değiştir denensin)
-    rooms: [{ id: 'mutfak', kind: 'kitchen', shape: 'l', size: 'm', name: 'Mutfak', pos: 0 }],
+    // L biçimli bir mutfak ve dış eşyalar için bir teras (oda ekle, blok düzenleyici denensin)
+    rooms: [
+      { id: 'mutfak', kind: 'kitchen', shape: 'l', size: 'm', name: 'Mutfak', pos: 0 },
+      { id: 'teras', kind: 'teras', shape: 'genis', size: 'l', cells: { w: 16, h: 9, cut: [[13, 7, 3, 2]] }, name: 'Teras', pos: 1 },
+    ],
     spaces: {
       room: {
         floor: 'zemin:ahsap',
@@ -128,25 +133,21 @@ function demoGame(t: string, today: string): Pick<DemoDb, 'owned' | 'ledger' | '
           { item: 'duvar:harita', x: -1, y: 1, rot: 270 },
         ],
       },
-      garden: {
+      'r:teras': {
         items: [
-          { item: 'dis:cit', x: 0, y: 6, rot: 0 },
-          { item: 'dis:cit', x: 1, y: 6, rot: 0 },
-          { item: 'dis:cit', x: 2, y: 6, rot: 0 },
+          { item: 'dis:cit', x: 0, y: 7, rot: 0 },
+          { item: 'dis:cit', x: 1, y: 7, rot: 0 },
+          { item: 'dis:cit', x: 2, y: 7, rot: 0 },
           { item: 'dis:cicek-sari', x: 6, y: 4, rot: 0 },
           { item: 'dis:cicek-mor', x: 7, y: 4, rot: 0 },
           { item: 'dis:bank', x: 9, y: 6, rot: 0 },
           { item: 'isik:fener', x: 5, y: 5, rot: 0 },
-          { item: 'dis:salincak', x: 16, y: 3, rot: 0 },
-        ],
-      },
-      [`m:${today.slice(0, 7)}`]: {
-        items: [
-          { item: 'dis:tas-yol', x: 6, y: 13, rot: 90 },
-          { item: 'dis:tas-yol', x: 7, y: 13, rot: 90 },
-          { item: 'dis:tas-yol', x: 8, y: 13, rot: 90 },
-          { item: 'dis:cicek-kirmizi', x: 0, y: 0, rot: 0 },
-          { item: 'dis:kabak', x: 14, y: 0, rot: 0 },
+          { item: 'dis:salincak', x: 13, y: 2, rot: 0 },
+          { item: 'dis:tas-yol', x: 2, y: 5, rot: 90 },
+          { item: 'dis:tas-yol', x: 3, y: 5, rot: 90 },
+          { item: 'dis:tas-yol', x: 4, y: 5, rot: 90 },
+          { item: 'dis:cicek-kirmizi', x: 10, y: 1, rot: 0 },
+          { item: 'dis:kabak', x: 11, y: 1, rot: 0 },
         ],
       },
     },
