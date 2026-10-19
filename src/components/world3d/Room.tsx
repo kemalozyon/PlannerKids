@@ -10,7 +10,7 @@ import { Color, type Texture } from 'three';
 import type { Item } from '../../lib/catalog';
 import type { FixedTile } from '../../lib/config';
 import type { Book } from '../../lib/types';
-import { patternTexture } from './art';
+import { gridTexture, patternTexture } from './art';
 import { Bookcase, ReadingStack } from './Books';
 import { isTap } from './light';
 
@@ -55,6 +55,18 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
       return t;
     });
   }, [floor, c1, c2, parts]);
+  // Habbo'daki gibi karolar görünür: her parçada karo başına bir ızgara hücresi
+  const gridMaps = useMemo(
+    () =>
+      parts.map(([x, y, pw, ph]) => {
+        const t = gridTexture().clone();
+        t.repeat.set(pw, ph);
+        t.offset.set(x, -(y + ph));
+        t.needsUpdate = true;
+        return t;
+      }),
+    [parts],
+  );
   // Duvarlardaki açıklıklar: arka duvarda kenarı 'n', sol duvarda 'w' olan kapılar
   const gapsBack = fixed.filter((f) => f.kind === 'door' && f.edge === 'n' && f.y === 0).map((f) => f.x);
   const gapsLeft = fixed.filter((f) => f.kind === 'door' && f.edge === 'w' && f.x === 0).map((f) => f.y);
@@ -77,6 +89,10 @@ export default function Room({ w, h, floor, wall, fixed, onDoor, shelfBooks = []
           <mesh position={[x + pw / 2, 0.001, y + ph / 2]} rotation-x={-Math.PI / 2} receiveShadow>
             <planeGeometry args={[pw, ph]} />
             <meshStandardMaterial map={floorMaps[i]} roughness={0.82} polygonOffset polygonOffsetFactor={-1} />
+          </mesh>
+          <mesh position={[x + pw / 2, 0.002, y + ph / 2]} rotation-x={-Math.PI / 2} raycast={() => null}>
+            <planeGeometry args={[pw, ph]} />
+            <meshBasicMaterial map={gridMaps[i]} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
           </mesh>
         </group>
       ))}

@@ -60,6 +60,9 @@ export interface Ctx {
   on: boolean;
   /** OPEN_CLOSE: kapak/kapı açık */
   open: boolean;
+  /** ROLL: zarın üstteki yüzü (1–6) ve atış sayacı */
+  value?: number;
+  tick?: number;
 }
 
 

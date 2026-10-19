@@ -729,6 +729,8 @@ export type Pose = 'sit' | 'lie' | 'swing';
 
 /** Eşyanın önü: dönüşe göre (0° güney/kameraya doğru, 90° batı, 180° kuzey, 270° doğu) */
 const FRONT: Record<number, Tile> = { 0: { x: 0, y: 1 }, 90: { x: -1, y: 0 }, 180: { x: 0, y: -1 }, 270: { x: 1, y: 0 } };
+/** Dönüşün baktığı yön (bir karo) */
+export const dirOf = (rot: number): Tile => FRONT[rot] ?? FRONT[0];
 
 /**
  * Oturma/yatma noktası (alanın yerel koordinatında, karo merkezi değil 3D konum): ayak izinin ortası, yükseklik
@@ -799,7 +801,8 @@ export function approachTile(item: Item, p: PlacedItem, w: number, h: number, bl
   const back = { x: -f.x, y: -f.y };
   const left = { x: f.y, y: -f.x };
   const right = { x: -f.y, y: f.x };
-  const order = has(item, 'LAY') ? [left, right, f, back] : [f, left, right, back];
+  // Yatağa yandan; atlama tahtasına arkadan (önü havuz)
+  const order = has(item, 'LAY') ? [left, right, f, back] : has(item, 'DIVE') ? [back, left, right, f] : [f, left, right, back];
   for (const d of order) for (const t of side(d)) if (free(t)) return t;
   return null;
 }
@@ -815,7 +818,26 @@ export const isOpen = (item: Item, p: PlacedItem): boolean => (has(item, 'OPEN_C
 export const colorOf = (item: Item, p: PlacedItem): string | undefined => (has(item, 'CHANGE_COLOR') ? item.palette?.[p.color ?? 0] : undefined);
 
 /** Eşyanın eylemleri (seçenek çubuğundaki "Kullan" düğmeleri) */
-export type ActionId = 'sit' | 'lie' | 'swing' | 'stand' | 'toggle' | 'open' | 'color' | 'storage' | 'dispense' | 'sound' | 'feed' | 'books' | 'music' | 'notes' | 'stats' | 'study';
+export type ActionId =
+  | 'sit'
+  | 'lie'
+  | 'swing'
+  | 'stand'
+  | 'toggle'
+  | 'open'
+  | 'color'
+  | 'storage'
+  | 'dispense'
+  | 'sound'
+  | 'feed'
+  | 'books'
+  | 'music'
+  | 'notes'
+  | 'stats'
+  | 'study'
+  | 'teleport'
+  | 'roll'
+  | 'dive';
 export interface ItemAction {
   id: ActionId;
   label: string;
@@ -841,6 +863,9 @@ export function itemActions(item: Item, p: PlacedItem, o: { posed: boolean; toda
       item.fx === 'fire' ? (on ? '🔥 Söndür' : '🔥 Yak') : item.fx === 'tv' ? (on ? '📺 Kapat' : '📺 Aç') : item.fx === 'anim' ? (on ? '⏹️ Durdur' : '▶️ Çalıştır') : item.fx === 'steam' ? (on ? '⏹️ Kapat' : '♨️ Çalıştır') : on ? '💡 Kapat' : '💡 Aç';
     out.push({ id: 'toggle', label });
   }
+  if (has(item, 'TELEPORT')) out.push({ id: 'teleport', label: '🌀 Işınlan' });
+  if (has(item, 'ROLL')) out.push({ id: 'roll', label: '🎲 Zar at' });
+  if (has(item, 'DIVE')) out.push({ id: 'dive', label: '🤸 Atla' });
   if (has(item, 'GATE')) out.push({ id: 'open', label: isOpen(item, p) ? '🚧 Kapıyı kapat' : '🚪 Kapıyı aç' });
   else if (has(item, 'OPEN_CLOSE')) out.push({ id: 'open', label: isOpen(item, p) ? '🔒 Kapağı kapat' : '🔓 Kapağı aç' });
   if (has(item, 'CHANGE_COLOR') && (item.palette?.length ?? 0) > 1) out.push({ id: 'color', label: '🎨 Renk' });
@@ -884,6 +909,100 @@ export function takeOutAt(layout: SpaceLayout, index: number, k: number): SpaceL
       return stored.length ? { ...rest, stored } : rest;
     }),
   };
+}
+
+// ---------- Oyun eşyaları: havuz, ışınlayıcı, yürüyen bant, top, atlama tahtası ----------
+/** Havuz suyu karoları (SWIM eşyalarının ayak izi; alanın yerel koordinatı) */
+export function swimTiles(layout: SpaceLayout): Set<string> {
+  const out = new Set<string>();
+  for (const p of layout.items) {
+    const it = itemById(p.item);
+    if (it && has(it, 'SWIM')) footprint(it, p.x, p.y, p.rot).forEach((t) => out.add(key(t.x, t.y)));
+  }
+  return out;
+}
+
+/** Karonun içinde mi (alanın kutusu) */
+const inBox = (space: SpaceId, ctx: WorldCtx, t: Tile) => {
+  const { w, h } = spaceSize(space, ctx);
+  return t.x >= 0 && t.y >= 0 && t.x < w && t.y < h;
+};
+
+/**
+ * Yürüyen bant (CONVEY): `t` karosunda bant varsa baktığı yöndeki karo (boş ve odanın içindeyse); yoksa null.
+ * Karakter durunca bir karo taşınır, zincirlenir (bant bandı izler).
+ */
+export function conveyStep(space: SpaceId, layout: SpaceLayout, ctx: WorldCtx, t: Tile): Tile | null {
+  const belt = layout.items.find((p) => {
+    const it = itemById(p.item);
+    return it && has(it, 'CONVEY') && footprint(it, p.x, p.y, p.rot).some((q) => q.x === t.x && q.y === t.y);
+  });
+  if (!belt) return null;
+  const d = dirOf(belt.rot);
+  const to = { x: t.x + d.x, y: t.y + d.y };
+  if (!inBox(space, ctx, to) || blockedTiles(space, layout, ctx).has(key(to.x, to.y))) return null;
+  return to;
+}
+
+/**
+ * Topa vur (KICK): `index`teki eşya `dir` yönünde en çok `max` karo yuvarlanır; engelde, duvarda ya da konamayacağı
+ * yerde durur. Eşya aynı sırada kalır (çizimde kayarak gider). Hiç kıpırdayamazsa null.
+ */
+export function kickItem(space: SpaceId, layout: SpaceLayout, index: number, dir: Tile, ctx: WorldCtx, max = 3): SpaceLayout | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it || !has(it, 'KICK')) return null;
+  const blocked = blockedTiles(space, layout, ctx);
+  let at = { x: p.x, y: p.y };
+  for (let i = 0; i < max; i++) {
+    const q = { ...p, x: at.x + dir.x, y: at.y + dir.y };
+    if (!inBox(space, ctx, q) || blocked.has(key(q.x, q.y)) || !canPlaceAt(space, layout, ctx, q, index)) break;
+    at = { x: q.x, y: q.y };
+  }
+  if (at.x === p.x && at.y === p.y) return null;
+  return { ...layout, items: layout.items.map((q, i) => (i === index ? { ...q, x: at.x, y: at.y } : q)) };
+}
+
+/**
+ * Işınlayıcının eşi (TELEPORT): evin alanlarında (order sırasıyla) aynı renkteki ışınlayıcılardan bundan sonraki
+ * (sonuncudan ilkine döner). Tek başınaysa null.
+ */
+export function teleportTarget(spaces: Partial<Record<SpaceId, SpaceLayout>>, order: SpaceId[], from: { space: SpaceId; index: number }): { space: SpaceId; index: number } | null {
+  const color = (q: PlacedItem) => q.color ?? 0;
+  const me = spaces[from.space]?.items[from.index];
+  if (!me) return null;
+  const all: { space: SpaceId; index: number }[] = [];
+  for (const sp of order)
+    spaces[sp]?.items.forEach((q, i) => {
+      const it = itemById(q.item);
+      if (it && has(it, 'TELEPORT') && color(q) === color(me)) all.push({ space: sp, index: i });
+    });
+  if (all.length < 2) return null;
+  const k = all.findIndex((r) => r.space === from.space && r.index === from.index);
+  return k < 0 ? null : all[(k + 1) % all.length];
+}
+
+/** Işınlayıcıdan çıkış: kabinin ortası ve önündeki boş karo (yoksa kabinin kendisi) */
+export function teleportExit(item: Item, p: PlacedItem, w: number, h: number, blocked: Set<string>): { x: number; z: number; out: Tile } {
+  const [fw, fh] = footSize(item, p.rot);
+  return { x: p.x + fw / 2, z: p.y + fh / 2, out: approachTile(item, p, w, h, blocked) ?? { x: p.x, y: p.y } };
+}
+
+/**
+ * Atlama tahtası (DIVE): tahtanın ortası, ucu (önü) ve düşülecek su karosu (alanın yerel koordinatı, 3D konum).
+ * Önündeki karo havuz değilse null.
+ */
+export function diveSpot(layout: SpaceLayout, index: number): { board: { x: number; z: number }; tip: { x: number; z: number }; land: Tile } | null {
+  const p = layout.items[index];
+  const it = p && itemById(p.item);
+  if (!it || !has(it, 'DIVE')) return null;
+  const [w, h] = footSize(it, p.rot);
+  const d = dirOf(p.rot);
+  const land = { x: p.x + (d.x > 0 ? w : d.x < 0 ? -1 : Math.floor(w / 2)), y: p.y + (d.y > 0 ? h : d.y < 0 ? -1 : Math.floor(h / 2)) };
+  if (!swimTiles(layout).has(key(land.x, land.y))) return null;
+  const cx = p.x + w / 2;
+  const cz = p.y + h / 2;
+  return { board: { x: cx, z: cz }, tip: { x: cx + d.x * 0.45, z: cz + d.y * 0.45 }, land };
 }
 
 /** Yerinde döndürülebilir mi (birden çok yönü olan yer eşyası) */
@@ -1128,11 +1247,15 @@ export function creaturesOf(treeCount: number) {
 }
 
 // ---------- Başlangıç yerleşimleri ----------
-/** Yeni evin odası: başlangıç eşyaları ücretsiz. Bütün haritalarda geçerli yerlerde. */
+/**
+ * Yeni evin odası, Habbo'nunkiler gibi hazır döşenmiş: ücretsiz eşyalar + items.json'da "starter" olan eşyalar
+ * (herkese birer tane bedava; sunucuda world_owned). Bütün haritalarda geçerli yerlerde (en küçük oda 12 × 10).
+ */
 export const DEFAULT_ROOM: SpaceLayout = {
-  floor: 'zemin:ahsap',
-  wall: 'duvar:krem',
+  floor: 'zemin:balik-sirti',
+  wall: 'duvar:puantiye',
   items: [
+    // Uyku ve çalışma köşesi
     { item: 'mob:yatak', x: 0, y: 0, rot: 0 },
     { item: 'mob:kitaplik', x: 2, y: 0, rot: 0 },
     { item: 'mob:masa', x: 5, y: 0, rot: 0 },
@@ -1140,6 +1263,29 @@ export const DEFAULT_ROOM: SpaceLayout = {
     { item: 'isik:ayakli', x: 7, y: 0, rot: 0 },
     { item: 'bitki:saksi', x: 8, y: 0, rot: 0 },
     { item: 'hali:dikdortgen', x: 4, y: 4, rot: 0 },
+    { item: 'isik:masa-lambasi', x: 6, y: 0, rot: 0 },
+    // Televizyon köşesi: TV dolabının üstünde TV ve radyo, halının üstünde sehpa ve kanepe
+    { item: 'mob:tv-dolabi', x: 9, y: 0, rot: 0 },
+    { item: 'mob:eski-tv', x: 9, y: 0, rot: 0 },
+    { item: 'mob:radyo', x: 10, y: 0, rot: 0 },
+    { item: 'bitki:buyuk-saksi', x: 11, y: 0, rot: 0 },
+    { item: 'hali:sari', x: 9, y: 2, rot: 0 },
+    { item: 'mob:sehpa', x: 9, y: 2, rot: 0 },
+    { item: 'mob:koltuk-pembe', x: 9, y: 3, rot: 180 },
+    { item: 'set:muzik-armut', x: 11, y: 2, rot: 270 },
+    // Oyun köşesi: halka halı ve iki puf
+    { item: 'set:hali-yuvarlak', x: 2, y: 7, rot: 0 },
+    { item: 'set:puf', x: 2, y: 8, rot: 0 },
+    { item: 'set:puf-mavi', x: 3, y: 8, rot: 0 },
+    { item: 'bitki:saksi2', x: 0, y: 9, rot: 0 },
+    { item: 'set:bitki-monstera', x: 11, y: 9, rot: 0 },
+    // Duvarlar: arka duvar (y = -1) ve sol duvar (x = -1)
+    { item: 'duvar:gokkusagi', x: 0, y: -1, rot: 0 },
+    { item: 'duvar:pano', x: 3, y: -1, rot: 0 },
+    { item: 'duvar:saat', x: 8, y: -1, rot: 0 },
+    { item: 'duvar:roket', x: 11, y: -1, rot: 0 },
+    { item: 'isik:duvar', x: -1, y: 2, rot: 270 },
+    { item: 'duvar:harita', x: -1, y: 7, rot: 270 },
   ],
 };
 

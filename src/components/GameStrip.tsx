@@ -19,7 +19,7 @@ export default function GameStrip({ goForest, goGarden }: { goForest: () => void
   const next = CFG.world.stages.find((s) => s.min > (tree?.minutes ?? 0));
   const waiting = stats.drops.filter((d) => !d.opened).at(-1);
   return (
-    <section className="game-strip">
+    <section className="game-strip" data-tour="tree">
       <button className="gs-plant gs-forest" onClick={goGarden} aria-label="Bahçemi göster">
         {tree ? <span>{species.icon}</span> : <span className="gs-soil" aria-hidden />}
       </button>

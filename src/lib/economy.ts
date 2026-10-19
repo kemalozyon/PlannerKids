@@ -369,18 +369,19 @@ export function unlockValue(by: UnlockKind, p: UnlockProgress): number {
 
 export function owns(item: Item, owned: OwnedItem[], p: UnlockProgress): boolean {
   const a = item.acquire;
-  if (a.kind === 'free') return true;
+  if (a.kind === 'free' || (item.starter ?? 0) > 0) return true;
   if (a.kind === 'unlock') return unlockValue(a.by, p) >= a.target;
   return owned.some((o) => o.item_id === item.id);
 }
 
 /**
  * Bir eşyadan kaç tane yerleştirilebilir (sunucuda world_owned): satılan/sandık/nadir ağaç eşyası sahip olunan adet;
- * başarıyla açılan açıldıysa 1; ücretsiz başlangıç eşyası 1, ücretsiz kaplama sınırsız.
+ * başarıyla açılan açıldıysa 1; ücretsiz başlangıç eşyası 1, ücretsiz kaplama sınırsız. Satılan eşyanın herkese bedava
+ * verilen "starter" adedi (hazır döşenmiş ilk oda) sahip olunana eklenir.
  */
 export function ownedCount(item: Item, owned: OwnedItem[], p: UnlockProgress): number {
   const a = item.acquire;
-  if (a.kind === 'buy' || a.kind === 'chest' || a.kind === 'drop') return owned.filter((o) => o.item_id === item.id).length;
+  if (a.kind === 'buy' || a.kind === 'chest' || a.kind === 'drop') return owned.filter((o) => o.item_id === item.id).length + (item.starter ?? 0);
   if (a.kind === 'unlock') return ['hours', 'level', 'trees'].includes(a.by) && unlockValue(a.by, p) >= a.target ? 1 : 0;
   return item.placement ? 1 : Infinity;
 }
@@ -399,11 +400,21 @@ export function unlockHint(item: Item): string {
   return `⭐ ${['Çırak', 'Kâşif', 'Orman Bekçisi', 'Bahçıvan', 'Orman Ustası', 'Orman Bilgesi', 'Efsane'][a.target]} seviyesine ulaş`;
 }
 
+/** Dükkânda bir seferde en çok bu kadar tane (sunucuda buy_items) */
+export const MAX_BUY = 20;
+
+/** Bu eşyadan şu bakiyeyle bir seferde kaç tane alınabilir (tekrar alınamayan eşyada en çok 1) */
+export function maxBuy(item: Item, elmas: number): number {
+  if (item.acquire.kind !== 'buy') return 0;
+  if (!item.repeat) return 1;
+  return Math.max(1, Math.min(MAX_BUY, Math.floor(elmas / item.acquire.price)));
+}
+
 /** Satın alınabilir mi; değilse nedeni */
 export function buyCheck(itemId: string, elmas: number, owned: OwnedItem[], unusedFreezes: number): string | null {
   const item = itemById(itemId);
   if (!item || item.acquire.kind !== 'buy') return 'Bu eşya satılmıyor.';
-  if (!item.repeat && owned.some((o) => o.item_id === itemId)) return 'Bu eşya zaten sende.';
+  if (!item.repeat && ((item.starter ?? 0) > 0 || owned.some((o) => o.item_id === itemId))) return 'Bu eşya zaten sende.';
   if (item.id === 'freeze' && unusedFreezes >= CFG.freeze.max) return `En fazla ${CFG.freeze.max} dondurma biriktirebilirsin.`;
   const { price } = item.acquire;
   if (elmas < price) return `${price - elmas} 💎 daha lazım. Çalıştıkça Elmas kazanırsın!`;

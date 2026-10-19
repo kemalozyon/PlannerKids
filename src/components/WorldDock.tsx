@@ -2,9 +2,10 @@
 // yapılıyorsa o: seçili eşyanın adı, özellikleri ve düğmeleri (kullan · ✋ Taşı · ↻ Döndür · 📦 Kaldır), karakterin
 // düğmeleri, elde tutulan eşya (↻ Döndür · ✕ Vazgeç) ya da ↶ Geri al. Altta sekmeler: 🎒 Envanter (odaya
 // konabilecek eşyalar), 🛍️ Dükkân (katalog), 🎨 Oda (zemin/duvar, şekil, oda ekle/değiştir, yakından gez).
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type FormEvent, type ReactNode } from 'react';
 import { behaviorText, itemById, RARITY, type Item } from '../lib/catalog';
 import { canRotate, isOn, isRoom, isTerrace, itemActions, nextRot, powerKey, type ActionId, type PlacedItem, type SpaceId, type SpaceLayout, type WorldCtx } from '../lib/world';
+import { sfx } from '../lib/sfx';
 import type { UserRoom } from '../lib/types';
 import type { Tab as LookTab } from './avatar/AvatarEditor';
 import InventoryDrawer, { CoverRow, type InvEntry } from './InventoryDrawer';
@@ -54,11 +55,21 @@ export interface WorldDockProps {
   /** Envanter: bu odaya konabilecek, boşta duran eşyalar */
   items: InvEntry[];
   owned: (it: Item) => number;
+  /** Boşta duran adet (sahip olunan − bütün odalarda yerleştirilmiş) */
+  free: (it: Item) => number;
   onHold: (it: Item) => void;
   onCover: (slot: 'floor' | 'wall', id: string) => void;
   goCollection: () => void;
   /** Dükkândan "Hemen yerleştir" */
   onPlace: (id: string) => void;
+  /** Dükkândan alındı */
+  onBought: (it: Item, qty: number) => void;
+  /** Konuşma balonu ve karakterin adı */
+  onSay: (text: string) => void;
+  nick: string;
+  onNick: (name: string) => void;
+  /** Seçili ışınlayıcının eşi (bilgi satırı) */
+  linkNote?: string;
   /** Seçili oda eklenen bir odaysa */
   room: UserRoom | undefined;
   canAdd: boolean;
@@ -81,6 +92,11 @@ export default function WorldDock(p: WorldDockProps) {
         <ItemIcon item={heldItem} className="sm" />
         <span className="grow dock-text">
           <strong>{p.held.from ? `✋ ${heldItem.name}` : heldItem.name}</strong>
+          {!p.held.from && p.free(heldItem) > 1 && p.free(heldItem) < 1000 && (
+            <span className="held-count" key={p.free(heldItem)} aria-label={`elinde ${p.free(heldItem)} tane`}>
+              ×{p.free(heldItem)}
+            </span>
+          )}
           <span className="muted small"> · {heldItem.placement === 'wall' ? 'asmak istediğin duvara' : 'koymak istediğin karoya'} dokun</span>
         </span>
         {canRotate(heldItem) && (
@@ -96,42 +112,7 @@ export default function WorldDock(p: WorldDockProps) {
   } else if (p.using && placed && item) {
     top = <ItemInfo {...p} using={p.using} placed={placed} item={item} />;
   } else if (p.me) {
-    top = (
-      <div className="dock-info" role="region" aria-label="Karakterin">
-        <div className="dock-head">
-          <span className="dock-avatar" aria-hidden>
-            🙂
-          </span>
-          <strong className="grow">Ben</strong>
-          <button className="pop-x" onClick={p.onCloseMe} aria-label="Kapat">
-            ✕
-          </button>
-        </div>
-        <div className="dock-btns">
-          {p.dancing ? (
-            <button className="btn sm primary" onClick={() => p.onEmote(null)}>
-              ⏹ Dur
-            </button>
-          ) : (
-            <button className="btn sm primary" onClick={() => p.onEmote('dance')}>
-              💃 Dans et
-            </button>
-          )}
-          <button className="btn sm" onClick={() => p.onEmote('wave')}>
-            👋 El salla
-          </button>
-          <button className="btn sm" onClick={p.onPets}>
-            🐾 Hayvanımı yanıma al
-          </button>
-          <button className="btn sm" onClick={() => p.onLook('top')}>
-            👕 Kıyafet değiştir
-          </button>
-          <button className="btn sm" onClick={() => p.onLook('govde')}>
-            🙂 Görünüşüm
-          </button>
-        </div>
-      </div>
-    );
+    top = <MePanel {...p} />;
   } else if (p.undo) {
     top = (
       <div key={p.undo.n} className="dock-row dock-undo" role="status">
@@ -165,7 +146,7 @@ export default function WorldDock(p: WorldDockProps) {
   } else if (showTab && p.tab === 'shop') {
     body = (
       <Suspense fallback={<div className="dock-loading">🛍️ Dükkân açılıyor…</div>}>
-        <ShopPanel goCollection={p.goCollection} onPlace={p.onPlace} />
+        <ShopPanel goCollection={p.goCollection} onPlace={p.onPlace} freeOf={(it) => p.free(it)} onBought={p.onBought} />
       </Suspense>
     );
   } else if (showTab && p.tab === 'room') {
@@ -205,11 +186,119 @@ export default function WorldDock(p: WorldDockProps) {
       {body && <div className={`dock-body dock-${p.tab}`}>{body}</div>}
       <div className="dock-tabs" role="tablist" aria-label="Alttaki panel">
         {TABS.map(([t, label]) => (
-          <button key={t} role="tab" aria-selected={p.tab === t} className={p.tab === t ? 'on' : ''} onClick={() => p.onTab(t)}>
-            {label}
+          <button
+            key={t}
+            role="tab"
+            aria-selected={p.tab === t}
+            className={p.tab === t ? 'on' : ''}
+            onClick={() => {
+              sfx.click();
+              p.onTab(t);
+            }}
+          >
+            <span className="dock-tab-ico" aria-hidden>
+              {label.split(' ')[0]}
+            </span>
+            {label.slice(label.indexOf(' ') + 1)}
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Hızlı balonlar (Habbo'daki gibi tek dokunuşla söylenir) */
+const QUICK = ['Merhaba!', '😀', '❤️', '⭐', 'Hadi oynayalım!', 'Ders zamanı! 📚'];
+
+/** Karakterin paneli: hareketler, söyle (balon), adım, kıyafet */
+function MePanel(p: WorldDockProps) {
+  const [mode, setMode] = useState<'say' | 'nick' | null>(null);
+  const [text, setText] = useState('');
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (mode === 'nick') {
+      p.onNick(text);
+      setMode(null);
+    } else if (text.trim()) p.onSay(text);
+    setText('');
+  };
+  return (
+    <div className="dock-info" role="region" aria-label="Karakterin">
+      <div className="dock-head">
+        <span className="dock-avatar" aria-hidden>
+          🙂
+        </span>
+        <strong className="grow">{p.nick}</strong>
+        <button className="pop-x" onClick={p.onCloseMe} aria-label="Kapat">
+          ✕
+        </button>
+      </div>
+      <div className="dock-btns">
+        {p.dancing ? (
+          <button className="btn sm primary" onClick={() => p.onEmote(null)}>
+            ⏹ Dur
+          </button>
+        ) : (
+          <button className="btn sm primary" onClick={() => p.onEmote('dance')}>
+            💃 Dans et
+          </button>
+        )}
+        <button className="btn sm" onClick={() => p.onEmote('wave')}>
+          👋 El salla
+        </button>
+        <button
+          className={`btn sm${mode === 'say' ? ' primary' : ''}`}
+          aria-pressed={mode === 'say'}
+          onClick={() => {
+            setText('');
+            setMode((m) => (m === 'say' ? null : 'say'));
+          }}
+        >
+          💬 Söyle
+        </button>
+        <button className="btn sm" onClick={p.onPets}>
+          🐾 Hayvanımı yanıma al
+        </button>
+        <button className="btn sm" onClick={() => p.onLook('top')}>
+          👕 Kıyafet değiştir
+        </button>
+        <button className="btn sm" onClick={() => p.onLook('govde')}>
+          🙂 Görünüşüm
+        </button>
+        <button
+          className="btn sm"
+          onClick={() => {
+            setText(p.nick === 'Ben' ? '' : p.nick);
+            setMode((m) => (m === 'nick' ? null : 'nick'));
+          }}
+        >
+          🏷️ Adım
+        </button>
+      </div>
+      {mode && (
+        <form className="say-form" onSubmit={submit}>
+          <input
+            autoFocus
+            value={text}
+            maxLength={mode === 'nick' ? 16 : 60}
+            placeholder={mode === 'nick' ? 'Karakterinin adı' : 'Bir şey söyle…'}
+            aria-label={mode === 'nick' ? 'Karakterinin adı' : 'Söyle'}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button className="btn sm primary" type="submit">
+            {mode === 'nick' ? '✓ Kaydet' : '💬'}
+          </button>
+        </form>
+      )}
+      {mode === 'say' && (
+        <div className="say-chips">
+          {QUICK.map((q) => (
+            <button key={q} className="chip" onClick={() => p.onSay(q)}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -232,6 +321,7 @@ function ItemInfo(p: WorldDockProps & { using: ItemRef; placed: PlacedItem; item
             {RARITY[item.rarity].name}
           </span>
           {what && <span className="muted small dock-what">{what}</span>}
+          {p.linkNote && <span className="small dock-what">{p.linkNote}</span>}
         </span>
         <button className="pop-x" onClick={p.onCloseUse} aria-label="Kapat">
           ✕

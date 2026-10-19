@@ -101,7 +101,7 @@ export default function Collection({ goGarden }: { goGarden: () => void }) {
         )}
       </section>
 
-      {open && <ItemSheet item={open} can3D={can3D} onClose={() => setOpen(null)} onBuy={() => buy(open.id)} onEquip={(e) => equip(e)} />}
+      {open && <ItemSheet item={open} can3D={can3D} onClose={() => setOpen(null)} onBuy={(qty) => buy(open.id, qty)} onEquip={(e) => equip(e)} />}
     </div>
   );
 }

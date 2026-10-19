@@ -1,6 +1,5 @@
 {
-  "$comment": "Tanıtım turunun sahneleri. hash: açılacak sayfa · target: öne çıkarılacak öge (data-tour) · text: okunacak metin. Ses ve kelime zamanları `npm run demo:audio` ile public/demo/ altına üretilir; metni değiştirince yeniden üret.",
-  "voice": "Kısa, sıcak, merak uyandıran; 10–14 yaşa hitap eden bir anlatıcı.",
+  "$comment": "Tanıtım turunun sahneleri. hash: açılacak sayfa · view: Dünyam'da hangi oda (room | library | terrace; teras yoksa oda) · dock: Dünyam'ın alt panelinde açılacak sekme (inv | shop | room | me; yoksa panel kapanır) · target: öne çıkarılacak öge (data-tour) · text: okunacak metin. Ses (Gemini TTS) ve kelime zamanları `npm run demo:audio` ile src/demo/audio/ altına üretilir; metni değiştirince yeniden üret. Metin aynen okunur: içine okunmayacak not yazma.",
   "scenes": [
     {
       "id": "01-merhaba",
@@ -10,80 +9,202 @@
       "text": "Merhaba! Burası senin çalışma dünyan. Çalıştığın her gün bahçene bir ağaç diker, evini büyütür. Hadi birlikte gezelim."
     },
     {
-      "id": "02-sayac",
+      "id": "02-menu",
+      "hash": "today",
+      "target": "nav",
+      "title": "Menü",
+      "text": "Aşağıdaki menüden sayfalar arasında geçersin: Bugün, Dünyam, Bahçem, Kitaplık, Geçmiş ve Profil. Şimdi hepsine tek tek bakalım."
+    },
+    {
+      "id": "03-plan",
+      "hash": "today",
+      "target": "plan",
+      "title": "Bugünün planı",
+      "text": "Bugünün planı burada. Hangi dersten kaç dakika çalışacağını görürsün; bir derse dokununca sayaç o dersle başlar."
+    },
+    {
+      "id": "04-sayac",
       "hash": "today",
       "target": "timer",
       "title": "Sayacı başlat",
       "text": "Dersini seç ve Başlat'a dokun. Sekmeden çıkarsan ya da uzun süre ekrana dokunmazsan sayaç durur. Bitirince ne çalıştığını kısaca yazarsın."
     },
     {
-      "id": "03-elmas",
+      "id": "05-odak",
+      "hash": "today",
+      "target": "timer",
+      "title": "Odak modu",
+      "text": "Sayaç çalışırken odak moduna geç: ekran sade kalır, istersen yağmur sesi açılır, bugünün ağacının büyüdüğünü izlersin. Her turdan sonra beş dakika mola ver. Sayacı unuttuysan Süre yaz ile elle ekleyebilirsin."
+    },
+    {
+      "id": "06-elmas",
       "hash": "today",
       "target": "elmas",
       "title": "Elmas",
       "text": "Sayaçla çalıştıkça Elmas kazanırsın. Planını bitirmek, serini sürdürmek ve gününü değerlendirmek de Elmas getirir. Elmas yalnızca çalışarak kazanılır."
     },
     {
-      "id": "04-gorevler",
+      "id": "07-agac",
+      "hash": "today",
+      "target": "tree",
+      "title": "Bugünün ağacı",
+      "text": "Bu da bugünün ağacı. Tohum seç'e dokunup bugün hangi ağacı dikeceğini sen seçersin. Ne kadar çok çalışırsan ağacın o kadar büyür."
+    },
+    {
+      "id": "08-gorevler",
       "hash": "today",
       "target": "quests",
       "title": "Görevler ve sandık",
       "text": "Günlük ve haftalık görevlerin burada. Haftada beş gün çalışırsan haftalık sandığın açılır ve içinden sürpriz bir eşya çıkar."
     },
     {
-      "id": "05-oda",
+      "id": "09-yapilacaklar",
+      "hash": "today",
+      "target": "tasks",
+      "title": "Yapılacaklar",
+      "text": "Ödevlerini Yapılacaklar listesine yaz, bitirince işaretle. Ailenin verdiği görevleri bitirirsen Elmas da kazanırsın."
+    },
+    {
+      "id": "10-gun",
+      "hash": "today",
+      "target": "reflection",
+      "title": "Bugün nasıl geçti?",
+      "text": "Günün sonunda bugünün nasıl geçtiğini seç ve birkaç cümle yaz. Bu sana Elmas kazandırır, ailene giden günlük rapora da eklenir."
+    },
+    {
+      "id": "11-haftalik",
+      "hash": "plan",
+      "target": "weekplan",
+      "title": "Haftalık plan",
+      "text": "Haftalık planında her güne hangi dersten kaç dakika çalışacağını yazarsın. Hazır şablonlarla tek dokunuşla plan yapabilirsin. Planını bitirdiğin günler ekstra Elmas getirir."
+    },
+    {
+      "id": "12-oda",
       "hash": "forest",
       "view": "room",
       "target": "world",
       "title": "Senin odan",
-      "text": "Burası senin odan. Üstten başka bir odaya geçebilir, ya da kapıya dokunup yan odaya gidebilirsin. Bir yere dokun, karakterin oraya yürüsün; bir eşyaya dokununca alttaki panelde neler yapabileceğin çıkar."
+      "text": "Burası Dünyam, senin evin. Bir yere dokun, karakterin oraya yürüsün. Kapıya dokununca yan odaya geçersin."
     },
     {
-      "id": "06-duzenle",
+      "id": "13-odalar",
+      "hash": "forest",
+      "view": "room",
+      "target": "rooms",
+      "title": "Odaların",
+      "text": "Üstteki şeritte odaların var: odan, kütüphanen ve sonradan eklediğin odalar ile teraslar. Birine dokun, hemen oraya geç."
+    },
+    {
+      "id": "14-esyalar",
       "hash": "forest",
       "view": "room",
       "target": "edit",
+      "title": "Eşyalar işe yarar",
+      "text": "Bir eşyaya dokununca alttaki panelde neler yapabileceğin çıkar. Koltuğa oturur, yatağa uzanır, lambayı yakar, televizyonu açarsın. Radyodan müzik çalar, panoya not asarsın."
+    },
+    {
+      "id": "15-karakter-oda",
+      "hash": "forest",
+      "view": "room",
+      "dock": "me",
+      "target": "edit",
+      "title": "Karakterine dokun",
+      "text": "Karakterine dokununca dans eder, el sallar ya da konuşma balonuyla bir şey söylersin. Evcil hayvanını da yanına alabilirsin."
+    },
+    {
+      "id": "16-envanter",
+      "hash": "forest",
+      "view": "room",
+      "dock": "inv",
+      "target": "edit",
+      "title": "Envanter",
+      "text": "Envanter'de sahip olduğun eşyalar durur. Bir eşya seç, sonra koymak istediğin kareye dokun. Küçük eşyaları masanın üstüne, posterleri duvara koyabilir, eşyaları taşıyıp döndürebilirsin."
+    },
+    {
+      "id": "17-dukkan",
+      "hash": "forest",
+      "view": "room",
+      "dock": "shop",
+      "target": "shop",
+      "title": "Dükkân",
+      "text": "Kazandığın Elmasla Dükkân'dan odana mobilya, terasına süs, karakterine kıyafet alırsın. Aldığın eşyayı hemen odana yerleştirebilirsin. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+    },
+    {
+      "id": "18-oda-duzenle",
+      "hash": "forest",
+      "view": "room",
+      "dock": "room",
+      "target": "edit",
       "title": "Odanı düzenle",
-      "text": "Alttaki Envanter'e dokun, bir eşya seç, sonra koymak istediğin kareye dokun. Küçük eşyaları masanın üstüne, posterleri duvara koyabilirsin. Oda sekmesinden zemini, duvarı ve yeni odaların şeklini değiştirirsin."
+      "text": "Oda sekmesinde zemini ve duvarı değiştirirsin. Yeni oda ya da teras ekleyebilir, odanın şeklini karo karo kendin çizebilirsin."
     },
     {
-      "id": "07-orman",
-      "hash": "garden",
-      "target": "garden",
-      "title": "Her gün bir ağaç",
-      "text": "Burası Bahçem. Çalıştığın her gün o ayın bahçesine bir ağaç dikilir; ne kadar çok çalışırsan o kadar büyür. O günün Elması ağacında bekler: parlayan taşı olan ağaca dokun ve Elmasını al."
+      "id": "19-oyunlar",
+      "hash": "forest",
+      "view": "terrace",
+      "target": "world",
+      "title": "Oyun eşyaları",
+      "text": "Dükkânda oyun eşyaları da var. Havuzda yüzer, atlama tahtasından suya atlarsın. Aynı renkteki iki ışınlayıcı seni odadan odaya taşır. Zar at, topa vur, dans pistinde eğlen!"
     },
     {
-      "id": "08-arazi",
+      "id": "20-ev",
       "hash": "forest",
       "view": "room",
       "target": "lands",
       "title": "Evin büyür",
-      "text": "Toplam çalışman arttıkça odan ve kütüphanen kendiliğinden genişler, eşyaların yerinde kalır. İstediğin kadar yeni oda ve teras da ekleyebilirsin."
+      "text": "Sayaçla çalıştıkça odan ve kütüphanen kendiliğinden genişler, eşyaların yerinde kalır. Bir sonraki aşamaya ne kadar kaldığını burada görürsün."
     },
     {
-      "id": "09-dukkan",
-      "hash": "shop",
-      "target": "shop",
-      "title": "Dükkân",
-      "text": "Kazandığın Elmasla odana mobilya, terasına süs, karakterine kıyafet alabilirsin. Dükkân, odanın altındaki panelde açılır. Bazı nadir eşyalar ise yalnızca büyük başarılarla açılır."
+      "id": "21-bahce",
+      "hash": "garden",
+      "target": "garden",
+      "title": "Bahçem",
+      "text": "Burası Bahçem. Çalıştığın her gün o ayın bahçesine bir ağaç dikilir. O günün Elması ağacında bekler: parlayan taşı olan ağaca dokun ve Elmasını al. Çok çalıştığın günlerde sürpriz bir hediye de çıkabilir."
     },
     {
-      "id": "09b-karakter",
-      "hash": "profile",
-      "target": "avatar",
-      "title": "Karakterin",
-      "text": "Profil'de karakterini istediğin gibi kur: saçını, kıyafetlerini, şapkanı ve gözlüğünü seç. Bazı parçalar ücretsiz, bazıları Elmasla alınır."
-    },
-    {
-      "id": "10-kitaplik",
+      "id": "22-kitaplik",
       "hash": "library",
       "target": "library",
       "title": "Kitaplık",
       "text": "Okuduğun kitapları buraya ekle. Adını yazınca kapağı kendiliğinden gelir. Kitabı bitirince en sevdiğin kısmı yaz, kitap rafına dizilsin."
     },
     {
-      "id": "11-basla",
+      "id": "23-gecmis",
+      "hash": "history",
+      "target": "history",
+      "title": "Geçmiş",
+      "text": "Geçmiş'te hangi gün ne kadar çalıştığını, haftanı ve derslerine göre ay ay dağılımını görürsün."
+    },
+    {
+      "id": "24-profil",
+      "hash": "profile",
+      "target": "level",
+      "title": "Seviyen ve rozetlerin",
+      "text": "Profil'de seviyeni, rozetlerini ve ders yeteneklerini görürsün. Çalıştıkça Çırak seviyesinden Efsane seviyesine kadar yükselirsin."
+    },
+    {
+      "id": "25-karakter",
+      "hash": "profile",
+      "target": "avatar",
+      "title": "Karakterin",
+      "text": "Karakterini de burada istediğin gibi kurarsın: saçını, kıyafetlerini, şapkanı ve gözlüğünü seç. Bazı parçalar ücretsiz, bazıları Elmasla alınır."
+    },
+    {
+      "id": "26-oduller",
+      "hash": "rewards",
+      "target": "rewards",
+      "title": "Gerçek ödüller",
+      "text": "Ailen sana gerçek ödüller koyabilir: sinemaya gitmek ya da pizza akşamı gibi. Hedefe ne kadar kaldığını buradan izlersin. Bu ödüller Elmas harcatmaz."
+    },
+    {
+      "id": "27-aile",
+      "hash": "parent",
+      "target": "parent",
+      "title": "Aile paneli",
+      "text": "Aile paneli şifreyle kilitlidir. Ailen buradan haftanı görür, planını onaylar, sana not bırakır ve görev verir. İstersen her akşam ailene e-postayla günlük rapor da gider."
+    },
+    {
+      "id": "28-basla",
       "hash": "today",
       "target": "timer",
       "title": "Hadi başlayalım!",

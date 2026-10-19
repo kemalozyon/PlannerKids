@@ -12,7 +12,7 @@ import { useMemo, useRef, type MutableRefObject, type ReactNode } from 'react';
 import { Color, DoubleSide, ExtrudeGeometry, Shape, type Group } from 'three';
 import { BODIES, styleOf, type AvatarLook } from '../../lib/avatar';
 
-export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'dance' | 'sit' | 'lie' | 'swing' | 'study';
+export type AvatarState = 'idle' | 'walk' | 'run' | 'jump' | 'fall' | 'glide' | 'wave' | 'dance' | 'sit' | 'lie' | 'swing' | 'study' | 'swim';
 
 /** Kalçanın yüksekliği: oturunca kalça oturağa gelsin diye çağıran taraf karakteri bu kadar indirir */
 export const HIP_Y = 0.38;
@@ -105,7 +105,18 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     let seated = 0;
     // Ders çalışıyor (masada): oturur, kollar masada, sağ el yazar, baş deftere eğik; arada başını kaldırır
     let write = 0;
-    if (s === 'study') {
+    // Yüzme (havuzda): kollar sırayla kulaç atar, ayaklar çırpar, gövde öne eğik
+    let crawl = 0;
+    if (s === 'swim') {
+      const f = A?.speed ? 7 : 4;
+      stride.current += f * dt;
+      crawl = Math.sin(stride.current) * 1.1;
+      arm = -1.5;
+      armZ = 0.3;
+      leg = Math.sin(t * 12) * 0.25;
+      lean = 0.35;
+      bob = Math.sin(t * 3) * 0.02;
+    } else if (s === 'study') {
       seated = -1.35;
       arm = -1.15;
       armZ = 0.1;
@@ -157,8 +168,9 @@ export default function AvatarModel({ look, anim, live = false, holding }: { loo
     let moving = 0;
     moving += ease(legL.current, seated || leg);
     moving += ease(legR.current, seated || -leg);
-    moving += ease(armL.current, arm, armZ);
-    if (wave) {
+    moving += ease(armL.current, arm + crawl, armZ);
+    if (s === 'swim') moving += ease(armR.current, arm - crawl, -armZ);
+    else if (wave) {
       if (armR.current) {
         armR.current.rotation.x += (-0.2 - armR.current.rotation.x) * k;
         armR.current.rotation.z += (-2.6 + Math.sin(t * 10) * 0.35 - armR.current.rotation.z) * Math.min(1, k * 2);

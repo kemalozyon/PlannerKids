@@ -194,7 +194,9 @@ export interface WorldConfig {
  * SIT/LAY/SWING poz · TOGGLE aç-kapa (fx: ne açılır) · OPEN_CLOSE kapak · GATE kapalıyken geçilmez · WALK_THROUGH
  * zemin katmanı, üstünden yürünür · STACKABLE üstüne küçük eşya konur · ON_SURFACE yüzeye konabilir · STORAGE içine
  * eşya konur · DISPENSE eline bir şey verir · PLAY_ANIMATION hareketli · PLAY_SOUND melodi · CHANGE_COLOR renk ·
- * INTERACT_PET canlılar toplanır · BOOKS kitaplık rafları. Yürümeyi engellemek varsayılandır.
+ * INTERACT_PET canlılar toplanır · BOOKS kitaplık rafları · SWIM içinde yüzülür (havuz suyu) · TELEPORT aynı renkteki
+ * ışınlayıcıya götürür (CHANGE_COLOR ister) · ROLL zar atılır · CONVEY üstündekini baktığı yöne taşır (yürüyen bant) ·
+ * KICK üstüne yürüyünce yuvarlanır (top) · DIVE önündeki havuza atlanır. Yürümeyi engellemek varsayılandır.
  */
 export const BEHAVIORS = [
   'SIT',
@@ -217,6 +219,12 @@ export const BEHAVIORS = [
   'NOTES',
   'STATS',
   'STUDY',
+  'SWIM',
+  'TELEPORT',
+  'ROLL',
+  'CONVEY',
+  'KICK',
+  'DIVE',
 ] as const;
 export type Behavior = (typeof BEHAVIORS)[number];
 /** TOGGLE açılınca ne olur: ışık saçar, TV ekranı, ateş yanar, hareket (anim), buhar tüter (steam) */
@@ -224,8 +232,8 @@ export type Fx = 'light' | 'tv' | 'fire' | 'anim' | 'steam';
 /** DISPENSE: karakterin eline verilen */
 export const DISPENSE = ['kahve', 'dondurma', 'meyve-suyu', 'patlamis-misir', 'kurabiye', 'su'] as const;
 export type Dispense = (typeof DISPENSE)[number];
-/** PLAY_SOUND: çalınan melodi */
-export const SOUNDS = ['piyano', 'muzik-kutusu', 'davul', 'zil', 'gitar'] as const;
+/** PLAY_SOUND: çalınan melodi; nota = rengine göre tek nota (müzik karosu, üstüne basınca da çalar) */
+export const SOUNDS = ['piyano', 'muzik-kutusu', 'davul', 'zil', 'gitar', 'nota'] as const;
 export type Sound = (typeof SOUNDS)[number];
 
 /** items.json'daki ham eşya tanımı */
@@ -244,6 +252,8 @@ export interface ItemDef {
   /** Yalnızca nadir ağaç gününden (world.drop) */
   drop?: boolean;
   repeat?: boolean;
+  /** Herkese bedava verilen adet (hazır döşenmiş ilk oda, DEFAULT_ROOM); satın alınanlara eklenir */
+  starter?: number;
   model?: string;
   scale?: number;
   r?: number;

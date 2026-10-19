@@ -10,6 +10,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { TvData } from '../components/world3d/art';
 import type { ItemRef } from '../components/world3d/WorldView';
+import GemCounter from '../components/GemCounter';
+import SpeechBubbles, { BUBBLE_MAX, BUBBLE_MS, type Bubble } from '../components/SpeechBubbles';
 import Presence from '../components/Presence';
 import PetPicker from '../components/PetPicker';
 import RoomBuilder from '../components/RoomBuilder';
@@ -27,7 +29,7 @@ import { dayPhase } from '../lib/dayPhase';
 import { addDays, formatMinutes, toLocalDate, weekStart } from '../lib/date';
 import { ownedCount } from '../lib/economy';
 import { formatMonth } from '../lib/forest';
-import { fxAt } from '../lib/fx';
+import { emitFx, fxAt } from '../lib/fx';
 import { setReducedMotion, useReducedMotion } from '../lib/motionPref';
 import { loadQuality, QUALITIES, QUALITY_LABEL, saveQuality, type Quality } from '../lib/gfx';
 import { useGame } from '../lib/GameContext';
@@ -36,12 +38,19 @@ import { useReading } from '../lib/ReadingContext';
 import { useSession } from '../lib/SessionContext';
 import { setSoundOn, sfx, soundOn } from '../lib/sfx';
 import { SHOP_EVENT, takeShop } from '../lib/shop';
-import { VIEW_EVENT } from '../lib/tour';
+import { DOCK_EVENT, VIEW_EVENT } from '../lib/tour';
 import { BOARD_COLORS, type BoardNote, type Book } from '../lib/types';
 import { hasWebGL } from '../lib/webgl';
 import {
   applyAction,
+  blockedTiles,
   canPlaceAt,
+  colorOf,
+  diveSpot,
+  kickItem,
+  spaceSize,
+  teleportExit,
+  teleportTarget,
   daysIn,
   defaultCover,
   emptyLayout,
@@ -80,6 +89,10 @@ const AvatarEditor = lazy(() => import('../components/avatar/AvatarEditor'));
 /** Seçili oda ve her odada karakterin son karosu */
 const ROOM_KEY = 'ct-world-room-v1';
 const POS_KEY = 'ct-world-pos-v2';
+/** Konuşma balonlarındaki isim (karakterin adı; bu cihazda) */
+const NICK_KEY = 'ct-nick-v1';
+/** DISPENSE ikramına göre balon */
+const YUM: Record<string, string> = { kahve: '☕ Mmm, kahve!', dondurma: '🍦 Mmm!', 'meyve-suyu': '🧃 Ohh, serin!', 'patlamis-misir': '🍿 Çıtır çıtır!', kurabiye: '🍪 Nefis!', su: '💧 Oh be!' };
 /** Bağlamsal ipuçları: her biri bir kez (yapılınca ya da kapatılınca) */
 const HINTS_KEY = 'ct-world-hints-v1';
 const HINTS = [
@@ -224,6 +237,25 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
   const [holding, setHolding] = useState<string | null>(null);
   const [channels, setChannels] = useState<Record<string, number>>({});
   const pos = useRef<Tile | null>(null);
+  // Oyun eşyaları: zar atışları, ışınlanma, atlama; ışınlanarak açılan oda
+  const [dice, setDice] = useState<Record<string, { v: number; n: number }>>({});
+  const [teleport, setTeleport] = useState<{ from: ItemRef; to: ItemRef; n: number } | null>(null);
+  const [dive, setDive] = useState<{ space: SpaceId; index: number; n: number } | null>(null);
+  const [beamIn, setBeamIn] = useState(false);
+  const lastKick = useRef(0);
+  // Konuşma balonları ve isim etiketi
+  const anchor = useRef<HTMLDivElement | null>(null);
+  const [bubbles, setBubbles] = useState<Bubble[]>([]);
+  const bubbleId = useRef(0);
+  const [nick, setNick] = useState(() => read(NICK_KEY) || 'Ben');
+  const [showName, setShowName] = useState(true);
+  const say = (text: string, auto = false) => {
+    const t = text.trim().slice(0, 60);
+    if (!t) return;
+    const id = ++bubbleId.current;
+    setBubbles((b) => [...b, { id, text: t, auto }].slice(-BUBBLE_MAX));
+    setTimeout(() => setBubbles((b) => b.filter((x) => x.id !== id)), BUBBLE_MS);
+  };
 
   useEffect(() => {
     const id = setInterval(() => setPhase(dayPhase(new Date().getHours())), 60_000);
@@ -244,6 +276,15 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
     const id = setTimeout(() => setHolding(null), HOLD_MS);
     return () => clearTimeout(id);
   }, [holding]);
+  // Odaya girince isim etiketi birkaç saniye görünür; ışınlanma bitince sonraki odalar normal açılır
+  useEffect(() => {
+    setShowName(true);
+    const id = setTimeout(() => {
+      setShowName(false);
+      setBeamIn(false);
+    }, 3000);
+    return () => clearTimeout(id);
+  }, [space]);
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 3200);
@@ -352,8 +393,8 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
     return () => window.removeEventListener('keydown', k);
   }, [held, full, exploring, using, me]);
 
-  /** Bir odaya geç (oda şeridi, kapı, tanıtım turu) */
-  const goRoom = (to: SpaceId, via: SpaceId | null = null) => {
+  /** Bir odaya geç (oda şeridi, kapı, tanıtım turu, ışınlayıcı) */
+  const goRoom = (to: SpaceId, via: SpaceId | null = null, doorSound = true) => {
     if (to === here) return;
     setUsing(null);
     setMe(false);
@@ -364,17 +405,34 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
     setFrom(via);
     setSpace(to);
     write(ROOM_KEY, to);
-    sfx.door();
+    if (doorSound) sfx.door();
   };
-  // Tanıtım turu bir odaya ya da bahçeye yollar
+  // Tanıtım turu bir odaya (terrace: ilk teras, yoksa oda) ya da bahçeye yollar, alt panelde bir sekme açar
   useEffect(() => {
-    const on = (e: Event) => {
+    const onView = (e: Event) => {
       const d = (e as CustomEvent<string>).detail;
       if (d === 'outdoor' || d === 'forest' || d === 'month' || d === 'garden') return goGarden();
-      goRoom(d === 'library' ? 'library' : 'room');
+      if (!stats) return;
+      const terrace = d === 'terrace' ? stats.rooms.map((r) => roomSpace(r.id)).find((sp) => isTerrace(sp, ctx)) : undefined;
+      setExploring(false);
+      goRoom(terrace ?? (d === 'library' ? 'library' : 'room'), null, false);
     };
-    window.addEventListener(VIEW_EVENT, on);
-    return () => window.removeEventListener(VIEW_EVENT, on);
+    const onDock = (e: Event) => {
+      const d = (e as CustomEvent<DockTab | 'me' | null>).detail;
+      // Yükleniyorken openTab/closeEdit daha tanımlı değil (aşağıdaki erken dönüş)
+      if (!stats) return;
+      closeEdit();
+      if (d === 'me') {
+        openTab(null, false);
+        setMe(true);
+      } else openTab(d, false);
+    };
+    window.addEventListener(VIEW_EVENT, onView);
+    window.addEventListener(DOCK_EVENT, onDock);
+    return () => {
+      window.removeEventListener(VIEW_EVENT, onView);
+      window.removeEventListener(DOCK_EVENT, onDock);
+    };
   });
 
   if (!stats) return <div className="splash">Yükleniyor…</div>;
@@ -382,6 +440,8 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
   const doEmote = (kind: 'dance' | 'wave' | null) => {
     setEmote((e) => ({ kind, n: (e?.n ?? 0) + 1 }));
     setDancing(kind === 'dance');
+    if (kind === 'wave') say('👋 Merhaba!', true);
+    else if (kind === 'dance') say('🎶 🕺 🎶', true);
   };
 
   // ---------- Kayıt ----------
@@ -424,7 +484,10 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
     if (t === 'inv') doneHint('inv');
   };
   /** Envanterden bir eşyayı eline al */
-  const hold = (it: Item) => setHeld({ item: it.id, rot: it.rotations?.[0] ?? 0 });
+  const hold = (it: Item) => {
+    sfx.pick();
+    setHeld({ item: it.id, rot: it.rotations?.[0] ?? 0 });
+  };
   /** Karakterin durduğu karoya eşya konmaz (yürünür halı/yol hariç) */
   const onAvatar = (it: Item, p: PlacedItem) => {
     const t = pos.current;
@@ -504,11 +567,60 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
       setToast('📖 Kronometreyi başlat: sayaç çalışırken karakterin bu masada ders çalışır.');
       setTimeout(() => (location.hash = '#today'), 900);
     } else if (id === 'storage') setStorage(r);
-    else if (id === 'sound') sfx.melody(it.sound ?? 'piyano');
-    else if (id === 'dispense' && it.dispense) {
+    else if (id === 'sound') {
+      if (it.sound === 'nota') sfx.note(it.palette?.indexOf(colorOf(it, p) ?? '') ?? 0);
+      else sfx.melody(it.sound ?? 'piyano');
+    } else if (id === 'dispense' && it.dispense) {
       setHolding(it.dispense);
       sfx.pop();
+      say(YUM[it.dispense] ?? '😋 Mmm!', true);
+    } else if (id === 'roll') {
+      // Zar: yuvarlanır, sonra sonucu balonda
+      const v = 1 + Math.floor(Math.random() * 6);
+      const k = powerKey(r.space, p);
+      setDice((d) => ({ ...d, [k]: { v, n: (d[k]?.n ?? 0) + 1 } }));
+      sfx.dice();
+      setTimeout(() => say(`🎲 ${v}!`, true), 850);
+    } else if (id === 'teleport') {
+      const to = teleportTarget(homeLayouts(), homeOrder, r);
+      if (!to) return setToast('🌀 Eşi yok: başka bir ışınlayıcı koy ve 🎨 Renk ile bunun rengine boya.');
+      setTeleport((t) => ({ from: r, to, n: (t?.n ?? 0) + 1 }));
+      say('✨ Vınnn!', true);
+    } else if (id === 'dive') {
+      if (!diveSpot(layoutOf(r.space), r.index)) return setToast('🤸 Atlama tahtasının önüne (oklar yönüne) havuz suyu koy.');
+      setDive((d) => ({ ...r, n: (d?.n ?? 0) + 1 }));
+      say('🤸 Hop!', true);
     }
+  };
+  /** Bütün odalar; bulunulan oda ekrandaki (ayıklanmış) hâliyle (eşya sıraları ekrandakiyle aynı) */
+  const homeLayouts = () => ({ ...allSpaces, [here]: layoutOf(here) }) as Partial<Record<SpaceId, SpaceLayout>>;
+  /** Işınlayıcının eşi başka odada: o oda açılır, karakter eşinin önünde büyüyerek belirir */
+  const onBeamed = (to: ItemRef) => {
+    const l = allSpaces[to.space];
+    const p = l?.items[to.index];
+    const it = p && itemById(p.item);
+    if (!l || !p || !it) return;
+    const { w, h } = spaceSize(to.space, ctx);
+    const out = teleportExit(it, p, w, h, blockedTiles(to.space, l, ctx)).out;
+    try {
+      const all = JSON.parse(read(POS_KEY) ?? '{}') as Record<string, Tile>;
+      write(POS_KEY, JSON.stringify({ ...all, [to.space]: out }));
+    } catch {
+      /* yok say */
+    }
+    setBeamIn(true);
+    goRoom(to.space, null, false);
+    sfx.zap();
+  };
+  /** Top: karakterin yürüdüğü yöne yuvarlanır (çok sık kaydedilmesin) */
+  const onKick = (r: ItemRef, dir: Tile) => {
+    const now = Date.now();
+    if (now - lastKick.current < 300) return;
+    const next = kickItem(r.space, layoutOf(r.space), r.index, dir, ctx);
+    if (!next) return;
+    lastKick.current = now;
+    persist(r.space, next);
+    sfx.boing(1.3);
   };
   const nextChannel = (r: ItemRef) => {
     const p = placedAt(r);
@@ -587,6 +699,13 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
   const hereRoom = isRoom(here) ? roomOf(here, ctx) : undefined;
   const placeName = here === 'room' ? 'Odan' : here === 'library' ? 'Kütüphanen' : (hereRoom?.name ?? 'Odan');
   const idle = !using && !tab && !held && !me;
+  /** Evin alanları kapı sırasıyla (ışınlayıcı eşi bu sırayla aranır) */
+  const homeOrder: SpaceId[] = ['room', 'library', ...[...stats.rooms].sort((a, b) => a.pos - b.pos).map((r) => roomSpace(r.id))];
+  // Seçili ışınlayıcının eşi nerede
+  const usedItem = using ? itemById(placedAt(using)?.item ?? '') : undefined;
+  const pair = using && usedItem && has(usedItem, 'TELEPORT') ? teleportTarget(homeLayouts(), homeOrder, using) : undefined;
+  const spaceName = (sp: SpaceId) => (sp === 'room' ? 'Odam' : sp === 'library' ? 'Kütüphane' : (roomOf(sp, ctx)?.name ?? 'oda'));
+  const linkNote = pair === undefined ? undefined : pair ? `🔗 Eşi: ${pair.space === using!.space ? 'bu odada' : spaceName(pair.space)}` : '🔗 Eşi yok: aynı renkte bir ışınlayıcı daha koy';
   const nav: [SpaceId, string][] = [
     ['room', '🛋️ Odam'],
     ['library', '📚 Kütüphane'],
@@ -606,7 +725,7 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
   return (
     <div className="stack world-page">
       <div className={`world-stage${full ? ' full' : ''}`}>
-        <div className="room-nav" role="tablist" aria-label="Evinin odaları">
+        <div className="room-nav" role="tablist" aria-label="Evinin odaları" data-tour="rooms">
           {nav.map(([sp, label]) => (
             <button key={sp} role="tab" aria-selected={here === sp} className={`chip${here === sp ? ' on' : ''}`} disabled={!!held} onClick={() => goRoom(sp)}>
               {label}
@@ -665,6 +784,14 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
                 onPosed={setPosedAt}
                 holding={holding}
                 channels={channels}
+                dice={dice}
+                teleport={teleport}
+                onBeamed={onBeamed}
+                beamIn={beamIn}
+                dive={dive}
+                onKick={onKick}
+                onWater={(on) => on && say('💦 Yüzüyorum!', true)}
+                anchor={anchor}
                 tv={tv}
                 onTile={(t) => {
                   pos.current = t;
@@ -682,8 +809,9 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
                 }}
               />
             </Suspense>
+            <SpeechBubbles ref={anchor} bubbles={bubbles} name={me || showName ? nick : null} />
             <div className="world-top">
-              <span className="world-chip">💎 {stats.crystals}</span>
+              <GemCounter className="world-chip" value={stats.crystals} />
               <span className="world-chip room-name">
                 {hereRoom ? kindById(hereRoom.kind).icon : here === 'library' ? '📚' : '🛋️'} {placeName}
               </span>
@@ -813,6 +941,21 @@ export default function World({ goCollection, goGarden }: { goCollection: () => 
             }}
             goCollection={goCollection}
             onPlace={placeFromShop}
+            onSay={(t) => say(t)}
+            linkNote={linkNote}
+            nick={nick}
+            onNick={(n) => {
+              const v = n.trim().slice(0, 16) || 'Ben';
+              setNick(v);
+              write(NICK_KEY, v);
+              say(`🏷️ Benim adım ${v}!`, true);
+            }}
+            onBought={(it, qty) => {
+              const t = pos.current;
+              if (t) emitFx({ kind: 'confetti', x: t.x + 0.5, z: t.y + 0.5, y: 1.4 });
+              say(qty > 1 ? `🎉 ${qty} tane ${it.name}!` : `🎉 Yaşasın, ${it.name}!`, true);
+            }}
+            free={free}
             room={hereRoom}
             canAdd={stats.rooms.length < CFG.world.maxRooms}
             onAddRoom={() => setBuilder({ edit: false })}

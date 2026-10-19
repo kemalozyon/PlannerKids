@@ -27,7 +27,7 @@ export default function Courses({ courses, reload }: { courses: Course[]; reload
               <button
                 key={p.name}
                 className="subject-chip"
-                style={{ borderColor: p.color, color: p.color }}
+                style={{ borderColor: p.color, color: `color-mix(in srgb, ${p.color} 55%, var(--text))` }}
                 onClick={async () => {
                   await api.addCourse(p.name, p.color);
                   reload();

@@ -127,6 +127,9 @@ export interface ItemModelProps {
   open?: boolean;
   /** CHANGE_COLOR: seçili renk */
   color?: string;
+  /** ROLL: zarın üstteki yüzü ve atış sayacı (değişince yuvarlanır) */
+  value?: number;
+  tick?: number;
   /** Yeni kondu: yukarıdan düşüp yerine oturur */
   appear?: boolean;
   /** Açık TV'nin ekranı */
@@ -159,7 +162,7 @@ export function ItemModel(p: ItemModelProps) {
           <GhostBox w={fw - 0.1} h={Math.max(0.3, pieceTop(item))} d={fh - 0.1} ok={p.ghost === 'ok'} />
         </group>
       ) : (
-        <SetPiece item={item} on={on} open={!!p.open} color={p.color} />
+        <SetPiece item={item} on={on} open={!!p.open} color={p.color} value={p.value} tick={p.tick} />
       )
     ) : item.proc === 'swing' || item.proc === 'fireplace' ? (
       p.ghost ? (
@@ -493,10 +496,17 @@ export function FootTiles({ item, x, y, rot, ok, sub }: { item: Item; x: number;
 /** Imlecin altındaki karo: Habbo gibi vurgulu çerçeve */
 export function HoverTile({ x, y }: { x: number; y: number }) {
   return (
-    <mesh position={[x + 0.5, 0.025, y + 0.5]} rotation-x={-Math.PI / 2}>
-      <ringGeometry args={[0.42, 0.5, 4, 1, Math.PI / 4]} />
-      <meshBasicMaterial color="#ffffff" transparent opacity={0.85} depthWrite={false} />
-    </mesh>
+    // Habbo gibi sarı karo çerçevesi, içi hafif dolu
+    <group position={[x + 0.5, 0.025, y + 0.5]} rotation-x={-Math.PI / 2}>
+      <mesh>
+        <ringGeometry args={[0.4, 0.5, 4, 1, Math.PI / 4]} />
+        <meshBasicMaterial color="#ffd23f" transparent opacity={0.95} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh>
+        <planeGeometry args={[0.8, 0.8]} />
+        <meshBasicMaterial color="#ffd23f" transparent opacity={0.22} depthWrite={false} toneMapped={false} />
+      </mesh>
+    </group>
   );
 }
 

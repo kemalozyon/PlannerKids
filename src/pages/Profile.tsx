@@ -65,7 +65,7 @@ export default function Profile({
           </span>
           <span className="grow">
             <strong>Tanıtımı izle</strong>
-            <span className="muted small">Sesli ya da yazılı 2 dakikalık tur</span>
+            <span className="muted small">Sesli ya da yazılı 5 dakikalık tur</span>
           </span>
           <IconChevron />
         </button>
@@ -92,7 +92,7 @@ function LevelCard() {
   if (!stats) return null;
   const { level, next, progress, minutesLeft, index } = stats.level;
   return (
-    <section className="card rank-card">
+    <section className="card rank-card" data-tour="level">
       <div className="level-top">
         <span className="level-icon" aria-hidden>
           {level.icon}

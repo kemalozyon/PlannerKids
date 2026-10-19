@@ -10,6 +10,10 @@
 // Yerleştirirken (envanter açık ya da eşya taşınırken: `edit`) odanın ızgarası görünür, elde tutulan eşya imleçle
 // gezer ve karoya (duvar süsü duvara) bırakılır. İmleç yalnızca düzenleme katmanını (EditOverlay) yeniden çizer;
 // oda (WorldScene, memo) yerinde kalır.
+// Oyun eşyaları: havuz suyuna giren karakter yüzer; atlama tahtasından suya atlar (dive); ışınlayıcıya girince
+// küçülüp eşinde belirir (teleport; eşi başka odadaysa sayfa o odayı açar); yürüyen bant duran karakteri taşır;
+// topun üstüne yürüyünce top yuvarlanır (onKick); müzik karosuna basınca nota çalar. Konuşma balonları DOM'da
+// (drei <Html> yok): AvatarAnchor her karede başın ekrandaki yerini `anchor` kutusuna yazar.
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
@@ -20,10 +24,18 @@ import { has, itemById } from '../../lib/catalog';
 import { CFG, type FixedTile, type MapDef } from '../../lib/config';
 import type { DayPhase } from '../../lib/dayPhase';
 import type { Book } from '../../lib/types';
+import { emitFx } from '../../lib/fx';
+import { sfx } from '../../lib/sfx';
 import {
   approachTile,
   blockedTiles,
   canPlaceAt,
+  colorOf,
+  conveyStep,
+  diveSpot,
+  footprint,
+  swimTiles,
+  teleportExit,
   findPath,
   isIndoor,
   powerKey,
@@ -42,7 +54,8 @@ import { modelUrl } from '../forest3d/models';
 import Companions from './Companion';
 import type { BoardCard, TvData } from './art';
 import Avatar, { pathSpeed, type Walker } from './Avatar';
-import { FootTiles, GridLines, HoverTile, ItemModel, OnSurface, surfaceTop } from './items';
+import { footCenter, FootTiles, GridLines, HoverTile, ItemModel, OnSurface, surfaceTop } from './items';
+import { avatarSpot } from './avatarSpot';
 import type { Quality } from '../../lib/gfx';
 import Atmosphere, { shadowsFor } from './Atmosphere';
 import Effects from './Effects';
@@ -113,6 +126,21 @@ export interface WorldViewProps {
   tv: TvData;
   /** Karakter yeni bir karoya geçince (konum saklanır) */
   onTile: (t: Tile) => void;
+  /** Zarların son atışı (powerKey → değer, sayaç) */
+  dice?: Record<string, { v: number; n: number }>;
+  /** Işınlan: kabine gir, eşinde çık (n her istekte artar); eşi başka odadaysa onBeamed */
+  teleport: { from: ItemRef; to: ItemRef; n: number } | null;
+  onBeamed: (to: ItemRef) => void;
+  /** Oda ışınlanarak açıldı: karakter büyüyerek belirir */
+  beamIn?: boolean;
+  /** Atlama tahtasından havuza atla (n her istekte artar) */
+  dive: { space: SpaceId; index: number; n: number } | null;
+  /** Karakter topun üstüne yürüdü: yönü (bir karo) */
+  onKick: (r: ItemRef, dir: Tile) => void;
+  /** Suya girdi / çıktı */
+  onWater: (on: boolean) => void;
+  /** Konuşma balonlarının kutusu: başın ekrandaki yerine taşınır */
+  anchor?: MutableRefObject<HTMLDivElement | null>;
 }
 
 export default function WorldView(props: WorldViewProps) {
@@ -140,6 +168,18 @@ export default function WorldView(props: WorldViewProps) {
   );
 }
 
+const head = new Vector3();
+/** Konuşma balonlarının kutusunu karakterin başının ekrandaki yerine taşır (her çizilen karede; React state yok) */
+function AvatarAnchor({ el }: { el: MutableRefObject<HTMLDivElement | null> }) {
+  useFrame(({ camera, size }) => {
+    const d = el.current;
+    if (!d) return;
+    head.set(avatarSpot.x, avatarSpot.y + avatarSpot.head, avatarSpot.z).project(camera);
+    d.style.transform = `translate(${((head.x + 1) / 2) * size.width}px, ${((1 - head.y) / 2) * size.height}px)`;
+  });
+  return null;
+}
+
 /** Her çizimde değişmeyen bir fonksiyon; çağrılınca en son hâlini çalıştırır (memo'lu sahne yeniden çizilmesin) */
 function useStable<A extends unknown[], R>(f: (...a: A) => R): (...a: A) => R {
   const ref = useRef(f);
@@ -155,7 +195,7 @@ function Scene(p: WorldViewProps) {
   const layouts = useMemo(() => (p.edit ? { ...p.layouts, [p.edit.space]: p.edit.layout } : p.layouts), [p.layouts, p.edit]);
   const blocked = useMemo(() => worldBlocked(plan, layouts), [plan, layouts]);
   const step = useMemo(() => (a: Tile, b: Tile) => canStep(plan, a, b), [plan]);
-  const walker = useRef<Walker>({ x: p.start.x + 0.5, z: p.start.y + 0.5, face: Math.PI / 4, path: [], onArrive: null });
+  const walker = useRef<Walker>({ x: p.start.x + 0.5, z: p.start.y + 0.5, face: Math.PI / 4, path: [], onArrive: null, beam: p.beamIn ? { phase: 'in' } : null });
   /** Kamera karakteri izlesin mi: oda ekrana sığıyorsa hayır (Habbo gibi sabit), yakınlaştırınca evet */
   const follow = useRef(false);
   const zoomedIn = useRef(false);
@@ -180,9 +220,13 @@ function Scene(p: WorldViewProps) {
     p.onPosed(null);
     invalidate();
   };
+  /** Yürüyen bantta art arda taşınma (sonsuz döngüde dursun) */
+  const carried = useRef(0);
   /** Dünya karosuna yürü; varınca then(). Yol yoksa false */
   const walkTo = (to: Tile, then?: () => void): boolean => {
     standUp();
+    carried.current = 0;
+    walker.current.carried = false;
     const path = findPath(tileNow(), to, plan.w, plan.h, blocked, step);
     if (!path) return false;
     walker.current.path = smoothPath(tileNow(), path, blocked, step).map((t) => ({ x: t.x + 0.5, z: t.y + 0.5 }));
@@ -251,6 +295,66 @@ function Scene(p: WorldViewProps) {
     if (item.placement === 'wall' || !walkToItem(a.space, a.index, done)) done();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.reach?.n]);
+  // Işınlan: kabinin içine gir, küçülüp kaybol, eşinde belir (eşi başka odadaysa sayfa o odayı açar)
+  useEffect(() => {
+    const T = p.teleport;
+    if (!T) return;
+    const r = regionOf(plan, T.from.space);
+    const it = layouts[T.from.space]?.items[T.from.index];
+    const item = it && itemById(it.item);
+    if (!r || !it || !item) return;
+    const [cx, cz] = footCenter(item, it.x, it.y, it.rot);
+    const w = walker.current;
+    standUp();
+    w.path = [{ x: r.x + cx, z: r.y + cz }];
+    w.speed = 2;
+    w.onArrive = () => {
+      emitFx({ kind: 'beam', x: r.x + cx, z: r.y + cz });
+      sfx.zap();
+      w.beam = {
+        phase: 'out',
+        done: () => {
+          const to = layouts[T.to.space]?.items[T.to.index];
+          const toItem = to && itemById(to.item);
+          if (T.to.space !== T.from.space || !to || !toItem) return p.onBeamed(T.to);
+          const ex = teleportExit(toItem, to, r.w, r.h, blockedTiles(T.to.space, layouts[T.to.space]!, plan.ctx));
+          w.x = r.x + ex.x;
+          w.z = r.y + ex.z;
+          emitFx({ kind: 'beam', x: w.x, z: w.z });
+          w.beam = { phase: 'in', done: () => walkTo({ x: r.x + ex.out.x, y: r.y + ex.out.y }) };
+          invalidate();
+        },
+      };
+      invalidate();
+    };
+    invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.teleport?.n]);
+  // Atlama tahtası: arkasından yay çizerek havuza atla
+  useEffect(() => {
+    const D = p.dive;
+    if (!D) return;
+    const r = regionOf(plan, D.space);
+    const spot = r && layouts[D.space] ? diveSpot(layouts[D.space]!, D.index) : null;
+    if (!r || !spot) return;
+    const w = walker.current;
+    standUp();
+    const to = { x: r.x + spot.land.x + 0.5, z: r.y + spot.land.y + 0.5 };
+    w.path = [];
+    w.hop = {
+      from: { x: w.x, z: w.z },
+      to,
+      dur: 0.9,
+      done: () => {
+        emitFx({ kind: 'splash', x: to.x, z: to.z });
+        sfx.splash();
+        invalidate();
+      },
+    };
+    sfx.jump();
+    invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.dive?.n]);
   // Oturduğu eşya taşınır ya da kalkarsa karakter de kalkar
   useEffect(() => {
     if (!posed) return;
@@ -259,7 +363,62 @@ function Scene(p: WorldViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layouts]);
 
-  const onTile = (x: number, y: number) => p.onTile({ x, y });
+  // Havuz suyu karoları (oda dünyada 0,0'da)
+  const here = plan.regions[0];
+  const swim = useMemo(() => swimTiles(layouts[here.id] ?? { items: [] }), [layouts, here.id]);
+  const water = useStable((x: number, z: number) => swim.has(`${x - here.x},${z - here.y}`));
+  const onWater = useStable((on: boolean) => {
+    const w = walker.current;
+    if (on) {
+      emitFx({ kind: 'splash', x: w.x, z: w.z });
+      sfx.splash();
+    }
+    p.onWater(on);
+  });
+  /** Karonun eşyaları (oda yerel koordinatı) */
+  const itemsAt = (x: number, y: number) => {
+    const l = layouts[here.id];
+    const out: { i: number; item: NonNullable<ReturnType<typeof itemById>> }[] = [];
+    l?.items.forEach((q, i) => {
+      const item = itemById(q.item);
+      if (item && item.placement !== 'wall' && footprint(item, q.x, q.y, q.rot).some((t) => t.x === x - here.x && t.y === y - here.y)) out.push({ i, item });
+    });
+    return out;
+  };
+  const onTile = (x: number, y: number) => {
+    p.onTile({ x, y });
+    const l = layouts[here.id];
+    for (const { i, item } of itemsAt(x, y)) {
+      // Top: yürüme yönünde yuvarlanır
+      if (has(item, 'KICK')) {
+        const f = walker.current.face;
+        const dx = Math.sin(f);
+        const dz = Math.cos(f);
+        p.onKick({ space: here.id, index: i }, Math.abs(dx) > Math.abs(dz) ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dz) });
+      }
+      // Müzik karosu: rengine göre nota
+      if (has(item, 'PLAY_SOUND') && item.sound === 'nota' && l) {
+        const q = l.items[i];
+        sfx.note(item.palette?.indexOf(colorOf(item, q) ?? '') ?? 0);
+      }
+    }
+  };
+  // Yürüyen bant: karakter durunca bandın yönüne bir karo taşınır (zincirlenir; 40 adımda durur)
+  const onStop = useStable((x: number, z: number) => {
+    const l = layouts[here.id];
+    const w = walker.current;
+    if (!l || w.pose || carried.current >= 40) return;
+    const to = conveyStep(here.id, l, plan.ctx, { x: x - here.x, y: z - here.y });
+    if (!to) {
+      carried.current = 0;
+      return;
+    }
+    carried.current++;
+    w.path = [{ x: here.x + to.x + 0.5, z: here.y + to.y + 0.5 }];
+    w.speed = 1.6;
+    w.carried = true;
+    invalidate();
+  });
 
   const heldItem = p.held ? itemById(p.held.item) : undefined;
   const heldWall = heldItem?.placement === 'wall';
@@ -341,6 +500,7 @@ function Scene(p: WorldViewProps) {
         selected={selected}
         phase={p.phase}
         channels={p.channels}
+        dice={p.dice}
         tv={p.tv}
         board={p.board}
         posed={posed}
@@ -366,7 +526,8 @@ function Scene(p: WorldViewProps) {
         <planeGeometry args={[plan.w, plan.h]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <Avatar look={p.look} walker={walker} onTile={onTile} holding={p.holding} onTap={onAvatar} />
+      <Avatar look={p.look} walker={walker} onTile={onTile} holding={p.holding} onTap={onAvatar} water={water} onWater={onWater} onStop={onStop} />
+      {p.anchor && <AvatarAnchor el={p.anchor} />}
       <Companions pets={p.pets} at={leader} />
       {p.held && <HoldCursor />}
     </>

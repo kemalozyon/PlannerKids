@@ -1,10 +1,10 @@
-// node --test ile çalışır (npm test). Supabase, EVREN (LLM) ve Resend sahte; ağa çıkılmaz.
+// node --test ile çalışır (npm test). Supabase, Gemini (LLM) ve Resend sahte; ağa çıkılmaz.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { sampleInput } from '../_shared/report.fixtures.ts';
 import { localNow, runSchedule, sendReport, validButtonDate, writeNarrative, type DataSource, type Env, type FetchFn, type ReportSettings } from './core.ts';
 
-const ENV: Env = { EVREN_API_KEY: 'test-evren', RESEND_API_KEY: 'test-resend', REPORT_FROM: 'Rapor <r@ornek.com>' };
+const ENV: Env = { GEMINI_API_KEY: 'test-gemini', RESEND_API_KEY: 'test-resend', REPORT_FROM: 'Rapor <r@ornek.com>' };
 
 const settingsFor = (over: Partial<ReportSettings> = {}): ReportSettings => ({
   user_id: 'u1',
@@ -48,21 +48,25 @@ function fakeDs(settings: ReportSettings[]) {
 
 type Call = { url: string; body: Record<string, unknown>; headers: Record<string, string> };
 
-/** EVREN ve Resend uç noktalarını taklit eden fetch. */
-function fakeFetch(opts: { claude?: () => Response; resend?: () => Response } = {}) {
+/** Gemini ve Resend uç noktalarını taklit eden fetch. */
+function fakeFetch(opts: { llm?: () => Response; resend?: () => Response } = {}) {
   const calls: Call[] = [];
-  const claudeOk = () =>
+  const llmOk = () =>
     Response.json({
-      content: [
+      candidates: [
         {
-          type: 'text',
-          text: JSON.stringify({ subject: 'Ece bugün kesirleri çözdü', summary: 'Ece bugün 85 dakika çalıştı.', highlights: ['Matematik'], parent_tip: 'Kesirleri sorun.' }),
+          content: {
+            parts: [
+              { text: 'Önce verilere bakayım…', thought: true },
+              { text: JSON.stringify({ subject: 'Ece bugün kesirleri çözdü', summary: 'Ece bugün 85 dakika çalıştı.', highlights: ['Matematik'], parent_tip: 'Kesirleri sorun.' }) },
+            ],
+          },
         },
       ],
     });
   const fetchFn: FetchFn = async (url, init) => {
     calls.push({ url, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
-    if (url.includes('evren-llmapi')) return (opts.claude ?? claudeOk)();
+    if (url.includes('generativelanguage.googleapis.com')) return (opts.llm ?? llmOk)();
     if (url.includes('resend.com')) return (opts.resend ?? (() => Response.json({ id: 'mail-1' })))();
     throw new Error(`beklenmeyen istek: ${url}`);
   };
@@ -78,11 +82,12 @@ test('sendReport: LLM metniyle rapor üretir ve ebeveyne e-posta atar', async ()
   assert.ok(r.status === 'sent' && r.generatedBy === 'llm');
   assert.ok(r.status === 'sent' && r.subject === 'Ece bugün kesirleri çözdü');
 
-  const [claude, resend] = calls;
-  assert.equal(claude.url, 'https://evren-llmapi.ssyz.org.tr/v1/messages');
-  assert.equal(claude.headers['x-api-key'], 'test-evren');
-  assert.equal(claude.body.model, 'deepseek-v4-flash');
-  assert.ok(Number(claude.body.max_tokens) >= 4000, 'düşünen modeller için yeterli token bütçesi');
+  const [llm, resend] = calls;
+  assert.equal(llm.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent');
+  assert.equal(llm.headers['x-goog-api-key'], 'test-gemini');
+  const config = llm.body.generationConfig as { maxOutputTokens: number; responseMimeType: string };
+  assert.ok(config.maxOutputTokens >= 4000, 'düşünen modeller için yeterli token bütçesi');
+  assert.equal(config.responseMimeType, 'application/json');
   assert.equal(resend.url, 'https://api.resend.com/emails');
   assert.deepEqual(resend.body.to, ['veli@ornek.com']);
   assert.equal(resend.body.from, 'Rapor <r@ornek.com>');
@@ -95,8 +100,8 @@ test('sendReport: LLM metniyle rapor üretir ve ebeveyne e-posta atar', async ()
 test('sendReport: REPORT_MODEL varsayılan modeli değiştirir', async () => {
   const { ds } = fakeDs([settingsFor()]);
   const { fetchFn, calls } = fakeFetch();
-  await sendReport(ds, { ...ENV, REPORT_MODEL: 'mimo-v2.6-pro' }, fetchFn, 'u1', '2026-10-12', 'button');
-  assert.equal(calls[0].body.model, 'mimo-v2.6-pro');
+  await sendReport(ds, { ...ENV, REPORT_MODEL: 'gemini-3.8-flash-lite' }, fetchFn, 'u1', '2026-10-12', 'button');
+  assert.match(calls[0].url, /\/models\/gemini-3\.8-flash-lite:generateContent$/);
 });
 
 test('sendReport: günde en fazla bir rapor', async () => {
@@ -118,16 +123,16 @@ test('sendReport: ayar yoksa, kapalıysa ya da e-posta yoksa gönderilmez', asyn
 });
 
 test('LLM hata verirse yedek metinle yine gönderilir', async () => {
-  for (const claude of [() => new Response('overloaded', { status: 529 }), () => Response.json({ content: [{ type: 'text', text: 'JSON değil' }] })]) {
+  for (const llm of [() => new Response('overloaded', { status: 529 }), () => Response.json({ candidates: [{ content: { parts: [{ text: 'JSON değil' }] } }] })]) {
     const { ds, reports } = fakeDs([settingsFor()]);
-    const { fetchFn } = fakeFetch({ claude });
+    const { fetchFn } = fakeFetch({ llm });
     const r = await sendReport(ds, ENV, fetchFn, 'u1', '2026-10-12', 'button');
     assert.ok(r.status === 'sent' && r.generatedBy === 'fallback');
     assert.equal(reports.get('u1|2026-10-12')?.generated_by, 'fallback');
   }
 });
 
-test('EVREN_API_KEY yoksa LLM çağrılmaz, yedek metin kullanılır', async () => {
+test('GEMINI_API_KEY yoksa LLM çağrılmaz, yedek metin kullanılır', async () => {
   const { fetchFn, calls } = fakeFetch();
   const { by } = await writeNarrative(sampleInput(), {}, fetchFn);
   assert.equal(by, 'fallback');
@@ -148,7 +153,7 @@ test('e-posta gönderilemezse kayıt silinir, sonra tekrar denenebilir', async (
 
 test('Resend ayarı eksikse hata döner ve kayıt silinir', async () => {
   const { ds, reports } = fakeDs([settingsFor()]);
-  const r = await sendReport(ds, { EVREN_API_KEY: 'k' }, fakeFetch().fetchFn, 'u1', '2026-10-12', 'button');
+  const r = await sendReport(ds, { GEMINI_API_KEY: 'k' }, fakeFetch().fetchFn, 'u1', '2026-10-12', 'button');
   assert.equal(r.status, 'error');
   assert.equal(reports.size, 0);
 });

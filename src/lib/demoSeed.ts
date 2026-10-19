@@ -2,6 +2,7 @@ import type { DemoDb } from './api';
 import { addDays, parseLocalDate, toLocalDate, weekStart } from './date';
 import { itemById } from './catalog';
 import { DEFAULT_LOOK } from './avatar';
+import { DEFAULT_ROOM } from './world';
 import type { LedgerEntry } from './types';
 
 /**
@@ -92,14 +93,18 @@ function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equi
     'dis:cit', 'dis:cit', 'dis:cit', 'dis:cicek-sari', 'dis:cicek-mor', 'dis:bank', 'isik:fener',
     'dis:tas-yol', 'dis:tas-yol', 'dis:tas-yol', 'dis:cicek-kirmizi', 'dis:kabak', 'k:sap-kep',
     'mob:somine', 'mob:tv-dolabi', 'mob:tv', 'dis:salincak',
+    // Habbo oyun eşyaları: havuz, atlama tahtası, iki ışınlayıcı, zar, top, yürüyen bant, dans pisti, disko topu, müzik karoları
+    ...Array<string>(4).fill('set:havuz-kenar'), ...Array<string>(4).fill('set:havuz-su'), 'set:atlama-tahtasi',
+    'set:isinlayici', 'set:isinlayici', 'set:zar', 'set:futbol-topu', 'set:yuruyen-bant', 'set:yuruyen-bant',
+    ...Array<string>(4).fill('set:neon-dans'), 'set:disko-topu', ...Array<string>(7).fill('set:muzik-karosu'),
   ];
   const owned = bought.map((item_id, i) => ({ id: `o-${i}`, item_id, via: 'buy' as const, ref: null, created_at: t }));
   const ledger: LedgerEntry[] = owned.map((o) => {
     const a = itemById(o.item_id)!.acquire;
     return { id: `lg-${o.id}`, currency: 'crystal' as const, kind: 'buy' as const, ref: o.id, amount: -(a.kind === 'buy' ? a.price : 0), note: o.item_id, created_at: t };
   });
-  // Yeni eşyaları (şömine, TV, salıncak) denemek için aile hediyesi
-  ledger.push({ id: 'lg-hediye', currency: 'crystal', kind: 'gift', ref: 'demo', amount: 2400, note: 'Demo hediyesi', created_at: t });
+  // Yeni eşyaları (şömine, TV, salıncak, havuz, ışınlayıcı…) denemek için aile hediyesi
+  ledger.push({ id: 'lg-hediye', currency: 'crystal', kind: 'gift', ref: 'demo', amount: 10400, note: 'Demo hediyesi', created_at: t });
   return {
     owned,
     ledger,
@@ -109,28 +114,18 @@ function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equi
       { id: 'teras', kind: 'teras', shape: 'genis', size: 'l', cells: { w: 16, h: 9, cut: [[13, 7, 3, 2]] }, name: 'Teras', pos: 1 },
     ],
     spaces: {
+      // Yeni kullanıcının hazır döşenmiş odası (DEFAULT_ROOM) + ışınlayıcı, zar, dans pisti ve disko topu
       room: {
-        floor: 'zemin:ahsap',
-        wall: 'duvar:krem',
+        ...DEFAULT_ROOM,
         items: [
-          { item: 'mob:yatak', x: 0, y: 0, rot: 0 },
-          { item: 'mob:kitaplik', x: 2, y: 0, rot: 0 },
-          { item: 'mob:masa', x: 5, y: 0, rot: 0 },
-          { item: 'mob:sandalye', x: 5, y: 1, rot: 180 },
-          { item: 'mob:laptop', x: 6, y: 0, rot: 0 },
-          { item: 'isik:masa-lambasi', x: 5, y: 0, rot: 0 },
-          { item: 'isik:ayakli', x: 7, y: 0, rot: 0 },
-          { item: 'bitki:saksi', x: 8, y: 0, rot: 0 },
-          { item: 'hali:dikdortgen', x: 4, y: 4, rot: 0 },
-          { item: 'mob:sehpa', x: 4, y: 6, rot: 0 },
-          { item: 'mob:radyo', x: 5, y: 6, rot: 0 },
-          { item: 'mob:koltuk-mavi', x: 4, y: 7, rot: 180 },
-          { item: 'mob:somine', x: 10, y: 0, rot: 0 },
-          { item: 'mob:tv-dolabi', x: 4, y: 4, rot: 0 },
-          { item: 'mob:tv', x: 4, y: 4, rot: 0 },
-          { item: 'duvar:gezegenler', x: 1, y: -1, rot: 0 },
-          { item: 'duvar:saat', x: 4, y: -1, rot: 0 },
-          { item: 'duvar:harita', x: -1, y: 1, rot: 270 },
+          ...DEFAULT_ROOM.items,
+          { item: 'set:isinlayici', x: 7, y: 6, rot: 0 },
+          { item: 'set:zar', x: 6, y: 7, rot: 0 },
+          { item: 'set:neon-dans', x: 12, y: 6, rot: 0, on: true },
+          { item: 'set:neon-dans', x: 13, y: 6, rot: 0, on: true },
+          { item: 'set:neon-dans', x: 12, y: 7, rot: 0, on: true },
+          { item: 'set:neon-dans', x: 13, y: 7, rot: 0, on: true },
+          { item: 'set:disko-topu', x: 14, y: 7, rot: 0, on: true },
         ],
       },
       'r:teras': {
@@ -148,6 +143,15 @@ function demoGame(t: string): Pick<DemoDb, 'owned' | 'ledger' | 'spaces' | 'equi
           { item: 'dis:tas-yol', x: 4, y: 5, rot: 90 },
           { item: 'dis:cicek-kirmizi', x: 10, y: 1, rot: 0 },
           { item: 'dis:kabak', x: 11, y: 1, rot: 0 },
+          // Havuz: arka sırası kenarlı, önü su; önünde atlama tahtası
+          ...[1, 2, 3, 4].map((x) => ({ item: 'set:havuz-kenar', x, y: 1, rot: 0 })),
+          ...[1, 2, 3, 4].map((x) => ({ item: 'set:havuz-su', x, y: 2, rot: 0 })),
+          { item: 'set:atlama-tahtasi', x: 2, y: 3, rot: 180 },
+          { item: 'set:isinlayici', x: 7, y: 1, rot: 0 },
+          { item: 'set:futbol-topu', x: 7, y: 6, rot: 0 },
+          { item: 'set:yuruyen-bant', x: 11, y: 4, rot: 270 },
+          { item: 'set:yuruyen-bant', x: 12, y: 4, rot: 0 },
+          ...[0, 1, 2, 3, 4, 5, 6].map((c) => ({ item: 'set:muzik-karosu', x: 3 + c, y: 8, rot: 0, color: c })),
         ],
       },
     },

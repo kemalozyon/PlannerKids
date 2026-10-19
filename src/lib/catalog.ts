@@ -40,6 +40,8 @@ export interface Item {
   pitch?: number;
   /** Aynı eşyadan birden fazla alınabilir (mobilya, süsler) */
   repeat?: boolean;
+  /** Herkese bedava verilen adet (ilk odanın eşyaları); satın alınanlara eklenir. Sunucuda world_owned */
+  starter?: number;
   /** Masa üstünde karonun bir çeyreğine oturur (kupa, masa lambası, küçük saksı: bir karoya 4 tane); 1×1 ON_SURFACE */
   quarter?: boolean;
   /** Karo ölçüsü (w × h), izinli dönüşler, iç/dış mekân */
@@ -207,6 +209,12 @@ const BEHAVIOR_TEXT: Partial<Record<Behavior, (i: Item) => string>> = {
   NOTES: () => '📌 not ve hatırlatıcı asılır',
   STATS: () => '📊 çalışma kayıtların görünür',
   STUDY: () => '📖 kronometre açıkken karakterin burada çalışır',
+  SWIM: () => '🏊 içinde yüzülür',
+  TELEPORT: () => '🌀 aynı renkteki ışınlayıcıya götürür',
+  ROLL: () => '🎲 atılır (1–6)',
+  CONVEY: () => '➡️ üstündekini taşır',
+  KICK: () => '⚽ üstüne yürüyünce yuvarlanır',
+  DIVE: () => '🤸 önündeki havuza atlanır',
 };
 
 /** Eşya ne yapar (dükkân): "oturulur · açılıp kapanır" */

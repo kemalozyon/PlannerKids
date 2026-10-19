@@ -6,8 +6,8 @@
 //  2) pg_cron (saatte bir) → x-cron-secret başlığıyla. Yedek saati gelmiş herkese gönderir.
 // Günde kullanıcı başına en fazla bir rapor (daily_reports tablosundaki unique kısıt).
 //
-// Gerekli secret'lar: EVREN_API_KEY, RESEND_API_KEY, REPORT_FROM, CRON_SECRET
-// İsteğe bağlı: REPORT_MODEL (varsayılan deepseek-v4-flash), EVREN_BASE_URL
+// Gerekli secret'lar: GEMINI_API_KEY, RESEND_API_KEY, REPORT_FROM, CRON_SECRET
+// İsteğe bağlı: REPORT_MODEL (varsayılan gemini-3.8-flash)
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { addDaysISO, type ReportInput } from '../_shared/report.ts';
 import { runSchedule, sendReport, validButtonDate, type DataSource, type ReportSettings, type Trigger } from './core.ts';
@@ -91,8 +91,7 @@ Deno.serve(async (req) => {
 
   const url = Deno.env.get('SUPABASE_URL')!;
   const env = {
-    EVREN_API_KEY: Deno.env.get('EVREN_API_KEY'),
-    EVREN_BASE_URL: Deno.env.get('EVREN_BASE_URL'),
+    GEMINI_API_KEY: Deno.env.get('GEMINI_API_KEY'),
     REPORT_MODEL: Deno.env.get('REPORT_MODEL'),
     RESEND_API_KEY: Deno.env.get('RESEND_API_KEY'),
     REPORT_FROM: Deno.env.get('REPORT_FROM'),

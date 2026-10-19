@@ -147,8 +147,8 @@ export interface Api {
   /** Ebeveyn hediyesi (1–giftMax 💎) */
   giftCrystals(amount: number, note: string): Promise<void>;
   listOwned(): Promise<OwnedItem[]>;
-  /** Eşyayı fiyatıyla satın alır; bakiye yetmezse hata */
-  buyItem(itemId: string): Promise<OwnedItem>;
+  /** Eşyayı fiyatıyla satın alır (tekrar alınabilen eşyadan 1–MAX_BUY tane birden); bakiye yetmezse hiçbiri alınmaz */
+  buyItem(itemId: string, qty?: number): Promise<OwnedItem[]>;
   /** Haftalık sandık: hafta hedefi tuttuysa eşya bir kez verilir */
   openChest(week: string, itemId: string): Promise<OwnedItem>;
   /** Nadir ağaç ödülü: o gün yeterince sayaçla çalışıldıysa günün eşyası bir kez verilir (ref = tarih) */

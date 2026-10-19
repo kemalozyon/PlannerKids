@@ -74,7 +74,14 @@ export function inkOn(hex: string): string {
   const r = (n >> 16) & 255;
   const g = (n >> 8) & 255;
   const b = n & 255;
-  return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#1c1d1f' : '#ffffff';
+  // WCAG bağıl parlaklığı: beyaz ve koyu yazıdan hangisi daha okunaklıysa o
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  // #1c1d1f'nin parlaklığı ≈ 0.0125; iki karşıtlık eşitken l ≈ 0.19
+  return 1.05 / (l + 0.05) >= (l + 0.05) / 0.0625 ? '#ffffff' : '#1c1d1f';
 }
 
 export function pickBookColor(title: string): string {

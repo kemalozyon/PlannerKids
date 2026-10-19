@@ -91,7 +91,7 @@ export default function History({ courses }: { courses: Course[] }) {
 
   return (
     <div className="stack">
-      <h1>Geçmiş</h1>
+      <h1 data-tour="history">Geçmiş</h1>
 
       <div className="tiles">
         <div className="tile">

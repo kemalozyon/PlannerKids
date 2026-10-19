@@ -577,7 +577,7 @@ function PlanCard({
 }) {
   if (!plan) {
     return (
-      <section className="card plan-card empty-plan">
+      <section className="card plan-card empty-plan" data-tour="plan">
         <div className="grow">
           <h2>Bugünün planı</h2>
           <p className="muted small">Bugün için plan yok. Ne kadar çalışacağını önceden seçmek işini kolaylaştırır.</p>
@@ -593,7 +593,7 @@ function PlanCard({
   const C = 2 * Math.PI * R;
   const left = plan.rows.filter((r) => !r.complete).length;
   return (
-    <section className="card plan-card">
+    <section className="card plan-card" data-tour="plan">
       <div className="card-head">
         <h2>Bugünün planı</h2>
         {plan.pending && <span className="pill">Aile onayı bekliyor</span>}
@@ -692,7 +692,7 @@ function TourCard() {
       </span>
       <div className="grow">
         <strong>Hoş geldin! Dünyanı tanıyalım mı?</strong>
-        <p className="muted small">2 dakikalık sesli bir tur: sayaç, Elmas, odan, ağaç bahçelerin, karakterin ve kitaplığın.</p>
+        <p className="muted small">5 dakikalık sesli bir tur: plan, sayaç, Elmas, görevler, odaların ve eşyaların, Bahçem, kitaplık, karakterin ve aile paneli.</p>
         <div className="note-actions">
           <button
             className="btn primary sm"
@@ -814,7 +814,7 @@ function TasksCard({
   );
 
   return (
-    <section className="card">
+    <section className="card" data-tour="tasks">
       <div className="card-head">
         <h2>Yapılacaklar</h2>
         {tasks.length > 0 && (
@@ -903,7 +903,7 @@ function ReflectionCard({ date }: { date: string }) {
   const dirty = rating !== (saved?.rating ?? null) || note !== (saved?.note ?? '');
 
   return (
-    <section className="card reflection">
+    <section className="card reflection" data-tour="reflection">
       <h2>Bugün nasıl geçti?</h2>
       <div className="moods" role="radiogroup" aria-label="Bugün nasıl geçti">
         {MOODS.map((m) => (

@@ -294,7 +294,8 @@ export default function Explore(props: ExploreProps) {
   const selKey = sel && selPlaced ? powerKey(sel.space, selPlaced) : '';
   const selOn = selItem && selPlaced ? isOn(selItem, selPlaced) : false;
   const selPosed = !!posed && !!sel && posed.space === sel.space && posed.index === sel.index;
-  const selActions = selItem && selPlaced ? itemActions(selItem, selPlaced, { posed: selPosed, today }) : [];
+  // Işınlanma ve atlama yalnızca kuşbakışı odada (gezintide oda değiştirmek yok)
+  const selActions = selItem && selPlaced ? itemActions(selItem, selPlaced, { posed: selPosed, today }).filter((a) => a.id !== 'teleport' && a.id !== 'dive') : [];
   const runSel = (id: ActionId) => {
     if (!sel || !selItem || !selPlaced) return;
     if (id === 'stand') return standUp();

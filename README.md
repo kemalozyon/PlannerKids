@@ -12,7 +12,8 @@ npm run dev
 
 `.env` yoksa uygulama **demo modunda** açılır: veriler localStorage'da tutulur, örnek veri yüklenir.
 Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`. İlk açılışta "Demoyu başlat 🔊" ile
-2 dakikalık sesli/yazılı bir tanıtım turu başlar (Profil → Tanıtımı izle ile yeniden açılır).
+5 dakikalık, 28 sahnelik sesli/yazılı bir tanıtım turu başlar (Profil → Tanıtımı izle ile yeniden açılır). Sesler
+derlemeye gömülür; tek dosyalık demo `file://` ile açılınca da sesli oynar.
 
 ## Supabase'e bağlama
 
@@ -56,7 +57,7 @@ src/
     Collection.tsx Koleksiyon defteri ve ağaç bahçelerinin özeti
   demo/script.json  Tanıtım turunun sahneleri
 supabase/migrations/0001_init.sql … 0036_tree_claim.sql (sırayla çalıştır)
-public/demo/       Tanıtım sesleri ve kelime zamanları (npm run demo:audio, ElevenLabs)
+src/demo/audio/   Tanıtım sesleri ve kelime zamanları (npm run demo:audio, Gemini TTS; demo/audio.ts bundle'a alır)
 ASSETS_LICENSES.md 3D modellerin lisansları (Kenney, CC0)
 src/config/economy.json, items.json   Ekonominin tek kaynağı (npm run config:sql → yeni migration)
 supabase/functions/daily-report/   Günlük rapor (Edge Function)
@@ -203,7 +204,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 - **İçerik:** ders süreleri ve dağılımı, önceki günlerle kıyas, son 7 günde çalışılan gün,
   yapılacaklar, ormana dikilen ağaçlar (her seans bir ağaç), okuma (sayfa, kitap, biten kitap), ruh hali ve çocuğun notu,
   ebeveyne bir öneri.
-- **Metni EVREN yazar** ([evren.ssyz.org.tr](https://evren.ssyz.org.tr), Anthropic Messages uyumlu `/v1/messages`; varsayılan model `deepseek-v4-flash`, `REPORT_MODEL` ile değiştirilebilir). Modeller önce düşündüğü için token bütçesi 4000; düşükse JSON yarım kalır ve yedek metne düşülür. Rakamlar ve tablo
+- **Metni Gemini yazar** (Google Gemini API, `generateContent`; varsayılan model `gemini-3.8-flash`, `REPORT_MODEL` ile değiştirilebilir). Yanıt JSON şemasıyla istenir; model önce düşündüğü için token bütçesi 4000, düşükse JSON yarım kalır ve yedek metne düşülür. Rakamlar ve tablo
   şablondan gelir; LLM yalnızca özet, öne çıkanlar ve öneriyi yazar, verilmeyen bilgiyi uydurmaması,
   çocuğu yargılamaması ve çocuğun notundaki talimatları uygulamaması istenir.
 - **LLM'e ulaşılamazsa** rapor yine gider: kurallarla yazılmış yedek metin kullanılır.
@@ -218,7 +219,7 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
 2. [resend.com](https://resend.com)'da hesap aç, gönderen alan adını doğrula, API anahtarı al.
 3. Secret'ları gir ve fonksiyonu deploy et:
    ```bash
-   supabase secrets set EVREN_API_KEY=... RESEND_API_KEY=... \
+   supabase secrets set GEMINI_API_KEY=... RESEND_API_KEY=... \
      REPORT_FROM="Çalışma Takip <rapor@alanadin.com>" CRON_SECRET=$(openssl rand -hex 24)
    supabase functions deploy daily-report     # config.toml: verify_jwt = false (kendi auth'unu yapar)
    ```
@@ -226,7 +227,8 @@ günün raporu ebeveynin e-postasına gider. **Günde en fazla bir rapor** (`dai
    CRON_SECRET ile doldurup SQL Editor'de bir kez çalıştır (saatte bir tetikler; her kullanıcının
    saatine bakar).
 
-**Gizlilik:** Raporu hazırlarken o günün kayıtları ve çocuğun "nasıl geçti" notu EVREN'e (Savunma Sanayii Başkanlığı'nın yapay zekâ platformu) gönderilir.
+**Gizlilik:** Raporu hazırlarken o günün kayıtları ve çocuğun "nasıl geçti" notu Google'ın Gemini API'sine gönderilir.
+Gemini API'nin ücretsiz katmanında Google gönderilen içeriği ürünlerini geliştirmek için kullanabilir; ücretli katmanda (faturalandırma açık) kullanmaz.
 Uygulamaya ebeveynin hesabıyla girildiği ve ayarlarda bu açıkça yazdığı için onay ebeveyndedir; rapor kapatılabilir.
 
 ## Tanıtım turu (sesli ve yazılı)
@@ -234,8 +236,10 @@ Uygulamaya ebeveynin hesabıyla girildiği ve ayarlarda bu açıkça yazdığı 
 - İlk girişte Bugün ekranında **"Demoyu başlat 🔊"** / **"Sessiz izle"**. Tur her sahnede ilgili sayfayı açar, ilgili
   ögeyi öne çıkarır (driver.js) ve altyazıyı **kelime kelime** vurgular. Geri, duraklat, ileri, sessize alma; Esc kapatır.
 - Sesler önceden üretilir, canlı TTS yok: `npm run demo:audio` (`scripts/gen-demo-audio.mjs`) her sahne için
-  ElevenLabs'tan ses ve kelime zamanlarını alıp `public/demo/<sahne>.mp3` ve `.json` yazar. `ELEVENLABS_API_KEY`
-  `.env`'de durur ve ön yüze girmez. Ses dosyası yoksa tur kendiliğinden yazılı moda geçer.
+  Gemini TTS'ten sesi alır, ffmpeg ile `src/demo/audio/<sahne>.mp3` yapar (ses yüksekliği `loudnorm` ile eşitlenir); kelime zamanlarını sesin duraklamalarından
+  çıkarıp `.json` yazar. Her ses ayrıca Gemini ile yazıya dökülüp metinle karşılaştırılır; tutmayan ses kaydedilmez
+  (`--no-check` kapatır). `GEMINI_API_KEY` `.env`'de durur ve ön yüze girmez. Ses dosyası yoksa tur kendiliğinden
+  yazılı moda geçer. Ücretsiz katman model başına günde ~10 istek verir: kota biterse ertesi gün yeniden çalıştır.
 - Sahneler ve metinler `src/demo/script.json`'da. Metni değiştirince `npm run demo:audio` yalnızca yeni ve metni
   değişen sahneleri üretir (`--force` hepsini). Sesi eski kalan sahne, ses yeniden üretilene kadar yazılı oynar.
 

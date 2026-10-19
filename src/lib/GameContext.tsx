@@ -11,7 +11,8 @@ interface GameCtx {
   refresh: () => Promise<void>;
   celebrate: (c: Celebration) => void;
   /** Dükkândan satın al (bakiye yetmezse hata fırlatır) */
-  buy: (itemId: string) => Promise<void>;
+  /** Eşya satın al (tekrar alınabilende adetli) */
+  buy: (itemId: string, qty?: number) => Promise<void>;
   openChest: (week: string, itemId: string) => Promise<void>;
   /** Nadir ağaç ödülünü al (o günün eşyası) */
   openDrop: (date: string, itemId: string) => Promise<void>;
@@ -186,7 +187,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         celebrate,
         celebrations,
         dismiss,
-        buy: after((id: string) => api.buyItem(id)),
+        buy: after((id: string, qty?: number) => api.buyItem(id, qty)),
         openChest: after((week: string, id: string) => api.openChest(week, id)),
         openDrop: after((date: string, id: string) => api.openDrop(date, id)),
         claimDay: async (date: string) => {

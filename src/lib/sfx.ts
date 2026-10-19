@@ -90,6 +90,38 @@ export const sfx = {
   sad() {
     tone(392, 300, 0.35, 0, 'triangle', 0.1);
   },
+  /** Satın alındı: kasa "çın"ı, parlak arpej */
+  buy() {
+    [784, 988, 1175, 1568].forEach((f, i) => tone(f, f * 1.005, 0.16, i * 0.06, 'triangle', 0.11));
+    tone(2093, 2100, 0.3, 0.26, 'sine', 0.06);
+  },
+  /** Düğme: kısa, yumuşak "tık" */
+  click() {
+    tone(900, 700, 0.045, 0, 'sine', 0.07);
+  },
+  /** Eşya ele alındı: yükselen "vıjt" */
+  pick() {
+    tone(320, 640, 0.1, 0, 'sine', 0.09);
+  },
+  /** Suya girildi: köpüklü "şlap" */
+  splash() {
+    tone(600, 120, 0.22, 0, 'sawtooth', 0.035);
+    [0.04, 0.09, 0.15].forEach((d, i) => tone(900 + i * 300, 1400 + i * 300, 0.06, d, 'sine', 0.05));
+  },
+  /** Işınlanma: inip çıkan "vınn" */
+  zap() {
+    tone(220, 1760, 0.3, 0, 'sawtooth', 0.04);
+    tone(1760, 440, 0.3, 0.3, 'triangle', 0.08);
+  },
+  /** Zar yuvarlanıyor: takırtı */
+  dice() {
+    for (let i = 0; i < 6; i++) tone(500 + ((i * 137) % 400), 300, 0.04, i * 0.11, 'square', 0.04);
+  },
+  /** Müzik karosu: pentatonik bir nota (renge göre) */
+  note(i: number) {
+    const f = [523, 587, 659, 784, 880, 1047, 1175][((i % 7) + 7) % 7];
+    tone(f, f, 0.32, 0, 'triangle', 0.13);
+  },
   /** Çalgı eşyaları (PLAY_SOUND): kısa bir ezgi */
   melody(kind: string) {
     const m = MELODIES[kind] ?? MELODIES.piyano;

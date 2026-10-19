@@ -1,15 +1,13 @@
-// Sesli ve yazılı tanıtım turu. Her sahnede ilgili sayfa açılır, ilgili öge driver.js ile öne çıkar,
-// altta altyazı kelime kelime vurgulanır. Sesler önceden üretilmiş statik dosyalardır (public/demo/,
-// scripts/gen-demo-audio.mjs); canlı TTS yok. Ses dosyası yoksa ya da "Sessiz izle" seçildiyse kelime
-// zamanları okuma hızından tahmin edilir ve tur kendi kendine ilerler.
+// Sesli ve yazılı tanıtım turu. Her sahnede ilgili sayfa açılır (Dünyam'da ilgili oda ve alt panel sekmesi de),
+// ilgili öge driver.js ile öne çıkar, altta altyazı kelime kelime vurgulanır. Sesler önceden üretilmiş statik
+// dosyalardır (src/demo/audio/, scripts/gen-demo-audio.mjs); canlı TTS yok. Ses yoksa ya da "Sessiz izle" seçildiyse
+// kelime zamanları okuma hızından tahmin edilir ve tur kendi kendine ilerler.
 import { driver, type Driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { estimateWords, sceneEnd, SCENES, TOUR_KEY, VIEW_EVENT, wordAt, type TourMode, type Word } from '../lib/tour';
-
-
-const base = import.meta.env.BASE_URL ?? '/';
+import { sceneAudio } from '../demo/audio';
+import { DOCK_EVENT, estimateWords, sceneEnd, SCENES, TOUR_KEY, VIEW_EVENT, wordAt, type TourMode, type Word } from '../lib/tour';
 
 async function waitFor(selector: string, ms = 4000): Promise<HTMLElement | null> {
   const end = performance.now() + ms;
@@ -20,6 +18,8 @@ async function waitFor(selector: string, ms = 4000): Promise<HTMLElement | null>
   }
   return null;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onClose: () => void }) {
   const [i, setI] = useState(0);
@@ -54,26 +54,29 @@ export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onC
     setWords([]);
     audio.current?.pause();
     audio.current = null;
-    // Dünyam'da hangi oda açılsın (World.tsx dinler)
-    if (scene.view) window.dispatchEvent(new CustomEvent(VIEW_EVENT, { detail: scene.view }));
     if (location.hash !== `#${scene.hash}`) location.hash = scene.hash;
     (async () => {
+      // Dünyam: sayfa açılınca oda ve alt panel sekmesi (World.tsx dinler; sayfa daha açılmadan yollanan olay kaybolur)
+      if (scene.hash === 'forest' && (await waitFor('.world-page'))) {
+        if (!alive) return;
+        window.dispatchEvent(new CustomEvent(VIEW_EVENT, { detail: scene.view ?? 'room' }));
+        window.dispatchEvent(new CustomEvent(DOCK_EVENT, { detail: scene.dock ?? null }));
+        await sleep(250);
+      }
+      if (!alive) return;
       const el = await waitFor(`[data-tour="${scene.target}"]`);
       if (!alive) return;
       if (el) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        await new Promise((r) => setTimeout(r, 350));
+        await sleep(350);
         if (alive) drv.current?.highlight({ element: el });
       } else drv.current?.destroy();
       if (mode === 'audio') {
+        // Metni değişen sahnenin eski sesi kullanılmaz: yeniden üretilene kadar yazılı anlatım
+        const data = sceneAudio(scene.id, scene.text);
         try {
-          const res = await fetch(`${base}demo/${scene.id}.json`);
-          if (!res.ok) throw new Error('yok');
-          const data = (await res.json()) as { words: Word[]; text?: string };
-          // Metin değiştiyse eski ses başka şey söyler: yeniden üretilene kadar yazılı anlatım
-          if (data.text != null && data.text !== scene.text) throw new Error('eski ses');
-          if (!alive) return;
-          const a = new Audio(`${base}demo/${scene.id}.mp3`);
+          if (!data) throw new Error('yok');
+          const a = new Audio(data.url);
           audio.current = a;
           setWords(data.words);
           setNoAudio(false);
@@ -81,7 +84,8 @@ export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onC
           return;
         } catch {
           if (!alive) return;
-          // Ses dosyası yok (henüz üretilmedi) ya da tarayıcı çalmaya izin vermedi: yazılı moda düş
+          // Ses henüz üretilmedi ya da tarayıcı çalmaya izin vermedi: bu sahne yazılı
+          audio.current = null;
           setNoAudio(true);
         }
       }
@@ -162,7 +166,7 @@ export default function Tour({ mode: startMode, onClose }: { mode: TourMode; onC
           </span>
         ))}
       </p>
-      {noAudio && mode === 'audio' && <p className="tour-note">Ses dosyaları henüz yok; yazılı anlatımla devam ediyoruz.</p>}
+      {noAudio && mode === 'audio' && <p className="tour-note">Bu sahnenin sesi henüz yok; yazılı anlatımla devam ediyoruz.</p>}
       <div className="tour-controls">
         <button className="btn sm" disabled={i === 0} onClick={() => setI(i - 1)}>
           ⏮ Geri

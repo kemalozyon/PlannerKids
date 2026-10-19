@@ -90,7 +90,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
         <Sheet title={demo ? 'Rapor önizlemesi' : 'Gönderilen rapor'} onClose={() => setPreview(false)}>
           {demo && (
             <p className="demo-note small">
-              Demo modu: e-posta gönderilmedi. Gerçek sürümde özet ve öneri metnini yapay zekâ (EVREN) yazar, rapor <strong>{settings?.parent_email}</strong> adresine gider.
+              Demo modu: e-posta gönderilmedi. Gerçek sürümde özet ve öneri metnini yapay zekâ (Gemini) yazar, rapor <strong>{settings?.parent_email}</strong> adresine gider.
             </p>
           )}
           {report.subject && (

@@ -37,7 +37,7 @@ export default function Rewards() {
       {error && <div className="error">{error}</div>}
 
       {top ? (
-        <section className={`card reward-hero${top.reached ? ' reached' : ''}`}>
+        <section className={`card reward-hero${top.reached ? ' reached' : ''}`} data-tour="rewards">
           <div className="reward-hero-head">
             <span className="reward-big-icon" aria-hidden>
               {top.reached ? '🎉' : '🎁'}
@@ -62,7 +62,7 @@ export default function Rewards() {
           </div>
         </section>
       ) : (
-        <section className="card empty">
+        <section className="card empty" data-tour="rewards">
           <div className="reward-big-icon" aria-hidden>
             🎁
           </div>

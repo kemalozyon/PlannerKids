@@ -33,9 +33,7 @@ export interface DataSource {
 }
 
 export interface Env {
-  EVREN_API_KEY?: string;
-  /** Anthropic Messages uyumlu LLM API kökü; varsayılan EVREN. */
-  EVREN_BASE_URL?: string;
+  GEMINI_API_KEY?: string;
   REPORT_MODEL?: string;
   RESEND_API_KEY?: string;
   REPORT_FROM?: string;
@@ -52,10 +50,21 @@ export type SendResult =
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export const DEFAULT_LLM_BASE_URL = 'https://evren-llmapi.ssyz.org.tr';
-export const DEFAULT_REPORT_MODEL = 'deepseek-v4-flash';
-/** EVREN modellerinin çoğu önce düşünür; düşünme bu bütçeden yer, düşük tutulursa JSON yarım kalır. */
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+export const DEFAULT_REPORT_MODEL = 'gemini-3.8-flash';
+/** Gemini önce düşünür ve düşünme bu bütçeden yer; düşük tutulursa JSON yarım kalır. */
 const LLM_MAX_TOKENS = 4000;
+/** Yanıtın biçimi: model bu şemaya uygun JSON döndürür (parseNarrative yine de denetler). */
+const NARRATIVE_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: 'string' },
+    summary: { type: 'string' },
+    highlights: { type: 'array', items: { type: 'string' } },
+    parent_tip: { type: 'string' },
+  },
+  required: ['subject', 'summary', 'highlights', 'parent_tip'],
+};
 const LLM_TIMEOUT_MS = 45_000;
 
 /** Bir anın verilen saat dilimindeki yerel tarihi ve saati. */
@@ -81,26 +90,23 @@ export function validButtonDate(date: string, now: Date, timeZone: string): bool
 
 export async function writeNarrative(input: ReportInput, env: Env, fetchFn: FetchFn): Promise<{ n: Narrative; by: 'llm' | 'fallback' }> {
   const facts = buildFacts(input);
-  if (!env.EVREN_API_KEY) return { n: fallbackNarrative(facts), by: 'fallback' };
+  if (!env.GEMINI_API_KEY) return { n: fallbackNarrative(facts), by: 'fallback' };
   try {
-    const res = await fetchFn(`${env.EVREN_BASE_URL || DEFAULT_LLM_BASE_URL}/v1/messages`, {
+    const res = await fetchFn(`${GEMINI_BASE_URL}/models/${env.REPORT_MODEL || DEFAULT_REPORT_MODEL}:generateContent`, {
       method: 'POST',
       signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      headers: {
-        'x-api-key': env.EVREN_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: { 'x-goog-api-key': env.GEMINI_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: env.REPORT_MODEL || DEFAULT_REPORT_MODEL,
-        max_tokens: LLM_MAX_TOKENS,
-        system: REPORT_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: reportUserPrompt(facts) }],
+        systemInstruction: { parts: [{ text: REPORT_SYSTEM_PROMPT }] },
+        contents: [{ role: 'user', parts: [{ text: reportUserPrompt(facts) }] }],
+        generationConfig: { maxOutputTokens: LLM_MAX_TOKENS, responseMimeType: 'application/json', responseSchema: NARRATIVE_SCHEMA },
       }),
     });
-    if (!res.ok) throw new Error(`LLM API ${res.status}`);
-    const body = (await res.json()) as { content?: { type: string; text?: string }[] };
-    const text = (body.content ?? []).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
+    if (!res.ok) throw new Error(`Gemini API ${res.status}`);
+    const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+    // Düşünce parçaları (thought) metne katılmaz
+    const parts = body.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.filter((p) => !p.thought).map((p) => p.text ?? '').join('');
     const n = parseNarrative(text);
     if (!n) throw new Error('LLM çıktısı JSON değil');
     return { n, by: 'llm' };

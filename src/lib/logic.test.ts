@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { localApi, supabaseApi, type DemoDb } from './api';
 import { addDays, formatMinutes, toLocalDate, weekStart } from './date';
-import { has, ITEMS, itemById, poseOf } from './catalog';
+import { has, ITEMS, itemById, poseOf, type Item } from './catalog';
+import { demoSeed } from './demoSeed';
 import { balances, bestStreakOf, buyCheck, chestOf, chestPrize, CLAIM_FROM, dayEarnings, dayElmas, dayTotalsOf, dropPrize, dropsOf, earnedEntries, inChestPool, inDropPool, ownedCount, owns, paidTasks, pendingEarnings, questsNow, studyElmas, treeElmasOf } from './economy';
 import { inSeason, seedChoices, seedItemId, seedProblem } from './seeds';
 import { BEHAVIORS, CFG, DISPENSE, ITEM_DEFS, SOUNDS } from './config';
@@ -23,6 +24,11 @@ import {
   blockedTiles,
   cellCount,
   cellsFrom,
+  conveyStep,
+  diveSpot,
+  kickItem,
+  swimTiles,
+  teleportTarget,
   roomCellsProblem,
   roomFixed,
   isTerrace,
@@ -77,6 +83,7 @@ import {
   wallBlocked,
   type PlacedItem,
   type SpaceLayout,
+  type SpaceId,
   type WorldCtx,
 } from './world';
 import { canStep, doorTarget, entryOf, gardenPlan, regionAt, spacePlan, worldBlocked } from './worldPlan';
@@ -84,7 +91,7 @@ import { DEFAULT_LOOK, lookProblem, normalizeEquipped, normalizeLook, randomLook
 import { SUBS } from './catalog';
 import { TREE_STAGES } from '../../supabase/functions/_shared/report';
 import { estimateWords, SCENES, sceneEnd, wordAt } from './tour';
-import { wordsFromAlignment } from '../../scripts/demo-words.mjs';
+import { transcriptDiff, wordsFromAudio } from '../../scripts/demo-words.mjs';
 import { applyTemplate, dayPlan, TEMPLATES } from './plan';
 import { computeReading } from './reading';
 import { openRewards, rewardProgress } from './rewards';
@@ -340,6 +347,9 @@ test('demo API: seans — not zorunlu, kayıt timer olur ve Elmas yazılır; ell
 // ---------- Dünya: haritalar, karo ızgarası, yerleştirme, yol bulma, günlük ağaçlar ----------
 const ctx0: WorldCtx = { map: 'acik', today: MON, rooms: [] };
 const owned1 = () => 1;
+/** Yeni kullanıcının sahip oldukları: ücretsizler ve herkese verilen başlangıç eşyaları (starter) */
+const P0 = { bestStreak: 0, planDays: 0, gold: 0, level: 0, hours: 0, trees: 0 };
+const ownedNew = (it: Item) => ownedCount(it, [], P0);
 /** Teras (açık hava odası): dış eşyalar burada */
 const TERAS = { id: 'bahce', kind: 'teras', shape: 'genis', size: 'l' as const, cells: { w: 18, h: 9 }, name: 'Teras', pos: 0 };
 const ctxT: WorldCtx = { ...ctx0, rooms: [TERAS] };
@@ -348,7 +358,7 @@ const T = 'r:bahce' as const;
 test('dünya: ayak izi dönüşle değişir; yerleşim sınır, sabit karo, çakışma ve envanteri denetler', () => {
   assert.deepEqual(footprint({ w: 2, h: 1 }, 3, 2, 0).map((t) => `${t.x},${t.y}`), ['3,2', '4,2']);
   assert.deepEqual(footprint({ w: 2, h: 1 }, 3, 2, 90).map((t) => `${t.x},${t.y}`), ['3,2', '3,3']);
-  for (const m of MAPS) assert.equal(layoutProblem('room', DEFAULT_ROOM, { ...ctx0, map: m.id }, owned1), null, `başlangıç odası ${m.id}`);
+  for (const m of MAPS) assert.equal(layoutProblem('room', DEFAULT_ROOM, { ...ctx0, map: m.id }, ownedNew), null, `başlangıç odası ${m.id}`);
   const room = (items: SpaceLayout['items'], extra: Partial<SpaceLayout> = {}): SpaceLayout => ({ items, ...extra });
   const msg = (l: SpaceLayout, own = owned1, space: 'room' | typeof T = 'room', ctx = ctxT) => layoutProblem(space, l, ctx, own)?.message ?? null;
   assert.match(msg(room([{ item: 'mob:masa', x: 11, y: 3, rot: 0 }]))!, /dışına/);
@@ -374,7 +384,23 @@ test('dünya: ayak izi dönüşle değişir; yerleşim sınır, sabit karo, çak
   // Önizleme: konabilir/konamaz
   assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:koltuk-mavi', x: 8, y: 7, rot: 0 }), true);
   assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:koltuk-mavi', x: 5, y: 0, rot: 0 }), false);
-  assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:masa', x: 5, y: 0, rot: 0 }, 2), true, 'kendi yerine geri konur');
+  assert.equal(canPlaceAt('room', DEFAULT_ROOM, ctx0, { item: 'mob:kitaplik', x: 2, y: 0, rot: 0 }, 1), true, 'kendi yerine geri konur');
+});
+
+test('başlangıç odası: hazır döşeli; başlangıç eşyaları satılık ve herkeste birer tane', () => {
+  const starters = ITEMS.filter((i) => i.starter);
+  assert.ok(starters.length >= 10);
+  for (const i of starters) {
+    assert.equal(i.acquire.kind, 'buy', `${i.id} satılık olmalı (sunucuda world_owned price dalı)`);
+    assert.ok(i.repeat || i.category === 'zemin' || i.category === 'duvar', `${i.id} tekrar alınabilir olmalı`);
+    assert.equal(ownedCount(i, [], P0), i.starter);
+    assert.equal(owns(i, [], P0), true);
+  }
+  assert.ok(DEFAULT_ROOM.items.length >= 20, 'ilk oda dolu gelir');
+  // Odadaki her satılık eşya başlangıç eşyası (yoksa yeni kullanıcının envanterinde olmaz)
+  for (const p of DEFAULT_ROOM.items) assert.ok(itemById(p.item)!.acquire.kind === 'free' || itemById(p.item)!.starter, p.item);
+  assert.match(buyCheck('duvar:puantiye', 9999, [], 0)!, /zaten sende/);
+  assert.equal(buyCheck('mob:radyo', 9999, [], 0), null, 'başlangıç eşyasından bir tane daha alınır');
 });
 
 test('gezinti: taşınan eşya karakterin önüne konur; duvar süsü duvara bakınca', () => {
@@ -577,7 +603,7 @@ test('arazi: saatle yerinde büyür; büyüyünce eski yerleşimler geçerli kal
     // Kütüphane ve oda aynı derinlikte; her kapının kenarı var (komşu odaya açılır)
     assert.equal(m.library.h, m.room.h, `${m.id} kütüphane ve oda aynı derinlikte`);
     for (const s of ['room', 'library'] as const) assert.ok(m[s].fixed.filter((f) => f.kind === 'door' || f.kind === 'gate').every((f) => f.edge), `${m.id} ${s} kapı kenarı`);
-    assert.equal(layoutProblem('room', DEFAULT_ROOM, ctx, owned1), null, `başlangıç odası ${m.id}`);
+    assert.equal(layoutProblem('room', DEFAULT_ROOM, ctx, ownedNew), null, `başlangıç odası ${m.id}`);
     if (!i) continue;
     const prev = MAPS[i - 1];
     const pctx = { ...ctx0, map: prev.id };
@@ -1104,7 +1130,7 @@ test('sahiplik: ücretsiz, satın alınan, başarıyla açılan; canlılar satı
 test('davranışlar: katalog tutarlı, eski bayraklar yok, set parçaları ve duvar süsleri çizilir', () => {
   const src = (f: string) => readFileSync(new URL(f, import.meta.url), 'utf8');
   const pieces = new Set(
-    [...`${src('../components/world3d/Sets.tsx')}${src('../components/world3d/SetsMore.tsx')}${src('../components/world3d/SetsNew.tsx')}`.matchAll(/^ {2}(?:'([a-z-]+)'|([a-zA-Z0-9]+)): \{$/gm)].map((m) => m[1] ?? m[2]),
+    [...`${src('../components/world3d/Sets.tsx')}${src('../components/world3d/SetsMore.tsx')}${src('../components/world3d/SetsNew.tsx')}${src('../components/world3d/SetsPlay.tsx')}`.matchAll(/^ {2}(?:'([a-z-]+)'|([a-zA-Z0-9]+)): \{$/gm)].map((m) => m[1] ?? m[2]),
   );
   const arts = src('../components/world3d/WallArts.tsx');
   const artTs = src('../components/world3d/art.ts');
@@ -1130,10 +1156,75 @@ test('davranışlar: katalog tutarlı, eski bayraklar yok, set parçaları ve du
     if (it.pattern) assert.ok(patterns.has(it.pattern), `${d.id}: desen ${it.pattern}`);
     if (it.art) assert.ok(drawsArt(it.art), `${d.id}: resim ${it.art}`);
     if (it.since) assert.match(it.since, /^\d{4}-\d{2}-\d{2}$/, `${d.id}: since`);
+    // Oyun eşyaları
+    if (has(it, 'SWIM')) assert.ok(has(it, 'WALK_THROUGH'), `${d.id}: havuz suyunun içine yürünür`);
+    if (has(it, 'CONVEY')) assert.ok(has(it, 'WALK_THROUGH') && it.rotations?.length === 4, `${d.id}: bant yürünür ve dört yöne döner`);
+    if (has(it, 'KICK')) assert.ok(has(it, 'WALK_THROUGH') && !has(it, 'SWIM'), `${d.id}: top yürünür`);
+    if (has(it, 'TELEPORT')) assert.ok(has(it, 'CHANGE_COLOR'), `${d.id}: ışınlayıcının eşi rengiyle seçilir`);
+    if (has(it, 'DIVE')) assert.ok(!has(it, 'WALK_THROUGH') && it.rotations?.length === 4, `${d.id}: atlama tahtası`);
   }
   for (const id of ['ayna-yuvarlak', 'bayrak', 'vitray', 'pencere-yuvarlak', 'neon-kalp', 'neon-yildiz', 'asma', 'akvaryum']) assert.ok(arts.includes(`'${id}'`) || arts.includes(`${id}:`), id);
   // Katalog büyüdü: ~300 mobilya/süs (kıyafet, canlı ve dondurma hariç)
   assert.ok(ITEMS.filter((i) => !['kiyafet', 'evcil', 'diger'].includes(i.category)).length >= 300);
+});
+
+test('oyun eşyaları: havuz, ışınlayıcı, zar, yürüyen bant, top, atlama tahtası', () => {
+  const ctxR = ctxT;
+  const acts = (id: string, p: Partial<PlacedItem> = {}) => itemActions(itemById(id)!, { item: id, x: 1, y: 1, rot: 0, ...p }, { posed: false, today: MON }).map((a) => a.id);
+  assert.deepEqual(acts('set:zar'), ['roll']);
+  assert.deepEqual(acts('set:isinlayici'), ['teleport', 'color']);
+  assert.deepEqual(acts('set:atlama-tahtasi'), ['dive']);
+  for (const id of ['set:havuz-su', 'set:yuruyen-bant', 'set:futbol-topu']) assert.deepEqual(acts(id), [], id);
+  assert.deepEqual(acts('set:muzik-karosu'), ['color', 'sound']);
+  // Havuz: parçalar odaya da terasa da konur; su karoları
+  const pool: SpaceLayout = {
+    items: [
+      { item: 'set:havuz-su', x: 3, y: 3, rot: 0 },
+      { item: 'set:havuz-kenar', x: 4, y: 3, rot: 0 },
+      { item: 'set:havuz', x: 6, y: 3, rot: 0 },
+      { item: 'set:atlama-tahtasi', x: 3, y: 2, rot: 0 },
+    ],
+  };
+  assert.equal(layoutProblem(T, pool, ctxR, () => 5), null);
+  assert.equal(layoutProblem('room', { items: pool.items.slice(0, 2) }, ctx0, () => 5), null);
+  assert.deepEqual([...swimTiles(pool)].sort(), ['3,3', '4,3', '6,3', '6,4', '7,3', '7,4']);
+  // Atlama tahtası: önü (rot 0 → güney) havuz; arkadan yaklaşılır; önünde su yoksa atlanmaz
+  assert.deepEqual(diveSpot(pool, 3)?.land, { x: 3, y: 3 });
+  assert.equal(diveSpot({ items: [{ item: 'set:atlama-tahtasi', x: 3, y: 2, rot: 0 }] }, 0), null);
+  assert.deepEqual(approachTile(itemById('set:atlama-tahtasi')!, pool.items[3], 18, 9, blockedTiles(T, pool, ctxR)), { x: 3, y: 1 });
+  // Yürüyen bant: baktığı yöne bir karo; önü dolu ya da oda bitiyorsa durur
+  const belt: SpaceLayout = { items: [{ item: 'set:yuruyen-bant', x: 2, y: 2, rot: 270 }, { item: 'set:yuruyen-bant', x: 3, y: 2, rot: 0 }, { item: 'mob:sandalye', x: 3, y: 4, rot: 0 }] };
+  assert.deepEqual(conveyStep('room', belt, ctx0, { x: 2, y: 2 }), { x: 3, y: 2 });
+  assert.deepEqual(conveyStep('room', belt, ctx0, { x: 3, y: 2 }), { x: 3, y: 3 });
+  assert.equal(conveyStep('room', belt, ctx0, { x: 3, y: 3 }), null, 'bant yok');
+  assert.equal(conveyStep('room', { items: [{ item: 'set:yuruyen-bant', x: 3, y: 3, rot: 0 }, belt.items[2]] }, ctx0, { x: 3, y: 3 }), null, 'önü dolu');
+  assert.equal(conveyStep('room', { items: [{ item: 'set:yuruyen-bant', x: 3, y: 9, rot: 0 }] }, ctx0, { x: 3, y: 9 }), null, 'oda bitti');
+  // Top: en çok 3 karo, engelde durur, sırası değişmez
+  const ball: SpaceLayout = { items: [{ item: 'mob:sandalye', x: 8, y: 4, rot: 0 }, { item: 'set:futbol-topu', x: 4, y: 4, rot: 0 }] };
+  assert.deepEqual(kickItem('room', ball, 1, { x: 1, y: 0 }, ctx0)?.items[1], { item: 'set:futbol-topu', x: 7, y: 4, rot: 0 });
+  assert.deepEqual(kickItem('room', ball, 1, { x: 1, y: 0 }, ctx0, 9)?.items[1], { item: 'set:futbol-topu', x: 7, y: 4, rot: 0 }, 'sandalyede durur');
+  assert.deepEqual(kickItem('room', ball, 1, { x: 0, y: 1 }, ctx0, 9)?.items[1], { item: 'set:futbol-topu', x: 4, y: 9, rot: 0 }, 'duvarda durur');
+  assert.equal(kickItem('room', { items: [{ item: 'set:futbol-topu', x: 11, y: 4, rot: 0 }] }, 0, { x: 1, y: 0 }, ctx0), null);
+  assert.equal(kickItem('room', ball, 0, { x: 1, y: 0 }, ctx0), null, 'sandalye top değil');
+  // Işınlayıcı: aynı renktekiler bağlı (odalar arası, sırayla döner); farklı renk ve tek başına eşsiz
+  const tp = (x: number, color?: number): PlacedItem => ({ item: 'set:isinlayici', x, y: 1, rot: 0, ...(color === undefined ? {} : { color }) });
+  const spaces: Partial<Record<SpaceId, SpaceLayout>> = { room: { items: [tp(1), tp(3, 1)] }, library: { items: [] }, [T]: { items: [tp(2), tp(5)] } };
+  const order: SpaceId[] = ['room', 'library', T];
+  assert.deepEqual(teleportTarget(spaces, order, { space: 'room', index: 0 }), { space: T, index: 0 });
+  assert.deepEqual(teleportTarget(spaces, order, { space: T, index: 0 }), { space: T, index: 1 });
+  assert.deepEqual(teleportTarget(spaces, order, { space: T, index: 1 }), { space: 'room', index: 0 });
+  assert.equal(teleportTarget(spaces, order, { space: 'room', index: 1 }), null, 'mor ışınlayıcının eşi yok');
+  assert.equal(teleportTarget(spaces, ['room', 'library'], { space: 'room', index: 0 }), null, 'silinen odadaki sayılmaz');
+  assert.equal(stateProblem(itemById('set:isinlayici')!, tp(1, 4)), null);
+  assert.ok(stateProblem(itemById('set:isinlayici')!, tp(1, 9)));
+});
+
+test('demo: örnek odalar sunucu kurallarıyla kaydedilebilir (sahiplik, yerleşim)', async () => {
+  const api = localApi(demoSeed);
+  await api.syncEconomy();
+  assert.ok(balances(await api.listLedger()).crystal >= 0, 'demo bakiyesi eksiye düşmez');
+  const db = demoSeed();
+  for (const [sp, l] of Object.entries(db.spaces ?? {})) await api.saveSpace(sp as SpaceId, l!);
 });
 
 test('davranışlar: eşyanın durumu, eylemler, depo ve kapı', () => {
@@ -1239,6 +1330,16 @@ test('demo API: Elmas kayıtlardan yazılır, bakiye yetmezse satın alınamaz, 
   await assert.rejects(api.buyItem('zemin:dama'), /zaten sende/);
   assert.equal(balances(await api.listLedger()).crystal, bal + 300 - 350);
   await assert.rejects(api.buyItem('pet:cat'), /satılmıyor/);
+  // Adetli alım: hepsi ya da hiçbiri; tekrar alınamayan eşyadan bir tane
+  const before = balances(await api.listLedger()).crystal;
+  await assert.rejects(api.buyItem('mob:tahta-sandalye', 20), /Bakiye yetmiyor/);
+  assert.equal(balances(await api.listLedger()).crystal, before, 'yetmeyen adetli alımda hiçbir şey alınmaz');
+  const got = await api.buyItem('mob:tahta-sandalye', 3);
+  assert.equal(got.length, 3);
+  assert.equal(balances(await api.listLedger()).crystal, before - 3 * 80);
+  assert.equal((await api.listOwned()).filter((o) => o.item_id === 'mob:tahta-sandalye').length, 3);
+  await assert.rejects(api.buyItem('zemin:mermer', 2), /zaten sende|1–/);
+  await assert.rejects(api.buyItem('mob:tahta-sandalye', 0), /1–/);
   await assert.rejects(api.openChest(PREV, 'mob:masa'), /sandıktan çıkmaz/);
   await api.openChest(PREV, 'dis:halka');
   await assert.rejects(api.openChest(PREV, 'dis:halka'), /zaten açıldı/);
@@ -1278,10 +1379,18 @@ test('ekonomi: son config migration\'ı src/config ile aynı (npm run config:sql
   assert.deepEqual(ITEMS.filter(inChestPool).map((i) => i.id), [...sql.matchAll(/\('([\w:-]+)', '\w+', (?:\d+|null), (?:true|false), true,/g)].map((m) => m[1]));
 });
 
-test('tanıtım: sahneler hedefli ve sırayla; kelime zamanları (tahmin ve ElevenLabs hizalaması)', () => {
+test('tanıtım: sahneler hedefli ve sırayla; kelime zamanları (tahmin ve Gemini sesinin duraklamaları)', () => {
   assert.ok(SCENES.length >= 8);
   assert.equal(new Set(SCENES.map((x) => x.id)).size, SCENES.length);
   for (const sc of SCENES) assert.ok(sc.hash && sc.target && sc.text.split(' ').length > 5, sc.id);
+  // Her hedef kodda bir data-tour olarak var; oda/panel seçimi yalnızca Dünyam'da anlamlı
+  const srcDir = new URL('../', import.meta.url);
+  const tsx = readdirSync(srcDir, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.tsx'));
+  const targets = new Set(tsx.flatMap((f) => [...readFileSync(new URL(f, srcDir), 'utf8').matchAll(/data-tour="([\w-]+)"/g)].map((m) => m[1])));
+  for (const sc of SCENES) {
+    assert.ok(targets.has(sc.target), `${sc.id}: data-tour="${sc.target}" yok`);
+    if (sc.view || sc.dock) assert.equal(sc.hash, 'forest', sc.id);
+  }
   const w = estimateWords('Merhaba! Burası senin dünyan.');
   assert.deepEqual(w.map((x) => x.w), ['Merhaba!', 'Burası', 'senin', 'dünyan.']);
   assert.ok(w.every((x, i) => x.e > x.s && (i === 0 || x.s >= w[i - 1].e)));
@@ -1289,12 +1398,18 @@ test('tanıtım: sahneler hedefli ve sırayla; kelime zamanları (tahmin ve Elev
   assert.equal(wordAt(w, 0), -1);
   assert.equal(wordAt(w, w[2].s + 0.01), 2);
   assert.ok(sceneEnd(w) > w[3].e);
-  const chars = [...'Hadi gel!'];
-  const al = { characters: chars, character_start_times_seconds: chars.map((_, i) => i * 0.1), character_end_times_seconds: chars.map((_, i) => i * 0.1 + 0.08) };
-  assert.deepEqual(wordsFromAlignment(al), [
-    { w: 'Hadi', s: 0, e: 0.38 },
-    { w: 'gel!', s: 0.5, e: 0.88 },
-  ]);
+  // Gemini sesi: duraklamalar noktalamaya eşlenir, kısa sessizlik (kelime içi) sayılmaz
+  const rate = 1000;
+  const pcm = (spans: [number, boolean][]) => Int16Array.from(spans.flatMap(([sec, on]) => Array.from({ length: sec * rate }, (_, i) => (on ? (i % 2 ? 8000 : -8000) : 0))));
+  const audio = pcm([[0.2, false], [0.6, true], [0.4, false], [0.3, true], [0.05, false], [0.45, true], [0.2, false]]);
+  const aw = wordsFromAudio('Hadi gel! Bak burada.', audio, rate);
+  assert.deepEqual(aw.map((x) => x.w), ['Hadi', 'gel!', 'Bak', 'burada.']);
+  assert.deepEqual([aw[0].s, aw[1].e, aw[2].s, aw[3].e], [0.2, 0.8, 1.2, 2]);
+  assert.ok(aw.every((x, i) => x.e > x.s && (i === 0 || x.s >= aw[i - 1].e)));
+  // Döküm kontrolü: kesme işareti / büyük harf farkı geçer, okunan üslup notu geçmez
+  assert.ok(transcriptDiff("Dersini seç ve Başlat'a dokun.", 'dersini seç ve başlata dokun').ok);
+  const bad = transcriptDiff('Günlük ve haftalık görevlerin burada. Haftada beş gün çalışırsan sandığın açılır.', 'Günlük ve haftalık görevlerin burada. Dil: Türkçe. Doğal, canlı bir hız.');
+  assert.ok(!bad.ok && bad.extra.includes('türkçe') && bad.missing.includes('sandığın'));
 });
 
 test('ağaçtan Elmas: güne bağlı kazanç claim.from gününden ağaçta bekler, alınınca yazılır; öncesi kendiliğinden', () => {

@@ -119,7 +119,7 @@ export default function WeekPlan({ courses, goToday, goCourses }: { courses: Cou
         </div>
       )}
 
-      <section className="card week-strip">
+      <section className="card week-strip" data-tour="weekplan">
         <div className="week-days">
           {days.map((d, i) => {
             const tot = dayTotal(d);

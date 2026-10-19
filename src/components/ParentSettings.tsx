@@ -29,7 +29,7 @@ export default function ParentSettings() {
       <h2>Aile kontrolü · günlük rapor</h2>
       <p className="muted small">
         Her gün, çocuk "Bugünü bitirdim"e bastığında ya da en geç seçtiğiniz saatte, günün özeti e-postayla gelir. Özet ve öneri metnini yapay zekâ
-        (Savunma Sanayii Başkanlığı'nın EVREN platformu) yazar. Bunun için o günün kayıtları ve çocuğun "nasıl geçti" notu rapor hazırlanırken EVREN'e
+        (Google Gemini) yazar. Bunun için o günün kayıtları ve çocuğun "nasıl geçti" notu rapor hazırlanırken Google'ın Gemini API'sine
         gönderilir.
       </p>
       <label className="field">

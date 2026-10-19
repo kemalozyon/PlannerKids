@@ -529,7 +529,7 @@ function joinAmbient(invalidate: () => void) {
 }
 /** Kıpırdama anında sonraki kare: en çok ~30 fps (her canlı her karede istese de tek istek) */
 let ambientPending = false;
-function ambientFrame(invalidate: () => void) {
+export function ambientFrame(invalidate: () => void) {
   if (ambientPending) return;
   ambientPending = true;
   setTimeout(() => {

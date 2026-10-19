@@ -9,6 +9,7 @@ import { Hinge } from './motion';
 import { B, C, INK, legs, S, type Piece, type V3 } from './setParts';
 import { MORE_PIECES } from './SetsMore';
 import { NEW_PIECES } from './SetsNew';
+import { PLAY_PIECES } from './SetsPlay';
 
 /** Parçalar: çizim ve üst yüzey yüksekliği (masa üstüne küçük eşya konur) */
 const BASE: Record<string, Piece> = {
@@ -355,19 +356,19 @@ const BASE: Record<string, Piece> = {
   },
 };
 
-const PIECES: Record<string, Piece> = { ...BASE, ...MORE_PIECES, ...NEW_PIECES };
+const PIECES: Record<string, Piece> = { ...BASE, ...MORE_PIECES, ...NEW_PIECES, ...PLAY_PIECES };
 
 /** Setteki parçanın üst yüzey yüksekliği (OnSurface) */
 export const pieceTop = (item: Item): number => PIECES[item.piece ?? '']?.top ?? 0.6;
 
 /** Set parçası; seçili renk (CHANGE_COLOR) ana rengin yerine geçer. Açık lambaların gerçek ışığı WorldScene'deki
  * ışık havuzundan gelir (LightPool) */
-export function SetPiece({ item, on, open = false, color }: { item: Item; on: boolean; open?: boolean; color?: string }) {
+export function SetPiece({ item, on, open = false, color, value, tick }: { item: Item; on: boolean; open?: boolean; color?: string; value?: number; tick?: number }) {
   const piece = PIECES[item.piece ?? ''];
   if (!piece) return null;
   const [w, d] = footSize(item, 0);
   const [a, b, c] = [color ?? item.colors?.[0] ?? '#8fc1e8', item.colors?.[1] ?? '#ffffff', item.colors?.[2] ?? '#5a6b7a'];
-  return <group>{piece.draw({ w, d, a, b, c, on, open })}</group>;
+  return <group>{piece.draw({ w, d, a, b, c, on, open, value, tick })}</group>;
 }
 
 /** Parçanın adı tanımlı mı (testler) */

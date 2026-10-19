@@ -1,12 +1,13 @@
 // Dükkân (Dünyam'ın alttaki panelinde, WorldDock): eşyalar 💎 Elmasla alınır (yalnızca çalışarak kazanılır, tek
 // para). Efsanevi eşyalar yalnızca başarıyla, sandıktan ya da nadir ağaç gününden gelir.
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
+import GemCounter from '../components/GemCounter';
 import ItemCard, { priceText } from '../components/ItemCard';
 import Sheet from '../components/Sheet';
 import { behaviorText, CATEGORIES, companionSlots, groupOf, groupTitle, isNewItem, ITEMS, placeable, RARITY, SUBS, type Category, type Item } from '../lib/catalog';
 import { toLocalDate } from '../lib/date';
 import { lookParts, SLOT_KEY, wear } from '../lib/avatar';
-import { buyCheck, owns, unlockHint, unlockValue } from '../lib/economy';
+import { buyCheck, maxBuy, ownedCount, owns, unlockHint, unlockValue } from '../lib/economy';
 import { useGame } from '../lib/GameContext';
 import { useSession } from '../lib/SessionContext';
 import { sfx } from '../lib/sfx';
@@ -59,7 +60,19 @@ const WHAT: Record<Category, string> = {
  * Dükkân paneli (Habbo kataloğu gibi, Dünyam'ın alttaki panelinde): üstte seçili eşyanın önizlemesi ve satın alma,
  * altta kategori sekmeleri ve eşyaların kendi resimleriyle ızgara. "Hemen yerleştir" eşyayı odada ele verir.
  */
-export default function ShopPanel({ goCollection, onPlace }: { goCollection: () => void; onPlace: (id: string) => void }) {
+export default function ShopPanel({
+  goCollection,
+  onPlace,
+  freeOf,
+  onBought,
+}: {
+  goCollection: () => void;
+  onPlace: (id: string) => void;
+  /** Alındıktan sonra (Dünyam: karakterin üstünde konfeti) */
+  onBought?: (it: Item, qty: number) => void;
+  /** Boşta duran adet (yerleştirilmemiş) */
+  freeOf?: (it: Item) => number;
+}) {
   const { stats, buy, equip, celebrate } = useGame();
   const ses = useSession();
   const [tab, setTab] = useState('mobilya');
@@ -120,7 +133,6 @@ export default function ShopPanel({ goCollection, onPlace }: { goCollection: () 
       </div>
     );
   else {
-    const count = (id: string) => stats.owned.filter((o) => o.item_id === id).length;
     const have = (i: Item) => owns(i, stats.owned, stats.unlock);
     body = (
       <>
@@ -130,10 +142,12 @@ export default function ShopPanel({ goCollection, onPlace }: { goCollection: () 
             item={sel}
             can3D={can3D}
             compact
-            onBuy={async () => {
-              await buy(sel.id);
-              sfx.star();
-              celebrate({ kind: 'badge', icon: sel.icon, title: `${sel.name} senin!`, detail: WHAT[sel.category] });
+            freeOf={freeOf}
+            onBuy={async (qty) => {
+              await buy(sel.id, qty);
+              sfx.buy();
+              onBought?.(sel, qty);
+              celebrate({ kind: 'badge', icon: sel.icon, title: qty > 1 ? `${qty} × ${sel.name} senin!` : `${sel.name} senin!`, detail: WHAT[sel.category] });
             }}
             onEquip={(e) => equip(e)}
             onPlace={placeable(sel) ? () => onPlace(sel.id) : undefined}
@@ -199,7 +213,7 @@ export default function ShopPanel({ goCollection, onPlace }: { goCollection: () 
                       key={i.id}
                       item={i}
                       have={mine}
-                      count={i.repeat ? count(i.id) : 0}
+                      count={i.repeat ? ownedCount(i, stats.owned, stats.unlock) : 0}
                       footer={foot}
                       selected={sel?.id === i.id}
                       badge={fresh(i) ? 'YENİ' : undefined}
@@ -219,7 +233,7 @@ export default function ShopPanel({ goCollection, onPlace }: { goCollection: () 
     <div className="shop-window shop-panel" role="region" aria-label="Dükkân">
       <div className="shop-titlebar">
         <strong className="grow">🛍️ Dükkân</strong>
-        {stats && <span className="wallet-gem small-gem">💎 {stats.crystals}</span>}
+        {stats && <GemCounter className="wallet-gem small-gem" value={stats.crystals} />}
         <button className="link small" onClick={goCollection}>
           📒 Koleksiyon
         </button>
@@ -248,7 +262,7 @@ export function ItemSheet({
   item: Item;
   can3D: boolean;
   onClose: () => void;
-  onBuy?: () => Promise<void>;
+  onBuy?: (qty: number) => Promise<void>;
   onEquip: (e: Equipped) => Promise<void>;
 }) {
   return (
@@ -263,6 +277,7 @@ function ItemDetail({
   item,
   can3D,
   compact,
+  freeOf,
   onBuy,
   onEquip,
   onPlace,
@@ -271,17 +286,28 @@ function ItemDetail({
   can3D: boolean;
   /** Dükkân penceresinin üst paneli: önizleme solda, bilgiler sağda */
   compact?: boolean;
-  onBuy?: () => Promise<void>;
+  freeOf?: (it: Item) => number;
+  onBuy?: (qty: number) => Promise<void>;
   onEquip: (e: Equipped) => Promise<void>;
   onPlace?: () => void;
 }) {
   const { stats } = useGame();
   const [busy, setBusy] = useState(false);
+  const [qty, setQty] = useState(1);
   const [error, setError] = useState<string | null>(null);
   if (!stats) return null;
   const mine = owns(item, stats.owned, stats.unlock);
   const a = item.acquire;
   const reason = a.kind === 'buy' ? buyCheck(item.id, stats.crystals, stats.owned, stats.freezesLeft) : null;
+  // Habbo gibi adetli alım: tekrar alınabilen eşyada − / + ile 1…maxBuy (bakiyeye göre)
+  const most = maxBuy(item, stats.crystals);
+  const n = Math.min(qty, most);
+  const step = (d: number) => {
+    sfx.click();
+    setQty(Math.max(1, Math.min(most, n + d)));
+  };
+  const have = placeable(item) && a.kind !== 'free' ? ownedCount(item, stats.owned, stats.unlock) : 0;
+  const idle = freeOf && have > 0 ? freeOf(item) : null;
   const e = stats.equipped;
   const slots = companionSlots(stats.level.index);
 
@@ -337,8 +363,30 @@ function ItemDetail({
 
       {a.kind === 'buy' && (!mine || item.repeat) && (
         <>
-          <button className="btn primary full big" disabled={!!reason || busy} onClick={() => run(async () => onBuy?.())}>
-            💎 {a.price} ile al
+          {item.repeat && !reason && most > 1 && (
+            <div className="qty" role="group" aria-label="Kaç tane">
+              <button className="hb hb-blue qty-btn" onClick={() => step(-1)} disabled={n <= 1 || busy} aria-label="Bir azalt">
+                −
+              </button>
+              <output className="qty-n" key={n} aria-live="polite">
+                {n}
+              </output>
+              <button className="hb hb-blue qty-btn" onClick={() => step(1)} disabled={n >= most || busy} aria-label="Bir artır">
+                +
+              </button>
+            </div>
+          )}
+          <button
+            className="hb hb-green full big"
+            disabled={!!reason || busy}
+            onClick={() =>
+              run(async () => {
+                await onBuy?.(n);
+                setQty(1);
+              })
+            }
+          >
+            {n > 1 ? `💎 ${a.price * n} ile ${n} tane al` : `💎 ${a.price} ile al`}
           </button>
           {reason && <p className="small center muted">{reason}</p>}
         </>
@@ -349,7 +397,11 @@ function ItemDetail({
           {use.label}
         </button>
       )}
-      {mine && placeable(item) && item.acquire.kind !== 'free' && <p className="small center muted">Sende {stats.owned.filter((o) => o.item_id === item.id).length || 1} tane var.</p>}
+      {have > 0 && (
+        <p className="small center muted">
+          Sende {have} tane var{idle != null && idle < have ? (idle > 0 ? ` · ${idle} tanesi boşta` : ' · hepsi odalarında') : ''}.
+        </p>
+      )}
       {mine && onPlace && (
         <button className="btn full" onClick={onPlace}>
           🏠 Hemen yerleştir

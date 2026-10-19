@@ -96,7 +96,7 @@ function PinGate({
   const creating = !family.pin_hash;
 
   return (
-    <section className="card pin-card">
+    <section className="card pin-card" data-tour="parent">
       <div className="pin-icon" aria-hidden>
         🔒
       </div>
@@ -183,7 +183,7 @@ function WeekSummary() {
   const recentHard = refs.filter((r) => r.date >= addDays(today, -3) && r.rating != null && r.rating <= 2).length;
 
   return (
-    <section className="card">
+    <section className="card" data-tour="parent">
       <div className="card-head">
         <h2>Bu hafta</h2>
         <span className="muted small">

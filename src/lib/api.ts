@@ -15,6 +15,7 @@ import {
   earnedEntries,
   inChestPool,
   inDropPool,
+  MAX_BUY,
   ownedCount,
   pendingEarnings,
   treeElmasOf,
@@ -318,8 +319,14 @@ export function supabaseApi(sb: SupabaseClient): Api {
     async listOwned() {
       return all<OwnedItem>((a, b) => sb.from('owned_items').select('id,item_id,via,ref,created_at').order('created_at').order('id').range(a, b));
     },
-    async buyItem(itemId) {
-      return check(await sb.from('owned_items').insert({ item_id: itemId, via: 'buy' }).select('id,item_id,via,ref,created_at').single()) as OwnedItem;
+    async buyItem(itemId, qty = 1) {
+      if (qty === 1) return [check(await sb.from('owned_items').insert({ item_id: itemId, via: 'buy' }).select('id,item_id,via,ref,created_at').single()) as OwnedItem];
+      // Adetli alım tek işlemde (0037_shop.sql): bakiye yetmezse hiçbiri yazılmaz
+      check(await sb.rpc('buy_items', { p_item: itemId, p_qty: qty }));
+      const rows = check(
+        await sb.from('owned_items').select('id,item_id,via,ref,created_at').eq('item_id', itemId).eq('via', 'buy').order('created_at', { ascending: false }).limit(qty),
+      ) as OwnedItem[];
+      return rows.reverse();
     },
     async openChest(week, itemId) {
       return check(
@@ -393,7 +400,7 @@ interface DemoDb {
   rooms?: UserRoom[];
 }
 
-export const DEMO_KEY = 'ct-demo-db-v17';
+export const DEMO_KEY = 'ct-demo-db-v18';
 
 /** Demo: kayıtların hak ettirdiği kazançlar (sunucudaki economy_entries) */
 function earnedOf(db: DemoDb) {
@@ -812,21 +819,25 @@ export function localApi(seed: () => DemoDb): Api {
     async listOwned() {
       return (load().owned ?? []).map((o) => ({ ...o }));
     },
-    async buyItem(itemId) {
+    async buyItem(itemId, qty = 1) {
       const db = load();
       db.owned ??= [];
       db.ledger ??= [];
       const item = itemById(itemId);
       if (!item || item.acquire.kind !== 'buy') throw new Error('Bu eşya satılmıyor');
-      if (!item.repeat && db.owned.some((o) => o.item_id === itemId)) throw new Error('Bu eşya zaten sende');
-      const { price } = item.acquire;
+      if (!(Number.isInteger(qty) && qty >= 1 && qty <= MAX_BUY)) throw new Error(`Bir seferde 1–${MAX_BUY} tane alınabilir`);
+      if (!item.repeat && (qty > 1 || db.owned.some((o) => o.item_id === itemId))) throw new Error('Bu eşya zaten sende');
+      const price = item.acquire.price * qty;
       const bal = balances(db.ledger).crystal;
       if (bal < price) throw new Error(`Bakiye yetmiyor: ${price} lazım, ${bal} var`);
-      const row: OwnedItem = { id: uid(), item_id: itemId, via: 'buy', ref: null, created_at: now() };
-      db.owned.push(row);
-      db.ledger.push({ id: uid(), currency: 'crystal', kind: 'buy', ref: row.id, amount: -price, note: itemId, created_at: now() });
+      // Sunucudaki gibi her tane ayrı satır ve ayrı defter kaydı
+      const rows = Array.from({ length: qty }, (): OwnedItem => ({ id: uid(), item_id: itemId, via: 'buy', ref: null, created_at: now() }));
+      for (const row of rows) {
+        db.owned.push(row);
+        db.ledger.push({ id: uid(), currency: 'crystal', kind: 'buy', ref: row.id, amount: -item.acquire.price, note: itemId, created_at: now() });
+      }
       save();
-      return { ...row };
+      return rows.map((r) => ({ ...r }));
     },
     async openChest(week, itemId) {
       const db = load();

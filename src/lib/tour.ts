@@ -1,13 +1,15 @@
-// Tanıtım turu: sahneler src/demo/script.json'da. Sesli modda kelime zamanları public/demo/<sahne>.json'dan
-// (ElevenLabs, scripts/gen-demo-audio.mjs), yazılı modda (ya da ses dosyası yoksa) okuma hızından tahmin edilir.
+// Tanıtım turu: sahneler src/demo/script.json'da. Sesli modda kelime zamanları src/demo/audio/<sahne>.json'dan
+// (Gemini TTS, scripts/gen-demo-audio.mjs; src/demo/audio.ts), yazılı modda (ya da ses yoksa) okuma hızından tahmin edilir.
 import script from '../demo/script.json' with { type: 'json' };
 
 export interface Scene {
   id: string;
   /** Açılacak sayfa (#today, #forest…) */
   hash: string;
-  /** Dünyam'da oda mı dış mekân mı */
-  view?: 'room' | 'outdoor';
+  /** Dünyam'da açılacak oda (terrace: ilk teras; teras yoksa oda) */
+  view?: 'room' | 'library' | 'terrace';
+  /** Dünyam'ın alt panelinde açılacak sekme (me: karakterin paneli); yoksa panel kapanır */
+  dock?: 'inv' | 'shop' | 'room' | 'me';
   /** Öne çıkarılacak öge: [data-tour="…"] */
   target: string;
   title: string;
@@ -28,8 +30,10 @@ export type TourMode = 'audio' | 'text';
 export const TOUR_KEY = 'ct-tour-v1';
 /** Turu başlat: window.dispatchEvent(new CustomEvent(TOUR_EVENT, { detail: 'audio' | 'text' })) */
 export const TOUR_EVENT = 'ct-tour';
-/** Dünyam'da oda/dış mekân değiştir */
+/** Dünyam'da oda değiştir (detail: Scene['view']) */
 export const VIEW_EVENT = 'ct-world-view';
+/** Dünyam'ın alt panelinde sekme aç/kapat (detail: Scene['dock'] | null) */
+export const DOCK_EVENT = 'ct-world-dock';
 
 export const startTour = (mode: TourMode) => window.dispatchEvent(new CustomEvent(TOUR_EVENT, { detail: mode }));
 

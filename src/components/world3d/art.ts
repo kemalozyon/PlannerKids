@@ -412,6 +412,24 @@ export function clockTexture(): CanvasTexture {
 
 // ---------- Kaplama desenleri ----------
 /** Zemin/duvar dokusu: bir karo (zemin) ya da bir karo genişliğinde duvar şeridi için */
+/** Habbo'nun karo ızgarası: her karonun üst/sol kenarında ince açık, alt/sağ kenarında ince koyu çizgi (saydam; zeminin üstüne) */
+export function gridTexture(): CanvasTexture {
+  return texture(
+    'grid',
+    64,
+    64,
+    (g, w, h) => {
+      g.fillStyle = 'rgba(255, 255, 255, 0.42)';
+      g.fillRect(0, 0, w, 2);
+      g.fillRect(0, 0, 2, h);
+      g.fillStyle = 'rgba(0, 0, 0, 0.16)';
+      g.fillRect(0, h - 2, w, 2);
+      g.fillRect(w - 2, 0, 2, h);
+    },
+    true,
+  );
+}
+
 export function patternTexture(pattern: string | undefined, c1: string, c2: string, kind: 'floor' | 'wall'): CanvasTexture {
   const S = 128;
   return texture(`pat:${kind}:${pattern ?? 'checker'}:${c1}:${c2}`, S, kind === 'wall' ? S * 2 : S, (g, w, h) => {

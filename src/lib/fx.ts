@@ -2,9 +2,10 @@
 import type { Item } from './catalog';
 import { footSize, type PlacedItem } from './world';
 
-/** Dünya koordinatında kısa efekt: "puf" (eşya kaldırıldı), "pırıltı" (eşya kondu) */
+/** Dünya koordinatında kısa efekt: "puf" (eşya kaldırıldı), "pırıltı" (eşya kondu), konfeti (alım), su sıçraması,
+ *  ışınlanma sütunu */
 export interface FxEvent {
-  kind: 'puff' | 'sparkle';
+  kind: 'puff' | 'sparkle' | 'confetti' | 'splash' | 'beam';
   x: number;
   z: number;
   /** Ayak izi (karo) */

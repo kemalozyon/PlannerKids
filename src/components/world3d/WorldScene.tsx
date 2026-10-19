@@ -40,6 +40,8 @@ export interface WorldSceneProps {
   phase: DayPhase;
   /** TV kanalları (powerKey → kanal); aç-kapa durumu yerleşimde */
   channels: Record<string, number>;
+  /** Zarların son atışı (powerKey → değer ve atış sayacı; sayaç değişince zar yuvarlanır) */
+  dice?: Record<string, { v: number; n: number }>;
   tv: TvData | null;
   /** Mantar panodaki notlar (NOTES eşyasında görünür) */
   board?: BoardCard[];
@@ -216,10 +218,11 @@ function Items({
   caseBooks,
   reach,
   channels,
+  dice,
   tv,
   board,
   posed,
-}: Pick<WorldSceneProps, 'selected' | 'hidden' | 'onItem' | 'channels' | 'tv' | 'board' | 'posed'> & {
+}: Pick<WorldSceneProps, 'selected' | 'hidden' | 'onItem' | 'channels' | 'dice' | 'tv' | 'board' | 'posed'> & {
   space: SpaceId;
   layout: SpaceLayout;
   caseBooks?: Map<number, Book[]>;
@@ -250,7 +253,8 @@ function Items({
         const supportItem = support != null ? itemById(layout.items[support].item) : undefined;
         const k = powerKey(space, it);
         const on = has(item, 'MUSIC') ? playing === k : isOn(item, it);
-        const appear = fresh.has(sigOf(it));
+        // Yuvarlanan top yeni konmuş sayılmaz (kayarak gider, düşmez)
+        const appear = fresh.has(sigOf(it)) && !has(item, 'KICK');
         const model = (
           <ItemModel
             item={item}
@@ -263,6 +267,8 @@ function Items({
             on={on}
             open={isOpen(item, it)}
             color={colorOf(item, it)}
+            value={dice?.[k]?.v}
+            tick={dice?.[k]?.n}
             appear={appear}
             screen={item.fx === 'tv' && on && tv ? tvTexture(channels[k] ?? 0, tv) : has(item, 'NOTES') && board ? boardTexture(board, item.w ?? 1) : null}
             active={!!posed && posed.space === space && posed.index === i}

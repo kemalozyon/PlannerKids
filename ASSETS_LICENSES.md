@@ -21,8 +21,8 @@ tabloya ekle. CC0 olmayan bir model eklenecekse lisansını ve atıf metnini bur
 ## Sesler ve tanıtım
 
 - Uygulama sesleri (`src/lib/sfx.ts`) ve odak modundaki yağmur sesi WebAudio ile kodda üretilir; dosya yok.
-- Tanıtım turunun sesleri (`public/demo/*.mp3`) ElevenLabs ile `scripts/gen-demo-audio.mjs` tarafından üretilir.
-  ElevenLabs kullanım koşullarına göre üretilen ses, hesabın planına göre ticari kullanıma açıktır; anahtar `.env`'de
+- Tanıtım turunun sesleri (`public/demo/*.mp3`) Google Gemini TTS ile `scripts/gen-demo-audio.mjs` tarafından üretilir
+  (Gemini API kullanım koşulları geçerlidir); anahtar `.env`'de
   durur, ön yüze girmez.
 - Kitap kapakları çalışma anında Open Library'den gelir (https://openlibrary.org, kapaklar
   https://covers.openlibrary.org); depoda saklanmaz.

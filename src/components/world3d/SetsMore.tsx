@@ -6,8 +6,10 @@
 // "istek üzerine" çizilmeye devam eder.
 import { useFrame, useThree } from '@react-three/fiber';
 import { useRef, type ReactNode } from 'react';
-import { Color, type Group, type Mesh, type MeshStandardMaterial } from 'three';
+import { AdditiveBlending, Color, Vector3, type Group, type Mesh, type MeshBasicMaterial, type MeshStandardMaterial } from 'three';
+import { avatarSpot } from './avatarSpot';
 import { damp, Hinge } from './motion';
+import { rng } from '../../lib/rng';
 import { B, C, legs, S, type Piece } from './setParts';
 
 /**
@@ -49,21 +51,34 @@ export function Bob({ on, amp = 0.05, freq = 2, phase = 0, children }: { on: boo
 
 const tmpA = new Color();
 const tmpB = new Color();
-/** Açıkken rengi sırayla, yumuşak geçişle değişen parlak kutu (dans pisti, arcade ekranı) */
-function Cycle({ on, colors, p, s, phase = 0, speed = 2 }: { on: boolean; colors: string[]; p: [number, number, number]; s: [number, number, number]; phase?: number; speed?: number }) {
+const WHITE = new Color('#ffffff');
+const here = new Vector3();
+/**
+ * Açıkken rengi sırayla, yumuşak geçişle değişen parlak kutu (dans pisti, arcade ekranı). `step`: karakter üstüne
+ * basınca bembeyaz parlar (dans pisti, Habbo gibi).
+ */
+function Cycle({ on, colors, p, s, phase = 0, speed = 2, step = false }: { on: boolean; colors: string[]; p: [number, number, number]; s: [number, number, number]; phase?: number; speed?: number; step?: boolean }) {
   const m = useRef<MeshStandardMaterial>(null);
+  const mesh = useRef<Mesh>(null);
+  const lit = useRef(0);
   useTick(on, (t, k) => {
     const x = t * speed + phase;
     const i = Math.floor(x);
     // Her rengin çoğu süre durur, sonra hızlıca sonrakine akar
     const f = Math.min(1, Math.max(0, (x - i - 0.7) / 0.3));
     tmpA.set(colors[i % colors.length]).lerp(tmpB.set(colors[(i + 1) % colors.length]), f * f * (3 - 2 * f));
+    if (step && mesh.current) {
+      mesh.current.getWorldPosition(here);
+      const under = Math.abs(here.x - avatarSpot.x) < s[0] / 2 + 0.05 && Math.abs(here.z - avatarSpot.z) < s[2] / 2 + 0.05;
+      lit.current += ((under ? 1 : 0) - lit.current) * 0.25;
+      tmpA.lerp(WHITE, lit.current * 0.85);
+    }
     m.current?.color.copy(tmpA);
     m.current?.emissive.copy(tmpA);
-    if (m.current) m.current.emissiveIntensity = 0.7 * k;
+    if (m.current) m.current.emissiveIntensity = (0.7 + lit.current * 0.6) * k;
   });
   return (
-    <mesh position={p}>
+    <mesh ref={mesh} position={p}>
       <boxGeometry args={s} />
       <meshStandardMaterial ref={m} color={colors[phase % colors.length]} emissive={colors[phase % colors.length]} emissiveIntensity={on ? 0.7 : 0} />
     </mesh>
@@ -83,6 +98,38 @@ function Roll({ on, w, d, c }: { on: boolean; w: number; d: number; c: string })
 }
 
 const NEON = ['#ff4fa3', '#4fd8ff', '#b6ff4f', '#ffd84f', '#b07cff'];
+
+// Disko topunun yere düşen renkli ışık benekleri (gerçek ışık değil: ışık havuzu 4 lambayla sınırlı)
+const SPOTS = (() => {
+  const r = rng('disko');
+  return Array.from({ length: 12 }, (_, i) => {
+    const a = r() * Math.PI * 2;
+    const d = 0.5 + r() * 1.4;
+    return { x: Math.cos(a) * d, z: Math.sin(a) * d, r: 0.1 + r() * 0.1, c: NEON[i % NEON.length] };
+  });
+})();
+/** Açıkken top dönerken yerde dönen ışık benekleri; kapanınca söner */
+function DiscoSpots({ on }: { on: boolean }) {
+  const g = useRef<Group>(null);
+  const mats = useRef<(MeshBasicMaterial | null)[]>([]);
+  useTick(on, (t, k) => {
+    if (g.current) {
+      g.current.rotation.y = t * 1.4;
+      g.current.visible = k > 0.01;
+    }
+    mats.current.forEach((m, i) => m && (m.opacity = k * (0.45 + 0.25 * Math.sin(t * 3 + i))));
+  });
+  return (
+    <group ref={g} position-y={0.035} visible={on}>
+      {SPOTS.map((p, i) => (
+        <mesh key={i} position={[p.x, 0, p.z]} rotation-x={-Math.PI / 2}>
+          <circleGeometry args={[p.r, 14]} />
+          <meshBasicMaterial ref={(m) => void (mats.current[i] = m)} color={p.c} transparent opacity={0} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
 
 export const MORE_PIECES: Record<string, Piece> = {
   // ---------- Oturma ve yatak ----------
@@ -319,6 +366,7 @@ export const MORE_PIECES: Record<string, Piece> = {
             <meshStandardMaterial color="#e8eef2" metalness={0.9} roughness={0.15} flatShading emissive={on ? a : '#000000'} emissiveIntensity={on ? 0.35 : 0} />
           </mesh>
         </Spin>
+        <DiscoSpots on={on} />
       </>
     ),
   },
@@ -451,7 +499,7 @@ export const MORE_PIECES: Record<string, Piece> = {
       <>
         <B p={[0, 0.02, 0]} s={[0.98, 0.04, 0.98]} c="#2b2622" line={false} />
         {[0, 1, 2, 3].map((i) => (
-          <Cycle key={i} on={on} colors={NEON} phase={i} p={[(i % 2) * 0.48 - 0.24, 0.045, Math.floor(i / 2) * 0.48 - 0.24]} s={[0.44, 0.02, 0.44]} />
+          <Cycle key={i} on={on} colors={NEON} phase={i} step p={[(i % 2) * 0.48 - 0.24, 0.045, Math.floor(i / 2) * 0.48 - 0.24]} s={[0.44, 0.02, 0.44]} />
         ))}
       </>
     ),

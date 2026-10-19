@@ -3,6 +3,9 @@
 // kare ister. Karo değişince haber verir (bulunduğu alan, kamera, kayıtlı konum).
 // Poz (otur, yat, sallan): karakter eşyanın üstüne geçer; yatarken gövde yatar, salıncakta sarkaç gibi sallanır.
 // Hareket (karakter menüsü: dans, el salla) dururken oynar; yürümeye başlayınca biter.
+// Havuz (SWIM karoları): suya girince karakter yarıya kadar batar ve yüzer (zemin dilimi gövdenin altını saklar).
+// Atlama tahtası (hop): yay çizerek suya atlar. Işınlayıcı (beam): küçülerek kaybolur, öbüründe büyüyerek belirir.
+// Yürüyen bant (carried): karakter yürümeden taşınır.
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { useRef, type MutableRefObject } from 'react';
 import { Euler, Vector3, type Group } from 'three';
@@ -13,6 +16,9 @@ import { isTap } from './light';
 import { Blob } from './Blob';
 import { angleDiff, dampAngle, easeInOut } from './motion';
 import { swingAngle, SWING_ROPE } from './Proc';
+import { avatarSpot } from './avatarSpot';
+import { ambientFrame } from './Outdoor';
+import { reducedMotion } from './motion';
 
 /** Karakterin yeri (dünya koordinatı, karo merkezleri) ve kalan yolu */
 export interface Walker {
@@ -28,7 +34,17 @@ export interface Walker {
   pose?: { kind: Pose; x: number; z: number; y: number; face: number; back: { x: number; z: number } } | null;
   /** Dururken oynayan hareket; `until` (saat, sn) gelince biter, yoksa durdurulana kadar sürer */
   emote?: { kind: 'dance' | 'wave'; until?: number } | null;
+  /** Atlama (tahtadan suya): from → to yay çizer, bitince done */
+  hop?: { from: { x: number; z: number }; to: { x: number; z: number }; dur: number; t0?: number; done?: () => void } | null;
+  /** Işınlanma: out = küçülüp kaybolur (bitince done), in = büyüyerek belirir */
+  beam?: { phase: 'out' | 'in'; t0?: number; done?: () => void } | null;
+  /** Yürüyen bant taşıyor: yürüme adımı yok */
+  carried?: boolean;
 }
+
+const BEAM_S = 0.4;
+/** Suda batma derinliği */
+const SINK = 0.5;
 
 /** Pozu çizer (dünya görünümü ve gezinti): dış grup eşyanın üstünde, iç grup yatarken yatar, salıncakta sallanır */
 export function applyPose(g: Group, n: Group, P: { kind: Pose; x: number; z: number; y: number; face: number }, time: number) {
@@ -98,6 +114,9 @@ export default function Avatar({
   onTile,
   holding,
   onTap,
+  water,
+  onWater,
+  onStop,
 }: {
   look: AvatarLook;
   walker: MutableRefObject<Walker>;
@@ -105,6 +124,12 @@ export default function Avatar({
   holding?: string | null;
   /** Karaktere dokunuldu (karakter menüsü) */
   onTap?: () => void;
+  /** Bu dünya karosu su mu (havuz) */
+  water?: (x: number, z: number) => boolean;
+  /** Suya girdi / çıktı */
+  onWater?: (on: boolean) => void;
+  /** Yürüyüş bitti, karakter durdu (yürüyen bant) */
+  onStop?: (x: number, z: number) => void;
 }) {
   const tile = useRef('');
   const group = useRef<Group>(null);
@@ -115,6 +140,9 @@ export default function Avatar({
   const vel = useRef(0);
   const blend = useRef(newBlend());
   const shadow = useRef<Group>(null);
+  const sink = useRef(0);
+  const wet = useRef(false);
+  const wasMoving = useRef(false);
 
   useFrame(({ clock }, rawDt) => {
     const g = group.current;
@@ -123,20 +151,68 @@ export default function Avatar({
     const dt = Math.min(rawDt, 0.05);
     const w = walker.current;
     const P = w.pose;
+    const now = clock.elapsedTime;
     if (P && !w.path.length) {
+      n.scale.set(1, 1, 1);
+      sink.current = 0;
       blendStart(blend.current, `${P.kind}:${P.x},${P.z}`, g, n);
       anim.current.state = P.kind;
       applyPose(g, n, P, clock.elapsedTime);
       if (blendApply(blend.current, g, n, dt) || P.kind === 'swing') invalidate();
       shadow.current?.position.set(g.position.x, 0, g.position.z);
+      avatarSpot.x = g.position.x;
+      avatarSpot.z = g.position.z;
+      avatarSpot.y = g.position.y;
+      avatarSpot.head = P.kind === 'lie' ? 0.75 : 1.75;
       vel.current = 0;
       return;
     }
     blendStart(blend.current, '', g, n);
     n.position.set(0, 0, 0);
     n.rotation.set(0, 0, 0);
-    const next = w.path[0];
-    if (next) w.emote = null;
+    // Işınlanma: küçülüp kaybol / büyüyerek belir
+    const B = w.beam;
+    let grow = 1;
+    if (B) {
+      B.t0 ??= now;
+      const k = Math.min(1, (now - B.t0) / (reducedMotion() ? 0.01 : BEAM_S));
+      grow = B.phase === 'out' ? 1 - k : k;
+      if (k >= 1) {
+        w.beam = null;
+        B.done?.();
+      }
+      invalidate();
+    }
+    n.scale.set(0.4 + grow * 0.6, Math.max(0.001, grow), 0.4 + grow * 0.6);
+    const H = w.hop;
+    const next = H ? null : w.path[0];
+    if (next || H) w.emote = null;
+    const swimming = !!water?.(Math.floor(w.x), Math.floor(w.z)) && !H;
+    if (swimming !== wet.current) {
+      wet.current = swimming;
+      onWater?.(swimming);
+    }
+    if (H) {
+      // Tahtadan suya: yay çiz, sonunda suya dal
+      H.t0 ??= now;
+      const k = Math.min(1, (now - H.t0) / H.dur);
+      w.x = H.from.x + (H.to.x - H.from.x) * k;
+      w.z = H.from.z + (H.to.z - H.from.z) * k;
+      w.face = Math.atan2(H.to.x - H.from.x, H.to.z - H.from.z);
+      anim.current.state = k < 0.5 ? 'jump' : 'fall';
+      g.position.set(w.x, 0.3 + Math.sin(k * Math.PI) * 1.1 - k * 0.6, w.z);
+      g.rotation.y = w.face;
+      if (k >= 1) {
+        w.hop = null;
+        H.done?.();
+      }
+      invalidate();
+      shadow.current?.position.set(w.x, 0, w.z);
+      avatarSpot.x = w.x;
+      avatarSpot.z = w.z;
+      avatarSpot.y = g.position.y;
+      return;
+    }
     if (next) {
       const dx = next.x - w.x;
       const dz = next.z - w.z;
@@ -157,27 +233,46 @@ export default function Avatar({
         w.z += (dz / d) * step;
       }
       if (d > 0.01) w.face = dampAngle(w.face, Math.atan2(dx, dz), 12, dt);
-      anim.current.state = v >= RUN_FROM ? 'run' : 'walk';
+      anim.current.state = swimming ? 'swim' : w.carried ? 'idle' : v >= RUN_FROM ? 'run' : 'walk';
       anim.current.speed = v;
+      wasMoving.current = true;
       invalidate();
     } else {
+      w.carried = false;
       vel.current = 0;
       anim.current.speed = undefined;
       const E = w.emote;
       if (E && E.until == null) E.until = E.kind === 'wave' ? clock.elapsedTime + 2.5 : undefined;
       if (E && E.until != null && clock.elapsedTime > E.until) w.emote = null;
-      anim.current.state = w.emote?.kind ?? 'idle';
+      anim.current.state = swimming ? 'swim' : (w.emote?.kind ?? 'idle');
       if (w.emote) invalidate();
+      // Suda dururken de kulaç atar (en çok ~30 fps; azaltılmış harekette durur)
+      if (swimming && !reducedMotion()) ambientFrame(invalidate);
       if (w.onArrive) {
         const f = w.onArrive;
         w.onArrive = null;
         f();
       }
+      if (wasMoving.current && !w.path.length && !w.hop) {
+        wasMoving.current = false;
+        onStop?.(Math.floor(w.x), Math.floor(w.z));
+      }
     }
-    g.position.set(w.x, 0.02, w.z);
+    // Suya girince yavaşça batar, çıkınca kalkar
+    const to = swimming ? SINK : 0;
+    if (Math.abs(sink.current - to) > 0.001) {
+      sink.current += (to - sink.current) * (1 - Math.exp(-dt * 10));
+      invalidate();
+    }
+    g.position.set(w.x, 0.02 - sink.current, w.z);
     g.rotation.y = w.face;
     if (blendApply(blend.current, g, n, dt)) invalidate();
     shadow.current?.position.set(g.position.x, 0, g.position.z);
+    if (shadow.current) shadow.current.visible = sink.current < 0.15 && grow > 0.5;
+    avatarSpot.x = w.x;
+    avatarSpot.z = w.z;
+    avatarSpot.y = g.position.y;
+    avatarSpot.head = 1.75 * Math.max(0.2, grow);
     const tx = Math.floor(w.x);
     const tz = Math.floor(w.z);
     if (onTile && tile.current !== `${tx},${tz}`) {
