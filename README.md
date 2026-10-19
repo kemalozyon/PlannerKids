@@ -11,7 +11,9 @@ npm run dev
 ```
 
 `.env` yoksa uygulama **demo modunda** açılır: veriler localStorage'da tutulur, örnek veri yüklenir.
-Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`. İlk açılışta "Demoyu başlat 🔊" ile
+Tek dosyalık demo derlemesi: `npm run build:demo` → `dist-demo/index.html`. Railway'de demo yayını
+`railway.json` ile yapılır (Railpack, build komutu `npm run build:demo`; Railpack çıktı klasörünü `vite.config.ts`'teki
+`outDir`'den `dist-demo` olarak bulur ve Caddy ile sunar). İlk açılışta "Demoyu başlat 🔊" ile
 5 dakikalık, 28 sahnelik sesli/yazılı bir tanıtım turu başlar (Profil → Tanıtımı izle ile yeniden açılır). Sesler
 derlemeye gömülür; tek dosyalık demo `file://` ile açılınca da sesli oynar.
 
