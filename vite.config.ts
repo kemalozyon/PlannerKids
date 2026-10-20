@@ -10,7 +10,9 @@ const DEMO_OUT = 'dist-demo'
 
 export default defineConfig(({ mode }) => ({
   plugins: mode === 'demo' ? [react(), viteSingleFile()] : [react()],
-  build: mode === 'demo' ? { outDir: DEMO_OUT } : undefined,
+  // Normal derlemede küçük .glb'ler de JS'e gömülmez: 3D parçası küçülür, yalnızca odada kullanılan modeller iner.
+  // Demo tek dosya kalmalı (vite-plugin-singlefile her şeyi gömer).
+  build: mode === 'demo' ? { outDir: DEMO_OUT } : { assetsInlineLimit: (file: string) => (file.endsWith('.glb') ? false : undefined) },
   define:
     mode === 'demo'
       ? { 'import.meta.env.VITE_SUPABASE_URL': '""', 'import.meta.env.VITE_SUPABASE_ANON_KEY': '""' }

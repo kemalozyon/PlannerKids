@@ -27,6 +27,7 @@ import { hasWebGL } from './lib/webgl';
 import { TOUR_EVENT, type TourMode } from './lib/tour';
 import { openShop, SHOP_EVENT } from './lib/shop';
 import { STUDIO_EVENT, studioWanted } from './lib/thumbs';
+import { prefetch3dWhenIdle, prefetchGarden, prefetchWorld } from './lib/prefetch3d';
 
 const Tour = lazy(() => import('./components/Tour'));
 const ThumbStudio = lazy(() => import('./components/ThumbStudio'));
@@ -158,7 +159,16 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
   const reloadCourses = useCallback(() => {
     api.listCourses().then(setCourses);
   }, [api]);
-  useEffect(reloadCourses, [reloadCourses]);
+  // Açılış ekranı yalnızca dersleri bekler: istek render sırasında çıkar, oyun/okuma sağlayıcılarının 16 isteğinin
+  // (alt bileşenlerin effect'leri önce çalışır) arkasında kuyruğa girmesin
+  const [firstCourses] = useState(() => api.listCourses());
+  useEffect(() => {
+    let alive = true;
+    firstCourses.then((c) => alive && setCourses(c));
+    return () => {
+      alive = false;
+    };
+  }, [firstCourses]);
 
   const active: MainTab = isSub(tab) ? SUB[tab].parent : tab;
 
@@ -242,13 +252,21 @@ function Shell({ api, demo, email, onSignOut }: { api: Api; demo?: boolean; emai
         </main>
         <nav className="bottom-nav" aria-label="Ana menü" data-tour="nav">
           {TABS.map((t) => (
-            <button key={t.id} className={active === t.id ? 'on' : ''} aria-current={active === t.id ? 'page' : undefined} onClick={() => go(t.id)}>
+            <button
+              key={t.id}
+              className={active === t.id ? 'on' : ''}
+              aria-current={active === t.id ? 'page' : undefined}
+              onPointerEnter={warm(t.id)}
+              onPointerDown={warm(t.id)}
+              onClick={() => go(t.id)}
+            >
               <span className="bn-icon">{t.icon()}</span>
               {t.label}
             </button>
           ))}
         </nav>
         <Celebrations />
+        <Warm3D />
         <IdlePrompt />
         {studio && (
           <Suspense fallback={null}>
@@ -380,4 +398,14 @@ function TopBar({
       )}
     </header>
   );
+}
+
+/** Alt menüde Dünyam/Bahçem düğmesine gelinince ya da dokununca 3D parçası hemen inmeye başlar */
+const warm = (t: MainTab) => (t === 'forest' ? prefetchWorld : t === 'garden' ? prefetchGarden : undefined);
+
+/** Oyun durumu gelince (açılış bitti) tarayıcı boşalınca Dünyam ve Bahçem'in 3D parçalarını önceden indirir */
+function Warm3D() {
+  const ready = !!useGame().stats;
+  useEffect(() => (ready ? prefetch3dWhenIdle() : undefined), [ready]);
+  return null;
 }

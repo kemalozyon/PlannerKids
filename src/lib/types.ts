@@ -155,6 +155,8 @@ export interface Api {
   openDrop(date: string, itemId: string): Promise<OwnedItem>;
   /** Ağaçlarda bekleyen Elmas (güne bağlı kazançlar, elmas.claim.from'dan beri; sunucuda economy_pending) */
   listTreeElmas(): Promise<TreeElmas[]>;
+  /** syncEconomy + listTreeElmas tek çağrıda (sunucuda economy_refresh: kazançlar bir kez hesaplanır) */
+  refreshEconomy(): Promise<TreeElmas[]>;
   /** Bir günün ağacındaki Elması al: deftere yazılır (claim_day); alınan tutar */
   claimDay(date: string): Promise<number>;
   getEquipped(): Promise<Equipped | null>;

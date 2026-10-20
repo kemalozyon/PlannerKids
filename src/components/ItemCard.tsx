@@ -1,10 +1,30 @@
+import { useEffect, useState } from 'react';
 import { RARITY, type Item } from '../lib/catalog';
 import { useThumb } from '../lib/thumbs';
 
-/** Eşyanın kendi resmi (ThumbStudio çizer); hazır olana ya da çizilemiyorsa emoji */
+/** Öge ekrana (ya da yakınına) bir kez girdi mi; IntersectionObserver yoksa hemen evet */
+function useSeen(el: Element | null): boolean {
+  const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    if (seen || !el) return;
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setSeen(true), { rootMargin: '200px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [el, seen]);
+  return seen;
+}
+
+/** Eşyanın kendi resmi (ThumbStudio çizer); hazır olana ya da çizilemiyorsa emoji. Ekrana girmeden çizim istemez. */
 export function ItemIcon({ item, className = '' }: { item: Item; className?: string }) {
-  const src = useThumb(item);
-  return src ? <img className={`item-thumb ${className}`} src={src} alt="" draggable={false} /> : <span className={`item-emoji ${className}`}>{item.icon}</span>;
+  const [el, setEl] = useState<Element | null>(null);
+  const src = useThumb(item, useSeen(el));
+  return src ? (
+    <img ref={setEl} className={`item-thumb ${className}`} src={src} alt="" draggable={false} />
+  ) : (
+    <span ref={setEl} className={`item-emoji ${className}`}>
+      {item.icon}
+    </span>
+  );
 }
 
 /** Dükkân ve koleksiyon kartı: simge, ad, nadirlik şeridi; altta fiyat, "sende" ya da nasıl açılacağı. */

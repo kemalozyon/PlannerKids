@@ -76,8 +76,7 @@ export default function Today({ courses, goCourses, goProfile, goForest, goGarde
 
   // Veri değişince hem listeyi hem oyun durumunu yenile (kutlamalar buradan tetiklenir)
   const changed = useCallback(async () => {
-    await reload();
-    await game.refresh();
+    await Promise.all([reload(), game.refresh()]);
   }, [reload, game]);
 
   const byId = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);

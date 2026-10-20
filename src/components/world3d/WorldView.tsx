@@ -16,7 +16,7 @@
 // (drei <Html> yok): AvatarAnchor her karede başın ekrandaki yerini `anchor` kutusuna yazar.
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { MOUSE, TOUCH, Vector3 } from 'three';
 import type { OrbitControls as OrbitImpl } from 'three-stdlib';
 import type { AvatarLook } from '../../lib/avatar';
@@ -58,11 +58,13 @@ import { footCenter, FootTiles, GridLines, HoverTile, ItemModel, OnSurface, surf
 import { avatarSpot } from './avatarSpot';
 import type { Quality } from '../../lib/gfx';
 import Atmosphere, { shadowsFor } from './Atmosphere';
-import Effects from './Effects';
 import { QualityContext } from './gfx';
 import { isTap } from './light';
 import { WALL_H } from './Room';
 import WorldScene from './WorldScene';
+
+// Son işlem (~100 KB gzip) yalnızca yüksek grafikte gerekir: düşük/orta açılışta indirilmez
+const Effects = lazy(() => import('./Effects'));
 
 /** Kameranın yönü: güneydoğudan (arka duvarlar kuzey ve batı) */
 const AZ = Math.PI / 4;
@@ -163,7 +165,11 @@ export default function WorldView(props: WorldViewProps) {
           <Scene key={props.plan.regions[0].id} {...props} />
         </Suspense>
       </QualityContext.Provider>
-      {props.quality === 'yuksek' && <Effects night={props.phase === 'gece' || props.phase === 'aksam'} />}
+      {props.quality === 'yuksek' && (
+        <Suspense fallback={null}>
+          <Effects night={props.phase === 'gece' || props.phase === 'aksam'} />
+        </Suspense>
+      )}
     </Canvas>
   );
 }

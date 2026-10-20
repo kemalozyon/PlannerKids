@@ -342,6 +342,16 @@ export function supabaseApi(sb: SupabaseClient): Api {
       const rows = check(await sb.rpc('economy_pending')) as { d: string; amount: number }[] | null;
       return (rows ?? []).map((r) => ({ date: r.d, amount: r.amount }));
     },
+    async refreshEconomy() {
+      const res = await sb.rpc('economy_refresh');
+      // 0039 çalıştırılmadıysa (fonksiyon yok: PGRST202) eski iki çağrı
+      if (res.error?.code === 'PGRST202') {
+        await this.syncEconomy();
+        return this.listTreeElmas();
+      }
+      const rows = check(res) as { d: string; amount: number }[] | null;
+      return (rows ?? []).map((r) => ({ date: r.d, amount: r.amount }));
+    },
     async claimDay(date) {
       return (check(await sb.rpc('claim_day', { p_date: date })) as number | null) ?? 0;
     },
@@ -789,6 +799,10 @@ export function localApi(seed: () => DemoDb): Api {
     async listTreeElmas() {
       const db = load();
       return [...treeElmasOf(db.ledger ?? [], earnedOf(db))].map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date));
+    },
+    async refreshEconomy() {
+      await self.syncEconomy();
+      return self.listTreeElmas();
     },
     async claimDay(date) {
       const db = load();

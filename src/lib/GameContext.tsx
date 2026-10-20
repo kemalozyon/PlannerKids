@@ -69,14 +69,23 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const unsaved = useRef(new Map<SpaceId, SpaceLayout>());
   const refresh = useCallback(async () => {
     const today = toLocalDate();
-    const [logs, reflections, doneTasks, plans, ledger0, owned, equipped, books, courses, spaces, rooms, seeds] = await Promise.all([
+    // Ekonomi okumalarla aynı anda: sunucu kazançları kayıtlardan hesaplayıp deftere yazar (bekleyenleri ağaçlara ayırır),
+    // ardından defter okunur. Eskiden okumalar → sync → defter → ağaçlar sırayla 4 tur sürüyordu.
+    const economy = (async () => {
+      for (const i of legacyStars(today)) await api.collectStar(today, i).catch(() => {});
+      // 0010/0036 çalıştırılmadıysa ağaçlarda bekleyen yok, defter olduğu gibi
+      const treeElmas = await api.refreshEconomy().catch((): TreeElmas[] => []);
+      // 0008 çalıştırılmadıysa oyun ekonomisi olmadan devam
+      const ledger = await api.listLedger().catch(() => null);
+      return { ledger: ledger ?? [], treeElmas: ledger ? treeElmas : [] };
+    })();
+    const [logs, reflections, doneTasks, plans, { ledger, treeElmas }, owned, equipped, books, courses, spaces, rooms, seeds] = await Promise.all([
       api.listLogs('2000-01-01', today),
       api.listReflections('2000-01-01', today),
       api.countDoneTasks(),
       // Plan tablosu henüz kurulmadıysa (0005 çalıştırılmadı) oyun yine çalışsın
       api.listPlans('2000-01-01', today).catch(() => []),
-      // 0008 çalıştırılmadıysa oyun ekonomisi olmadan devam
-      api.listLedger().catch(() => null),
+      economy,
       api.listOwned().catch(() => []),
       api.getEquipped().catch(() => null),
       api.listBooks().catch(() => []),
@@ -88,18 +97,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       // 0031 çalıştırılmadıysa ağaç türü tarihten
       api.listDaySeeds().catch(() => []),
     ]);
-    let ledger = ledger0 ?? [];
-    let treeElmas: TreeElmas[] = [];
-    if (ledger0) {
-      // Elmas'ı sunucu kayıtlardan hesaplar; deftere yalnızca o yazar (0010 yoksa eski defterle devam)
-      for (const i of legacyStars(today)) await api.collectStar(today, i).catch(() => {});
-      ledger = await api
-        .syncEconomy()
-        .then(() => api.listLedger())
-        .catch(() => ledger);
-      // Ağaçlarda bekleyen Elmas (0036 çalıştırılmadıysa yok)
-      treeElmas = await api.listTreeElmas().catch(() => []);
-    }
     const next = computeStats({
       logs,
       reflections,

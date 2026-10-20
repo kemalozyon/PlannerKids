@@ -10,7 +10,7 @@
 // sol altta joystick + zıpla, boş yerde sürükleyerek etrafa bakılır; klavyede WASD/oklar, Shift koş, boşluk zıpla
 // (basılı tut: süzül), E bak, Esc çık.
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type PointerEvent as RPointerEvent } from 'react';
 import { ExtrudeGeometry, InstancedMesh, Object3D, Shape, Vector3, type Group, type PointLight } from 'three';
 import type { ThreeEvent } from '@react-three/fiber';
 import type { AvatarLook } from '../../lib/avatar';
@@ -52,11 +52,13 @@ import { FootTiles, ItemModel } from '../world3d/items';
 import type { Quality } from '../../lib/gfx';
 import Atmosphere, { shadowsFor } from '../world3d/Atmosphere';
 import { Blob } from '../world3d/Blob';
-import Effects from '../world3d/Effects';
 import { QualityContext } from '../world3d/gfx';
 import { isTap, LIGHT } from '../world3d/light';
 import type { TvData } from '../world3d/art';
 import WorldScene from '../world3d/WorldScene';
+
+// Son işlem yalnızca yüksek grafikte (WorldView ile aynı tembel parça)
+const Effects = lazy(() => import('../world3d/Effects'));
 
 const WALK = 2.2;
 const RUN = 4;
@@ -523,7 +525,11 @@ export default function Explore(props: ExploreProps) {
           </Suspense>
           {perks.trail && <Trail player={player} />}
           <Lantern player={player} night={phase === 'gece' || phase === 'aksam'} />
-          {props.quality === 'yuksek' && <Effects night={phase === 'gece' || phase === 'aksam'} />}
+          {props.quality === 'yuksek' && (
+            <Suspense fallback={null}>
+              <Effects night={phase === 'gece' || phase === 'aksam'} />
+            </Suspense>
+          )}
           <FollowCam player={player} ctl={ctl} />
           <Brain player={player} spots={carry ? NO_SPOTS : spots} stars={stars} got={got} onNear={onNear} onStar={collect} />
           {carry && carryRegion && <Carry player={player} carry={carry} region={carryRegion} onSpot={setSpot} />}

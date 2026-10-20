@@ -51,10 +51,11 @@ export function thumbDone(id: string, url: string | null) {
   emit();
 }
 
-/** Eşyanın küçük resmi (hazır değilse null; hazır olunca yeniden çizilir) */
-export function useThumb(it: Item | undefined): string | null {
+/** Eşyanın küçük resmi (hazır değilse null; hazır olunca yeniden çizilir). want=false iken sıraya girmez
+ * (ekranda değil): dükkânda yüzlerce eşya varken yalnızca görünenler çizilir, çizilmiş olan önbellekten gelir. */
+export function useThumb(it: Item | undefined, want = true): string | null {
   useEffect(() => {
-    if (it) request(it);
-  }, [it]);
+    if (it && want) request(it);
+  }, [it, want]);
   return useSyncExternalStore(subscribe, () => (it ? (cache.get(it.id) ?? null) : null));
 }

@@ -4,7 +4,7 @@
 //   Günü gelmemiş ay kilitli görünür. Aynı türdeki ağaçlar tek çizimde (InstancedMesh) çizilir.
 import { useAnimations, useGLTF } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CanvasTexture, Color, Matrix4, Mesh, Object3D, SRGBColorSpace, type BufferGeometry, type Group, type InstancedMesh, type Material } from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { CFG, type SpeciesDef } from '../../lib/config';
@@ -559,7 +559,10 @@ export function Creatures({ list, area: all, attract }: { list: typeof CFG.world
     <group>
       {list.map((c, i) =>
         c.model ? (
-          <Critter key={c.id} model={c.model} fly={!!c.fly} seed={`${c.id}:${i}`} area={area} />
+          // Her hayvan kendi modelini bekler: teras/bahçe (zemin, eşyalar, karakter) hayvanlar inmeden görünür
+          <Suspense key={c.id} fallback={null}>
+            <Critter model={c.model} fly={!!c.fly} seed={`${c.id}:${i}`} area={area} />
+          </Suspense>
         ) : c.id === 'kelebek' ? (
           [0, 1, 2].map((k) => <Butterfly key={`${c.id}${k}`} seed={`kelebek${k}`} area={area} />)
         ) : (

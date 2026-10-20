@@ -1451,6 +1451,10 @@ test('demo API: ağaçtan Elmas al; bekleyen listesi ve kutlama', async () => {
   assert.equal(await api.claimDay(D), w.amount);
   assert.equal(balances(await api.listLedger()).crystal, before + w.amount);
   assert.deepEqual(await api.listTreeElmas(), []);
+  // Açılıştaki tek çağrı (sync + bekleyenler) ikisinin aynısı
+  const fresh = localApi(() => ({ courses: [], logs: [{ ...log(D, 45), source: 'timer' }], tasks: [], reflections: [] }));
+  assert.deepEqual(await fresh.refreshEconomy(), [w]);
+  assert.equal(balances(await fresh.listLedger()).crystal, before);
   await assert.rejects(api.claimDay('2099-01-01'), /ağacı yok/);
   const stats = computeStats({ logs: [], reflections: [], doneTasks: 0, today: D, treeElmas: [{ date: D, amount: 12 }, { date: addDays(D, -1), amount: 3 }] });
   assert.deepEqual([stats.treeElmas.get(D), stats.treeElmasTotal], [12, 15]);
