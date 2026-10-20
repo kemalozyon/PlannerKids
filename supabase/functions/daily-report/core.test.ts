@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { sampleInput } from '../_shared/report.fixtures.ts';
-import { localNow, runSchedule, sendReport, validButtonDate, writeNarrative, type DataSource, type Env, type FetchFn, type ReportSettings } from './core.ts';
+import { hourAt } from '../_shared/report.ts';
+import { dueReportDate, localNow, runSchedule, sendReport, validButtonDate, writeNarrative, type DataSource, type Env, type FetchFn, type ReportSettings } from './core.ts';
 
 const ENV: Env = { GEMINI_API_KEY: 'test-gemini', RESEND_API_KEY: 'test-resend', REPORT_FROM: 'Rapor <r@ornek.com>' };
 
@@ -188,5 +189,41 @@ test('runSchedule: yalnızca yerel saati gelmiş kullanıcılara gönderir', asy
   assert.deepEqual(later, [
     { userId: 'ist', date: '2026-10-12', status: 'already' },
     { userId: 'erken', date: '2026-10-12', status: 'sent' },
+  ]);
+});
+
+test('dueReportDate: akşam saatleri o günü, gece/sabah saatleri önceki günü gönderir', () => {
+  const ist = (iso: string, h: number) => dueReportDate(new Date(iso), 'Europe/Istanbul', h); // İstanbul = UTC+3
+  assert.equal(ist('2026-10-12T19:05:00Z', 22), '2026-10-12'); // 22:05
+  assert.equal(ist('2026-10-12T18:05:00Z', 22), null); // 21:05, saati gelmedi
+  assert.equal(ist('2026-10-12T22:05:00Z', 22), '2026-10-12'); // ertesi 01:05: hâlâ dünün raporu denenir
+  assert.equal(ist('2026-10-13T01:05:00Z', 22), null); // 04:05: 6 saat geçti, artık denenmez
+  assert.equal(ist('2026-10-12T21:05:00Z', 0), '2026-10-12'); // 13 Ekim 00:05 → 12 Ekim'in raporu
+  assert.equal(ist('2026-10-13T04:05:00Z', 7), '2026-10-12'); // 07:05 → dünün raporu
+  assert.equal(ist('2026-10-13T03:05:00Z', 7), null); // 06:05, saati gelmedi
+});
+
+test('dueReportDate: saat dilimine göre ve 12:00 sınırı', () => {
+  assert.equal(dueReportDate(new Date('2026-10-13T09:05:00Z'), 'Europe/Istanbul', 12), '2026-10-13'); // 12:05
+  assert.equal(dueReportDate(new Date('2026-10-13T08:05:00Z'), 'Europe/Istanbul', 11), '2026-10-12'); // 11:05
+  assert.equal(dueReportDate(new Date('2026-10-13T02:05:00Z'), 'America/New_York', 22), '2026-10-12'); // NY 22:05
+  assert.equal(dueReportDate(new Date('2026-10-13T02:05:00Z'), 'Europe/Istanbul', 22), null); // İstanbul 05:05
+});
+
+test('runSchedule: sabah saati seçen kullanıcıya dünün raporu gider', async () => {
+  const { ds, reports } = fakeDs([settingsFor({ user_id: 'sabah', send_hour: 7 })]);
+  const { fetchFn } = fakeFetch();
+  const r = await runSchedule(ds, ENV, fetchFn, new Date('2026-10-13T04:05:00Z')); // İstanbul 07:05
+  assert.deepEqual(r, [{ userId: 'sabah', date: '2026-10-12', status: 'sent' }]);
+  assert.equal(reports.get('sabah|2026-10-12')?.status, 'sent');
+  // Akşam "Bugünü bitirdim"e basıldıysa ertesi sabah tekrar gitmez
+  const again = await runSchedule(ds, ENV, fetchFn, new Date('2026-10-13T05:05:00Z'));
+  assert.deepEqual(again, [{ userId: 'sabah', date: '2026-10-12', status: 'already' }]);
+});
+
+test('hourAt: saat bulunma ekiyle yazılır', () => {
+  assert.deepEqual([0, 1, 3, 6, 7, 9, 10, 12, 13, 20, 21, 22, 23].map(hourAt), [
+    "00:00'da", "01:00'de", "03:00'te", "06:00'da", "07:00'de", "09:00'da", "10:00'da",
+    "12:00'de", "13:00'te", "20:00'de", "21:00'de", "22:00'de", "23:00'te",
   ]);
 });

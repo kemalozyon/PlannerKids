@@ -38,17 +38,4 @@ create policy "own rows" on public.daily_reports for all
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------------------------------
--- Zamanlayıcı (yedek saat). Edge Function deploy edildikten SONRA, SQL Editor'de bir kez çalıştır.
--- <PROJE-REF> ve <CRON_SECRET> değerlerini kendi değerlerinle değiştir (CRON_SECRET = function secret'ı).
---
--- create extension if not exists pg_cron;
--- create extension if not exists pg_net;
--- select cron.schedule(
---   'daily-report-hourly',
---   '5 * * * *',
---   $$ select net.http_post(
---        url     := 'https://<PROJE-REF>.supabase.co/functions/v1/daily-report',
---        headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', '<CRON_SECRET>'),
---        body    := '{}'::jsonb
---      ) $$
--- );
+-- Zamanlayıcı (pg_cron + pg_net): 0040_report_cron.sql.

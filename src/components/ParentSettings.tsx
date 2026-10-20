@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import type { ReportSettings } from '../lib/types';
+import { hourAt, reportsPreviousDay } from '../../supabase/functions/_shared/report';
 
-const HOURS = [18, 19, 20, 21, 22];
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+const hh = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
 /** Ebeveyn raporu ayarları: e-posta, çocuğun adı, yedek gönderim saati. */
 export default function ParentSettings() {
@@ -54,12 +56,18 @@ export default function ParentSettings() {
           <select id="send-hour" value={s.send_hour} onChange={(e) => set({ send_hour: Number(e.target.value) })}>
             {HOURS.map((h) => (
               <option key={h} value={h}>
-                {h}:00
+                {hh(h)}
+                {reportsPreviousDay(h) ? ' (önceki günün raporu)' : ''}
               </option>
             ))}
           </select>
         </label>
       </div>
+      <p className="muted small">
+        {reportsPreviousDay(s.send_hour)
+          ? `Rapor ertesi ${s.send_hour < 6 ? 'gece' : 'sabah'} ${hourAt(s.send_hour)}, bir önceki günün özetiyle gelir.`
+          : `Rapor her gün en geç ${hourAt(s.send_hour)}, o günün özetiyle gelir.`}
+      </p>
       <label className="check">
         <input type="checkbox" checked={s.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
         <span>Günlük raporu gönder</span>

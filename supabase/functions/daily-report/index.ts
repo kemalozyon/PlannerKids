@@ -17,6 +17,9 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+/** Bu kadar eski "sending" kaydı yarıda kalmış sayılır (gönderim en fazla birkaç dakika sürer). */
+const STALE_CLAIM_MS = 15 * 60_000;
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
@@ -31,9 +34,17 @@ function supabaseSource(db: SupabaseClient): DataSource {
       return must(await db.from('report_settings').select('*').eq('user_id', userId).maybeSingle()) as ReportSettings | null;
     },
     async claim(userId, date, trigger: Trigger) {
-      const { error } = await db.from('daily_reports').insert({ user_id: userId, date, trigger, status: 'sending' });
+      const insert = () => db.from('daily_reports').insert({ user_id: userId, date, trigger, status: 'sending' });
+      let { error } = await insert();
+      if (error?.code === '23505') {
+        // Unique ihlali: o gün zaten gönderildi ya da gönderiliyor. Yarıda kesilmiş bir çalışmanın
+        // (zaman aşımı) bıraktığı eski "sending" kaydı varsa silinir ve bir kez daha denenir.
+        const stale = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+        await db.from('daily_reports').delete().eq('user_id', userId).eq('date', date).eq('status', 'sending').lt('created_at', stale);
+        ({ error } = await insert());
+        if (error?.code === '23505') return false;
+      }
       if (!error) return true;
-      if (error.code === '23505') return false; // unique ihlali: bugün zaten gönderildi/gönderiliyor
       throw new Error(error.message);
     },
     async finish(userId, date, r) {

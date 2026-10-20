@@ -8,6 +8,7 @@ import {
   parseNarrative,
   renderEmail,
   reportUserPrompt,
+  reportsPreviousDay,
   type Narrative,
   type ReportInput,
 } from '../_shared/report.ts';
@@ -65,7 +66,8 @@ const NARRATIVE_SCHEMA = {
   },
   required: ['subject', 'summary', 'highlights', 'parent_tip'],
 };
-const LLM_TIMEOUT_MS = 45_000;
+/** Gemini yoğunken 1–2 dakika sürebiliyor; function sınırı 150 sn, pg_net 120 sn bekler. */
+const LLM_TIMEOUT_MS = 90_000;
 
 /** Bir anın verilen saat dilimindeki yerel tarihi ve saati. */
 export function localNow(now: Date, timeZone: string): { date: string; hour: number } {
@@ -155,18 +157,34 @@ export async function sendReport(
   }
 }
 
+/** Gönderim saatinden sonra kaç saat daha denenir (başarısız çalışmayı yakalamak için). */
+export const CATCHUP_HOURS = 6;
+
 /**
- * Zamanlanmış çalışma (saatte bir): yedek saati gelmiş ve o gün raporu gitmemiş herkese gönder.
+ * Şu an hangi günün raporunun gönderilme vakti? Yoksa null.
+ * Saat 12–23: o günün raporu o saatte; 00–11: önceki günün raporu ertesi sabah o saatte.
+ * Gönderim saatinden sonraki CATCHUP_HOURS saat içinde tekrar denenir (gece yarısını geçse de doğru gün).
+ */
+export function dueReportDate(now: Date, timeZone: string, sendHour: number): string | null {
+  const { date, hour } = localNow(now, timeZone);
+  const elapsed = hour >= sendHour ? hour - sendHour : hour + 24 - sendHour;
+  if (elapsed >= CATCHUP_HOURS) return null;
+  const sendDay = hour >= sendHour ? date : addDaysISO(date, -1);
+  return reportsPreviousDay(sendHour) ? addDaysISO(sendDay, -1) : sendDay;
+}
+
+/**
+ * Zamanlanmış çalışma (saatte bir): gönderim saati gelmiş ve o günün raporu gitmemiş herkese gönder.
  * "Bugünü bitirdim"e basılmışsa claim zaten var → atlanır.
  */
 export async function runSchedule(ds: DataSource, env: Env, fetchFn: FetchFn, now: Date) {
-  const results: { userId: string; date: string; status: SendResult['status'] }[] = [];
-  for (const s of await ds.enabledSettings()) {
-    if (!s.parent_email) continue;
-    const { date, hour } = localNow(now, s.timezone || 'Europe/Istanbul');
-    if (hour < s.send_hour) continue;
-    const r = await sendReport(ds, env, fetchFn, s.user_id, date, 'schedule');
-    results.push({ userId: s.user_id, date, status: r.status });
-  }
+  const due = (await ds.enabledSettings()).flatMap((s) => {
+    const date = s.parent_email ? dueReportDate(now, s.timezone || 'Europe/Istanbul', s.send_hour) : null;
+    return date ? [{ s, date }] : [];
+  });
+  // Aynı anda: her biri LLM'i 90 sn'ye kadar bekleyebilir, sırayla gitse function süre sınırını aşar.
+  const results = await Promise.all(
+    due.map(async ({ s, date }) => ({ userId: s.user_id, date, status: (await sendReport(ds, env, fetchFn, s.user_id, date, 'schedule')).status })),
+  );
   return results;
 }

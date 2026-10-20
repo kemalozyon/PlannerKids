@@ -82,6 +82,18 @@ export function addDaysISO(date: string, n: number): string {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+/** Gece/sabah saatleri (00–11) önceki günün raporunu gönderir; 12–23 o günün raporunu. */
+export function reportsPreviousDay(sendHour: number): boolean {
+  return sendHour < 12;
+}
+
+/** "21:00'de", "09:00'da", "03:00'te": saat bulunma ekiyle (okunuşun son sözcüğüne göre). */
+export function hourAt(hour: number): string {
+  const last = hour % 10 || hour; // 0 sıfır, 10 on, 20 yirmi
+  const ek: Record<number, string> = { 0: 'da', 1: 'de', 2: 'de', 3: 'te', 4: 'te', 5: 'te', 6: 'da', 7: 'de', 8: 'de', 9: 'da', 10: 'da', 20: 'de' };
+  return `${String(hour).padStart(2, '0')}:00'${ek[last]}`;
+}
+
 export function buildFacts(input: ReportInput): ReportFacts {
   const byCourseMap = new Map<string, { minutes: number; color: string }>();
   for (const l of input.studyLogs) {

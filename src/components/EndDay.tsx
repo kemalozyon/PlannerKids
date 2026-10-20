@@ -6,10 +6,14 @@ import { useGame } from '../lib/GameContext';
 import { useReading } from '../lib/ReadingContext';
 import type { DailyReport, Reflection, ReportSettings } from '../lib/types';
 import Sheet from './Sheet';
+import { hourAt, reportsPreviousDay } from '../../supabase/functions/_shared/report';
+
+/** Rapor kendiliğinden ne zaman gider: "saat 22:00'de", "yarın sabah 07:00'de", "gece 00:00'da". */
+const sendWhen = (h: number) => `${!reportsPreviousDay(h) ? 'saat' : h < 6 ? 'gece' : 'yarın sabah'} ${hourAt(h)}`;
 
 /**
  * Bugün ekranının sonu: "Bugünü bitirdim" → kısa kontrol listesi → ebeveyne rapor.
- * Basılmazsa rapor her akşam yedek saatte otomatik gider (sunucu tarafı).
+ * Basılmazsa rapor seçilen saatte otomatik gider (sunucu tarafı).
  */
 export default function EndDay({ goForest, goSettings, demo }: { goForest: () => void; goSettings: () => void; demo: boolean }) {
   const api = useApi();
@@ -57,7 +61,7 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
           </button>
           <p className="muted small center">
             {ready
-              ? `Basınca günün raporu ebeveynine gider. Basmazsan saat ${String(settings!.send_hour).padStart(2, '0')}:00'da kendiliğinden gider.`
+              ? `Basınca günün raporu ebeveynine gider. Basmazsan ${sendWhen(settings!.send_hour)} kendiliğinden gider.`
               : 'Ebeveyn raporu için annen ya da baban önce Profil › Aile paneli\'nden rapor ayarlarını doldurmalı.'}
           </p>
         </>
