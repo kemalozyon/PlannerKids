@@ -7,7 +7,7 @@
 // Günde kullanıcı başına en fazla bir rapor (daily_reports tablosundaki unique kısıt).
 //
 // Gerekli secret'lar: GEMINI_API_KEY, RESEND_API_KEY, REPORT_FROM, CRON_SECRET
-// İsteğe bağlı: REPORT_MODEL (varsayılan gemini-3.8-flash)
+// İsteğe bağlı: REPORT_MODEL (varsayılan gemini-3.8-flash), REPORT_FALLBACK_MODEL (yanıt vermezse; varsayılan gemini-3.5-flash)
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { addDaysISO, type ReportInput } from '../_shared/report.ts';
 import { runSchedule, sendReport, validButtonDate, type DataSource, type ReportSettings, type Trigger } from './core.ts';
@@ -104,6 +104,7 @@ Deno.serve(async (req) => {
   const env = {
     GEMINI_API_KEY: Deno.env.get('GEMINI_API_KEY'),
     REPORT_MODEL: Deno.env.get('REPORT_MODEL'),
+    REPORT_FALLBACK_MODEL: Deno.env.get('REPORT_FALLBACK_MODEL'),
     RESEND_API_KEY: Deno.env.get('RESEND_API_KEY'),
     REPORT_FROM: Deno.env.get('REPORT_FROM'),
   };

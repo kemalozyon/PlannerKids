@@ -8,11 +8,12 @@
 import { writeFileSync } from 'node:fs';
 import { buildFacts, renderEmail } from '../supabase/functions/_shared/report.ts';
 import { sampleInput } from '../supabase/functions/_shared/report.fixtures.ts';
-import { DEFAULT_REPORT_MODEL, sendEmail, writeNarrative, type Env } from '../supabase/functions/daily-report/core.ts';
+import { sendEmail, writeNarrative, type Env } from '../supabase/functions/daily-report/core.ts';
 
 const env: Env = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   REPORT_MODEL: process.env.REPORT_MODEL,
+  REPORT_FALLBACK_MODEL: process.env.REPORT_FALLBACK_MODEL,
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   REPORT_FROM: process.env.REPORT_FROM,
 };
@@ -25,12 +26,12 @@ if (send && !sendTo) {
 
 const input = sampleInput();
 if (!env.GEMINI_API_KEY) console.warn('GEMINI_API_KEY yok → LLM çağrılmadan yedek metin kullanılacak.');
-const { n, by } = await writeNarrative(input, env, fetch);
+const { n, by, model } = await writeNarrative(input, env, fetch);
 const mail = renderEmail(buildFacts(input), n, { generatedBy: by });
 
 const out = 'report-preview.html';
 writeFileSync(out, mail.html);
-console.log(`Metni yazan: ${by === 'llm' ? `Gemini (${env.REPORT_MODEL || DEFAULT_REPORT_MODEL})` : 'yedek kurallar'}`);
+console.log(`Metni yazan: ${by === 'llm' ? `Gemini (${model})` : 'yedek kurallar'}`);
 console.log(`Konu: ${mail.subject}\n\n${mail.text}\n\nHTML → ${out}`);
 
 if (send) {

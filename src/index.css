@@ -341,6 +341,7 @@ blockquote { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--li
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; justify-content: center;
   /* alt menünün (≈66px) üstünde dursun; sekmelere dokunmayı engellemesin */
   padding: 16px 16px calc(78px + env(safe-area-inset-bottom, 0px)); pointer-events: none;
+  flex-direction: column; align-items: center; gap: 8px;
 }
 /* Alttan açılan panel açıkken kutlama üstte çıksın; paneldeki ana düğmeyi örtmesin */
 body:has(.sheet-backdrop) .toasts {
@@ -581,6 +582,14 @@ button.spine:hover { transform: translateY(-6px); }
 .end-btn:hover { filter: brightness(1.08); }
 .end-done { display: flex; align-items: center; gap: 12px; }
 .end-moon { font-size: 1.8rem; }
+/* Rapor arka planda hazırlanırken */
+.end-spin {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  border: 3px solid color-mix(in srgb, #3b3f8f 25%, transparent); border-top-color: #3b3f8f;
+  animation: end-spin 0.9s linear infinite;
+}
+@keyframes end-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .end-spin { animation-duration: 2.5s; } }
 .end-checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .end-checklist li { display: flex; align-items: center; gap: 10px; background: var(--bg); border-radius: 12px; padding: 10px 12px; font-size: 0.92rem; }
 .end-checklist li.ok { color: var(--muted); }

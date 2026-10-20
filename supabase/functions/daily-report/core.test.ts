@@ -133,6 +133,36 @@ test('LLM hata verirse yedek metinle yine gönderilir', async () => {
   }
 });
 
+test('ilk model yanıt vermezse yedek model denenir', async () => {
+  const ok = () =>
+    Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ subject: 'Konu', summary: 'Özet.', highlights: [], parent_tip: 'Öneri.' }) }] } }] });
+  const fails: (() => Response)[] = [
+    () => new Response('high demand', { status: 503 }),
+    () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    },
+  ];
+  for (const fail of fails) {
+    const calls: string[] = [];
+    const fetchFn: FetchFn = async (url) => {
+      calls.push(url);
+      return calls.length === 1 ? fail() : ok();
+    };
+    const r = await writeNarrative(sampleInput(), ENV, fetchFn);
+    assert.equal(r.by, 'llm');
+    assert.equal(r.model, 'gemini-3.5-flash');
+    assert.ok(calls[0].includes('/models/gemini-3.8-flash:') && calls[1].includes('/models/gemini-3.5-flash:'));
+  }
+  // Yedek model asıl modelle aynıysa bir kez denenir
+  const calls: string[] = [];
+  const r = await writeNarrative(sampleInput(), { ...ENV, REPORT_FALLBACK_MODEL: 'gemini-3.8-flash' }, async (url) => {
+    calls.push(url);
+    return new Response('x', { status: 503 });
+  });
+  assert.equal(r.by, 'fallback');
+  assert.equal(calls.length, 1);
+});
+
 test('GEMINI_API_KEY yoksa LLM çağrılmaz, yedek metin kullanılır', async () => {
   const { fetchFn, calls } = fakeFetch();
   const { by } = await writeNarrative(sampleInput(), {}, fetchFn);

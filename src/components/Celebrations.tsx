@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
+import { useApi } from '../lib/ApiContext';
 import { useGame } from '../lib/GameContext';
+import { markReportSeen, startReportSend, useReportSend, wantReportPreview } from '../lib/reportSend';
 
 /** Ekranın altında kutlama kartları + bir kez konfeti. */
 export default function Celebrations() {
@@ -16,6 +18,7 @@ export default function Celebrations() {
     <>
       {first && <Confetti key={first.key} />}
       <div className="toasts" aria-live="polite">
+        <ReportToast />
         {first && (
           <button className={`toast toast-${first.kind}`} onClick={() => dismiss(first.key)}>
             <span className="toast-icon" aria-hidden>
@@ -30,6 +33,42 @@ export default function Celebrations() {
         )}
       </div>
     </>
+  );
+}
+
+/** Arka plandaki rapor gönderimi bitti, çocuk başka sekmedeyse: sonucu bildir. */
+function ReportToast() {
+  const api = useApi();
+  const send = useReportSend();
+  const show = send && send.phase !== 'sending' && !send.seen ? send : null;
+
+  useEffect(() => {
+    if (!show) return;
+    const id = setTimeout(markReportSeen, 6000);
+    return () => clearTimeout(id);
+  }, [show]);
+  if (!show) return null;
+
+  const ok = show.phase === 'done';
+  return (
+    <button
+      className={`toast toast-${ok ? 'report' : 'report-error'}`}
+      onClick={() => {
+        markReportSeen();
+        if (ok) {
+          wantReportPreview();
+          location.hash = 'today';
+        } else startReportSend(api, show.date);
+      }}
+    >
+      <span className="toast-icon" aria-hidden>
+        {ok ? '📨' : '⚠️'}
+      </span>
+      <span className="grow">
+        <strong>{ok ? 'Rapor ebeveynine gönderildi' : 'Rapor gönderilemedi'}</strong>
+        <span className="muted small">{ok ? 'Görmek için dokun' : `${show.message ?? 'Bir sorun oldu'} · Tekrar denemek için dokun`}</span>
+      </span>
+    </button>
   );
 }
 

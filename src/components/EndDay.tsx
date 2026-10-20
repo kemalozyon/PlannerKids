@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { useApi } from '../lib/ApiContext';
 import { toLocalDate } from '../lib/date';
 import type { DayTree } from '../lib/world';
@@ -6,6 +6,7 @@ import { useGame } from '../lib/GameContext';
 import { useReading } from '../lib/ReadingContext';
 import type { DailyReport, Reflection, ReportSettings } from '../lib/types';
 import Sheet from './Sheet';
+import { markReportSeen, startReportSend, takeReportPreview, useReportSend } from '../lib/reportSend';
 import { hourAt, reportsPreviousDay } from '../../supabase/functions/_shared/report';
 
 /** Rapor kendiliğinden ne zaman gider: "saat 22:00'de", "yarın sabah 07:00'de", "gece 00:00'da". */
@@ -24,15 +25,30 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
   const [settings, setSettings] = useState<ReportSettings | null>(null);
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState(false);
+  const send = useReportSend();
+  const mine = send?.date === date ? send : null;
+  const sending = mine?.phase === 'sending';
 
   const load = useCallback(async () => {
     const [r, s] = await Promise.all([api.getDailyReport(date), api.getReportSettings()]);
     setReport(r);
     setSettings(s);
+    return r;
   }, [api, date]);
   useEffect(() => {
-    load();
+    // Bildirimdeki "Raporu gör" ile gelindiyse önizleme açılır
+    const wanted = takeReportPreview();
+    load().then((r) => wanted && r?.html && setPreview(true));
   }, [load]);
+
+  // Arka plandaki gönderim bitti: çocuk Bugün'deyse sonucu burada göster (bildirim çıkmaz;
+  // layout effect, bildirim bir kare bile görünmesin diye)
+  const phase = mine && !mine.seen ? mine.phase : undefined;
+  useLayoutEffect(() => {
+    if (!phase || phase === 'sending') return;
+    markReportSeen();
+    if (phase === 'done') load().then((r) => r?.html && setPreview(true));
+  }, [phase, load]);
 
   const ready = !!settings?.enabled && !!settings.parent_email;
   const time = report?.sent_at ? new Date(report.sent_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : null;
@@ -54,8 +70,24 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
             Raporu gör
           </button>
         </div>
+      ) : sending ? (
+        <div className="end-done" role="status">
+          <span className="end-spin" aria-hidden />
+          <div className="grow">
+            <strong>Raporun hazırlanıyor…</strong>
+            <div className="muted small">Arka planda gönderiliyor, uygulamayı kullanmaya devam edebilirsin. Bitince burada göreceksin.</div>
+          </div>
+        </div>
       ) : (
         <>
+          {mine?.phase === 'error' && (
+            <div className="error">
+              Rapor gönderilemedi: {mine.message}.{' '}
+              <button className="btn sm" onClick={() => startReportSend(api, date)}>
+                Tekrar dene
+              </button>
+            </div>
+          )}
           <button className="btn big full end-btn" onClick={() => setOpen(true)}>
             🌙 Bugünü bitirdim
           </button>
@@ -83,10 +115,9 @@ export default function EndDay({ goForest, goSettings, demo }: { goForest: () =>
             setOpen(false);
             goSettings();
           }}
-          onSent={async () => {
-            await load();
+          onSend={() => {
+            startReportSend(api, date);
             setOpen(false);
-            setPreview(true);
           }}
         />
       )}
@@ -118,7 +149,7 @@ function EndDaySheet({
   onClose,
   goForest,
   goSettings,
-  onSent,
+  onSend,
 }: {
   date: string;
   ready: boolean;
@@ -129,12 +160,11 @@ function EndDaySheet({
   onClose: () => void;
   goForest: () => void;
   goSettings: () => void;
-  onSent: () => void;
+  /** Raporu arka planda gönderir ve paneli kapatır */
+  onSend: () => void;
 }) {
   const api = useApi();
   const [ref, setRef] = useState<Reflection | null | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api.getReflection(date).then(setRef);
   }, [api, date]);
@@ -171,21 +201,9 @@ function EndDaySheet({
           <span className="grow">{readToday ? 'Bugün kitap okudun' : 'Bugün kitap okuma kaydı yok'}</span>
         </li>
       </ul>
-      {error && <div className="error">Rapor gönderilemedi: {error}. Biraz sonra tekrar dene.</div>}
       {ready ? (
-        <button
-          className="btn primary big full"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            const r = await api.sendDailyReport(date);
-            setBusy(false);
-            if (r.status === 'error') setError(r.message);
-            else onSent();
-          }}
-        >
-          {busy ? 'Rapor hazırlanıyor…' : demo ? 'Günü bitir ve raporu önizle' : 'Günü bitir, raporu gönder'}
+        <button className="btn primary big full" onClick={onSend}>
+          {demo ? 'Günü bitir ve raporu önizle' : 'Günü bitir, raporu gönder'}
         </button>
       ) : (
         <button className="btn primary big full" onClick={goSettings}>

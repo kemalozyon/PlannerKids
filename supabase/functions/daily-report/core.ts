@@ -36,6 +36,8 @@ export interface DataSource {
 export interface Env {
   GEMINI_API_KEY?: string;
   REPORT_MODEL?: string;
+  /** İlk model yanıt vermezse denenen ikinci model */
+  REPORT_FALLBACK_MODEL?: string;
   RESEND_API_KEY?: string;
   REPORT_FROM?: string;
 }
@@ -53,6 +55,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 export const DEFAULT_REPORT_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_FALLBACK_MODEL = 'gemini-3.5-flash';
 /** Gemini önce düşünür ve düşünme bu bütçeden yer; düşük tutulursa JSON yarım kalır. */
 const LLM_MAX_TOKENS = 4000;
 /** Yanıtın biçimi: model bu şemaya uygun JSON döndürür (parseNarrative yine de denetler). */
@@ -66,8 +69,11 @@ const NARRATIVE_SCHEMA = {
   },
   required: ['subject', 'summary', 'highlights', 'parent_tip'],
 };
-/** Gemini yoğunken 1–2 dakika sürebiliyor; function sınırı 150 sn, pg_net 120 sn bekler. */
-const LLM_TIMEOUT_MS = 90_000;
+/**
+ * Model başına bekleme: önce asıl model, yanıt vermezse yedek model. Gemini yoğunken 1–2 dakika
+ * sürebiliyor; toplam (105 sn + e-posta) pg_net'in 120 sn'sine ve function'ın 150 sn'sine sığar.
+ */
+const LLM_TIMEOUT_MS = [60_000, 45_000];
 
 /** Bir anın verilen saat dilimindeki yerel tarihi ve saati. */
 export function localNow(now: Date, timeZone: string): { date: string; hour: number } {
@@ -90,32 +96,42 @@ export function validButtonDate(date: string, now: Date, timeZone: string): bool
   return date === today || date === addDaysISO(today, -1);
 }
 
-export async function writeNarrative(input: ReportInput, env: Env, fetchFn: FetchFn): Promise<{ n: Narrative; by: 'llm' | 'fallback' }> {
+/** Tek bir Gemini çağrısı; zaman aşımı, HTTP hatası ya da JSON olmayan yanıt hata fırlatır. */
+async function askGemini(model: string, timeoutMs: number, facts: ReturnType<typeof buildFacts>, key: string, fetchFn: FetchFn): Promise<Narrative> {
+  const res = await fetchFn(`${GEMINI_BASE_URL}/models/${model}:generateContent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: REPORT_SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: reportUserPrompt(facts) }] }],
+      generationConfig: { maxOutputTokens: LLM_MAX_TOKENS, responseMimeType: 'application/json', responseSchema: NARRATIVE_SCHEMA },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini API ${res.status}`);
+  const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+  // Düşünce parçaları (thought) metne katılmaz
+  const parts = body.candidates?.[0]?.content?.parts ?? [];
+  const n = parseNarrative(parts.filter((p) => !p.thought).map((p) => p.text ?? '').join(''));
+  if (!n) throw new Error('LLM çıktısı JSON değil');
+  return n;
+}
+
+export async function writeNarrative(input: ReportInput, env: Env, fetchFn: FetchFn): Promise<{ n: Narrative; by: 'llm' | 'fallback'; model?: string }> {
   const facts = buildFacts(input);
   if (!env.GEMINI_API_KEY) return { n: fallbackNarrative(facts), by: 'fallback' };
-  try {
-    const res = await fetchFn(`${GEMINI_BASE_URL}/models/${env.REPORT_MODEL || DEFAULT_REPORT_MODEL}:generateContent`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      headers: { 'x-goog-api-key': env.GEMINI_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: REPORT_SYSTEM_PROMPT }] },
-        contents: [{ role: 'user', parts: [{ text: reportUserPrompt(facts) }] }],
-        generationConfig: { maxOutputTokens: LLM_MAX_TOKENS, responseMimeType: 'application/json', responseSchema: NARRATIVE_SCHEMA },
-      }),
-    });
-    if (!res.ok) throw new Error(`Gemini API ${res.status}`);
-    const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
-    // Düşünce parçaları (thought) metne katılmaz
-    const parts = body.candidates?.[0]?.content?.parts ?? [];
-    const text = parts.filter((p) => !p.thought).map((p) => p.text ?? '').join('');
-    const n = parseNarrative(text);
-    if (!n) throw new Error('LLM çıktısı JSON değil');
-    return { n, by: 'llm' };
-  } catch (e) {
-    console.error('LLM başarısız, yedek metin kullanılıyor:', (e as Error).message);
-    return { n: fallbackNarrative(facts), by: 'fallback' };
+  const primary = env.REPORT_MODEL || DEFAULT_REPORT_MODEL;
+  const backup = env.REPORT_FALLBACK_MODEL || DEFAULT_FALLBACK_MODEL;
+  const models = backup === primary ? [primary] : [primary, backup];
+  for (const [i, model] of models.entries()) {
+    try {
+      return { n: await askGemini(model, LLM_TIMEOUT_MS[i], facts, env.GEMINI_API_KEY, fetchFn), by: 'llm', model };
+    } catch (e) {
+      console.error(`LLM (${model}) başarısız:`, (e as Error).message);
+    }
   }
+  console.error('LLM yanıt vermedi, yedek metin kullanılıyor');
+  return { n: fallbackNarrative(facts), by: 'fallback' };
 }
 
 export async function sendEmail(
