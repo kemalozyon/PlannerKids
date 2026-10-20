@@ -28,8 +28,11 @@ derlemeye gömülür; tek dosyalık demo `file://` ile açılınca da sesli oyna
    - Client ID / Secret'ı Supabase'e gir.
 4. **Authentication → URL Configuration**: Site URL ve Redirect URLs'e `http://localhost:5173`
    (ve yayınlandıktan sonra prod adresini) ekle.
-5. `.env.example` → `.env` olarak kopyala, `Project Settings → API`'den URL ve anon key'i yaz.
-6. `npm run dev`
+5. Yalnızca mevcut hesap(lar) kullanacaksa **Authentication → Sign In / Providers → Allow new users to sign up**'ı kapat:
+   yeni hesap (e-posta ya da Google) sunucuda reddedilir, giriş ekranındaki "Hesap oluştur" sekmesi kendiliğinden gizlenir.
+   Panelden "Add user" ile hesap eklemek çalışmaya devam eder. Yeniden açmak için aynı anahtarı aç; kod değişikliği gerekmez.
+6. `.env.example` → `.env` olarak kopyala, `Project Settings → API`'den URL ve anon key'i yaz.
+7. `npm run dev`
 
 ## Yapı
 

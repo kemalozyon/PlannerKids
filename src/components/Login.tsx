@@ -5,6 +5,17 @@ type Mode = 'signin' | 'signup' | 'reset';
 
 const redirectTo = () => location.origin + location.pathname;
 
+/** Google girişi hata verirse Supabase hatayı adrese (hash ya da query) yazıp geri döner; okunur ve adresten silinir. */
+function redirectError(): { code?: string; message: string } | null {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const q = new URLSearchParams(location.search);
+  const code = p.get('error_code') ?? q.get('error_code');
+  const message = p.get('error_description') ?? q.get('error_description');
+  if (!code && !message) return null;
+  history.replaceState(null, '', location.pathname);
+  return { code: code ?? undefined, message: message ?? 'Giriş yapılamadı.' };
+}
+
 /** Supabase hata kodlarını Türkçe, anlaşılır mesajlara çevirir. */
 function authMessage(e: { code?: string; message: string }): string {
   switch (e.code) {
@@ -24,6 +35,8 @@ function authMessage(e: { code?: string; message: string }): string {
       return 'Bu adrese e-posta gönderilemiyor. Supabase\'de özel SMTP (ör. Resend) ayarlanmalı.';
     case 'same_password':
       return 'Yeni şifre eskisiyle aynı olamaz.';
+    case 'signup_disabled':
+      return 'Yeni hesap açılamıyor; bu uygulama yalnızca mevcut hesapla kullanılıyor.';
     default:
       return e.message;
   }
@@ -37,9 +50,16 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [google, setGoogle] = useState(false);
+  // Panelde "Allow new users to sign up" kapalıysa "Hesap oluştur" sekmesi gösterilmez.
+  const [signup, setSignup] = useState(false);
 
   useEffect(() => {
-    enabledProviders().then((p) => setGoogle(p.google));
+    const e = redirectError();
+    if (e) setErr(authMessage(e));
+    enabledProviders().then((p) => {
+      setGoogle(p.google);
+      setSignup(p.signup);
+    });
   }, []);
 
   const switchTo = (m: Mode) => {
@@ -82,7 +102,7 @@ export default function Login() {
         <h1>Çalışma Takip</h1>
         <p className="muted">Bugün ne çalıştın, ne kadar çalıştın, gün nasıl geçti?</p>
 
-        {mode !== 'reset' && (
+        {signup && mode !== 'reset' && (
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={mode === 'signin'} className={mode === 'signin' ? 'on' : ''} onClick={() => switchTo('signin')}>
               Giriş yap
